@@ -46,7 +46,9 @@ import type {
   DedupRunResult,
   DuplicateGroup,
   ResetDataRequest,
-  ResetDataResponse
+  ResetDataResponse,
+  CustomField,
+  CustomFieldType
 } from '../shared/types'
 
 interface TopicListResponse {
@@ -187,6 +189,16 @@ export interface SystemAPI {
   resetData: (req: ResetDataRequest) => Promise<ApiResponse<ResetDataResponse>>
 }
 
+export interface CustomFieldAPI {
+  list: () => Promise<ApiResponse<CustomField[]>>
+  create: (label: string, type: CustomFieldType) => Promise<ApiResponse<CustomField>>
+  update: (
+    fieldKey: string,
+    patch: Partial<Pick<CustomField, 'field_label' | 'sort_order'>>
+  ) => Promise<ApiResponse<void>>
+  delete: (fieldKey: string) => Promise<ApiResponse<void>>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -200,6 +212,7 @@ declare global {
     dedupAPI: DedupAPI
     fileAPI: FileAPI
     systemAPI: SystemAPI
+    customFieldAPI: CustomFieldAPI
   }
 }
 
