@@ -20,7 +20,12 @@ import {
   SYSTEM_CANDIDATES as SYSTEM_CANDIDATES_SRC,
   type CandidateField
 } from '../../shared/constants'
-import type { ParsedResult, UnknownValueItem } from '../../shared/types'
+import type { ParsedResult, UnknownValueItem, FieldMapping } from '../../shared/types'
+import {
+  SYSTEM_FIELD_DEFINITIONS,
+  SYSTEM_FIELD_ALIAS_MAP
+} from '../../shared/field-definitions'
+import { labelToKey } from './custom-field-service'
 
 // ============================================================
 // 类型定义
@@ -33,16 +38,17 @@ export type { ParsedResult }
 
 /**
  * 中文表头 → Topic 字段的映射规则。
+ *
+ * 从 SYSTEM_FIELD_DEFINITIONS 派生（单一来源），与 field-definitions.ts 保持一致。
  * 同一字段可有多个别名（中英文均可，大小写不敏感）。
  */
-export const HEADER_MAPPING: Record<string, string[]> = {
-  title: ['标题', '题目', '辩题', '辩题标题', '名称', 'title', 'topic'],
-  type: ['类型', '辩题类型', 'type', 'category'],
-  domain: ['领域', '主题领域', '分类', 'domain'],
-  difficulty: ['难度', '难度等级', 'difficulty', 'level'],
-  source: ['来源', '出处', 'source'],
-  tags: ['标签', '标记', 'tags', 'tag']
-}
+export const HEADER_MAPPING: Record<string, string[]> = (() => {
+  const m: Record<string, string[]> = {}
+  for (const f of SYSTEM_FIELD_DEFINITIONS) {
+    m[f.key] = [...f.aliases]
+  }
+  return m
+})()
 
 /**
  * 系统候选值（引用 shared/constants.ts 单一来源）。
@@ -75,18 +81,10 @@ const FIELD_LABEL: Record<CandidateField, string> = {
 
 /**
  * 反向映射：表头 → Topic 字段名。
- * 遍历 HEADER_MAPPING，构建 { '标题': 'title', 'title': 'title', ... }。
- * key 统一转小写，匹配时也用小写比较，实现大小写不敏感。
+ * 直接复用 SYSTEM_FIELD_ALIAS_MAP（小写 → fieldKey），保持单一来源。
+ * 匹配时表头转小写后查询，实现大小写不敏感。
  */
-const HEADER_REVERSE_MAP: Record<string, string> = (() => {
-  const m: Record<string, string> = {}
-  for (const [field, aliases] of Object.entries(HEADER_MAPPING)) {
-    for (const alias of aliases) {
-      m[alias.toLowerCase()] = field
-    }
-  }
-  return m
-})()
+const HEADER_REVERSE_MAP: Record<string, string> = SYSTEM_FIELD_ALIAS_MAP
 
 /**
  * 根据表头行构建本次解析用的字段映射。
@@ -94,16 +92,16 @@ const HEADER_REVERSE_MAP: Record<string, string> = (() => {
  * mapping 的 key 保留原始表头（用户写啥就是啥），下游 rowToTopic 用 headers.indexOf 查找列索引。
  *
  * @param headers 表头单元格数组
- * @returns { mapping, titleField, unmatchedHeaders }
- *   - mapping: 原始表头 → 字段名
+ * @returns { mapping, titleField, unmatchedColumns }
+ *   - mapping: 原始表头 → 系统字段名
  *   - titleField: 找到的 title 列名（原始表头形式）
- *   - unmatchedHeaders: 未识别的表头列表（供诊断提示用）
+ *   - unmatchedColumns: 未识别的表头列表（供 FieldMappingPanel 让用户绑定）
  */
 function buildFieldMapping(
   headers: string[]
-): { mapping: Record<string, string>; titleField: string | null; unmatchedHeaders: string[] } {
+): { mapping: Record<string, string>; titleField: string | null; unmatchedColumns: string[] } {
   const mapping: Record<string, string> = {}
-  const unmatchedHeaders: string[] = []
+  const unmatchedColumns: string[] = []
   let titleField: string | null = null
 
   for (const h of headers) {
@@ -116,11 +114,11 @@ function buildFieldMapping(
         titleField = trimmed
       }
     } else {
-      unmatchedHeaders.push(trimmed)
+      unmatchedColumns.push(trimmed)
     }
   }
 
-  return { mapping, titleField, unmatchedHeaders }
+  return { mapping, titleField, unmatchedColumns }
 }
 
 /**
@@ -203,6 +201,14 @@ function parseTags(value: string): string[] | null {
 /**
  * 把表格行（按表头对齐的值数组）转换为 TopicCreateInput。
  * 未识别的字段忽略。
+ *
+ * 若传入 fieldMapping（用户在 FieldMappingPanel 配置的未识别列绑定），
+ * 则对 unmatchedColumns 中的每列按 action 类型分发：
+ *   - ignore：跳过
+ *   - bind：把值赋给 topic[bind.fieldKey]（系统字段）或 topic.custom_data[fieldKey]（自定义字段已存在时）
+ *   - create：把值赋给 topic.custom_data[fieldKey]（fieldKey 由 labelToKey(fieldLabel) 生成）
+ *
+ * 注意：fieldMapping 的 key 是原始表头（与 unmatchedColumns 中的项一致）。
  */
 function rowToTopic(
   row: any[],
@@ -210,7 +216,8 @@ function rowToTopic(
   mapping: Record<string, string>,
   titleField: string | null,
   rowIndex: number,
-  warnings: string[]
+  warnings: string[],
+  fieldMapping?: FieldMapping
 ): TopicCreateInput | null {
   if (!titleField) {
     warnings.push(`第 ${rowIndex + 1} 行：表头无 title 列，跳过所有行`)
@@ -235,6 +242,7 @@ function rowToTopic(
     tags: null
   }
 
+  // 系统字段（已识别表头）
   for (const [header, field] of Object.entries(mapping)) {
     if (field === 'title') continue
     const idx = headers.indexOf(header)
@@ -244,12 +252,98 @@ function rowToTopic(
 
     if (field === 'tags') {
       topic.tags = parseTags(value)
+    } else if (field === 'weight') {
+      const w = Number(value)
+      if (!Number.isNaN(w)) topic.weight = w
+    } else if (field === 'source_type' || field === 'status') {
+      ;(topic as any)[field] = value
     } else {
       ;(topic as any)[field] = value
     }
   }
 
+  // 用户配置的未识别列绑定
+  if (fieldMapping) {
+    let customData: Record<string, string | string[]> | undefined
+    for (const [origHeader, action] of Object.entries(fieldMapping)) {
+      const idx = headers.indexOf(origHeader)
+      if (idx < 0) continue
+      const value = String(row[idx] ?? '').trim()
+      if (!value) continue
+
+      if (action.kind === 'ignore') {
+        continue
+      }
+      if (action.kind === 'bind') {
+        // 绑定到已有字段：系统字段直接赋值；自定义字段写入 custom_data
+        const targetKey = action.fieldKey
+        const isSystem = ['title','type','domain','difficulty','source','source_type','status','tags','weight'].includes(targetKey)
+        if (isSystem) {
+          if (targetKey === 'tags') {
+            topic.tags = parseTags(value)
+          } else if (targetKey === 'weight') {
+            const w = Number(value)
+            if (!Number.isNaN(w)) topic.weight = w
+          } else if (targetKey !== 'title') {
+            ;(topic as any)[targetKey] = value
+          }
+        } else {
+          customData = customData ?? {}
+          customData[targetKey] = value
+        }
+      } else if (action.kind === 'create') {
+        // 创建新自定义字段：fieldKey 由 labelToKey(fieldLabel) 生成
+        const newKey = labelToKey(action.fieldLabel)
+        if (action.fieldType === 'tags') {
+          customData = customData ?? {}
+          customData[newKey] = parseTags(value) ?? []
+        } else {
+          customData = customData ?? {}
+          customData[newKey] = value
+        }
+      }
+    }
+    if (customData) topic.custom_data = customData
+  }
+
   return topic
+}
+
+/**
+ * 应用用户在 FieldMappingPanel 中配置的字段绑定，重新解析原始表格数据生成新 topics。
+ *
+ * 调用时机：用户处理完未识别列绑定后，ImportTopicsModal 调用此函数得到新 ParsedResult。
+ * 若 parsed.rawTable 不存在（如 docx 编号列表/纯文本分支），直接返回原 parsed。
+ *
+ * @param parsed 原始解析结果（含 rawTable）
+ * @param fieldMapping 用户配置的未识别列绑定
+ * @returns 新 ParsedResult：topics 已重新生成，unmatchedColumns 清空
+ */
+export function applyFieldMapping(parsed: ParsedResult, fieldMapping: FieldMapping): ParsedResult {
+  if (!parsed.rawTable) {
+    // 无原始表格数据可重新解析（docx 编号/纯文本分支），直接返回
+    return { ...parsed, unmatchedColumns: [] }
+  }
+
+  const { headers, rows } = parsed.rawTable
+  const { mapping, titleField } = buildFieldMapping(headers)
+
+  const topics: TopicCreateInput[] = []
+  const warnings: string[] = []
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] as any[]
+    if (!row || row.every((c) => c === '' || c == null)) continue
+    const topic = rowToTopic(row, headers, mapping, titleField, i, warnings, fieldMapping)
+    if (topic) topics.push(topic)
+  }
+
+  return {
+    ...parsed,
+    topics,
+    warnings: [...warnings, ...collectValueMismatchWarnings(topics)],
+    unmatchedColumns: []
+  }
 }
 
 // ============================================================

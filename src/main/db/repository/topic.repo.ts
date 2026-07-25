@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
+import type { CustomFieldValue } from '../../../shared/types'
 
 /**
  * 转义 SQL LIKE 模式中的特殊字符（%、_、\），使其作为字面量匹配。
@@ -8,6 +9,28 @@ import { getDb } from '../index'
 function escapeLike(str: string): string {
   return str.replace(/[%_\\]/g, '\\$&')
 }
+
+/**
+ * 校验字段名是否为合法标识符（防 SQL 注入）。
+ * 允许：英文/数字/下划线，以及中文（Unicode 范围 \u4e00-\u9fa5）。
+ * 必须通过此校验才能拼入 SQL（如 countByDimension、listDistinctValues）。
+ */
+export function isValidIdentifier(name: string): boolean {
+  if (!name || typeof name !== 'string') return false
+  // 英文/数字/下划线，或中文字符
+  return /^[A-Za-z0-9_\u4e00-\u9fa5]+$/.test(name)
+}
+
+/** 系统字段 key 集合（与 shared/field-definitions.ts 对齐） */
+const SYSTEM_COUNTABLE_DIMENSIONS = new Set<string>([
+  'type',
+  'domain',
+  'difficulty',
+  'source',
+  'source_type',
+  'status',
+  'batch_id'
+])
 
 // ============================================================
 // 类型定义
@@ -27,9 +50,11 @@ export interface Topic {
   batch_id: string | null // 导入批次 id（手动导入的题才有，seed 的为 null）
   created_at: string
   updated_at: string
+  /** 自定义字段值（来自 custom_data JSON 列） */
+  custom_data?: Record<string, CustomFieldValue> | null
 }
 
-/** DB topics 表的原始行类型（tags 为 JSON 字符串，未反序列化） */
+/** DB topics 表的原始行类型（tags / custom_data 为 JSON 字符串，未反序列化） */
 export interface TopicRow {
   id: string
   title: string
@@ -44,6 +69,7 @@ export interface TopicRow {
   batch_id: string | null
   created_at: string
   updated_at: string
+  custom_data: string | null // DB 存 JSON 字符串
 }
 
 export interface TopicFilter {
@@ -62,6 +88,8 @@ export interface TopicFilter {
   types?: string[]
   domains?: string[]
   difficulties?: string[]
+  /** 自定义字段筛选：fieldKey → 目标值（仅 string 类型字段；tags 类型用 listCustomFieldTags 聚合） */
+  custom_filters?: Record<string, string>
 }
 
 export type TopicCreateInput = Omit<
@@ -82,12 +110,25 @@ export type TopicUpdateInput = Partial<Omit<Topic, 'id' | 'created_at' | 'update
 /**
  * 反序列化：DB row -> Topic
  * - tags: JSON 字符串 -> 数组
+ * - custom_data: JSON 字符串 -> 对象
  * - weight / status: 兜底默认值
  */
 function rowToTopic(row: TopicRow): Topic {
+  let customData: Record<string, CustomFieldValue> | null = null
+  if (row.custom_data) {
+    try {
+      const parsed = JSON.parse(row.custom_data) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        customData = parsed as Record<string, CustomFieldValue>
+      }
+    } catch {
+      // 损坏 JSON 留空，不影响其他字段读取
+    }
+  }
   return {
     ...row,
     tags: row.tags ? JSON.parse(row.tags) : null,
+    custom_data: customData,
     weight: row.weight ?? 1.0,
     status: row.status ?? 'active',
     batch_id: row.batch_id ?? null
@@ -99,10 +140,15 @@ function rowToTopic(row: TopicRow): Topic {
  * - 标量字段：`AND column = ?`
  * - tags：任一匹配，`AND (tags LIKE ? OR tags LIKE ? ...)`
  * - keyword：`AND title LIKE ?`
+ * - custom_filters：`AND json_extract(custom_data, '$.fieldKey') = ?`
+ *   - fieldKey 必须通过 isValidIdentifier 校验，否则跳过（防注入）
+ *   - 值 '__unset__' 翻译为 IS NULL
  *
  * 返回的 where 字符串以 'WHERE 1=1' 开头，便于拼接。
+ *
+ * 导出供单元测试直接验证 SQL 拼接逻辑。
  */
-function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] } {
+export function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] } {
   if (!filter) {
     return { where: 'WHERE 1=1', params: [] }
   }
@@ -167,6 +213,20 @@ function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] 
     params.push(`%${escapedKeyword}%`)
   }
 
+  // 自定义字段筛选：json_extract(custom_data, '$.fieldKey') = ?
+  // fieldKey 必须为合法标识符；非法值跳过（不拼入 SQL）
+  if (filter.custom_filters) {
+    for (const [key, value] of Object.entries(filter.custom_filters)) {
+      if (!isValidIdentifier(key)) continue
+      if (value === '__unset__') {
+        conditions.push(`(json_extract(custom_data, '$.${key}') IS NULL)`)
+      } else {
+        conditions.push(`(json_extract(custom_data, '$.${key}') = ?)`)
+        params.push(value)
+      }
+    }
+  }
+
   const where = `WHERE 1=1${conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : ''}`
   return { where, params }
 }
@@ -180,6 +240,7 @@ function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] 
  * - v4 生成 id
  * - 自动生成 ISO 8601 时间戳
  * - tags 数组 JSON.stringify 后存储
+ * - custom_data 对象 JSON.stringify 后存储
  * - weight 默认 1.0，status 默认 'active'
  */
 function createTopic(data: TopicCreateInput): Topic {
@@ -189,12 +250,16 @@ function createTopic(data: TopicCreateInput): Topic {
   const weight = data.weight ?? 1.0
   const status = data.status ?? 'active'
   const tagsJson = data.tags ? JSON.stringify(data.tags) : null
+  const customDataJson =
+    data.custom_data && Object.keys(data.custom_data).length > 0
+      ? JSON.stringify(data.custom_data)
+      : null
 
   const stmt = db.prepare(`
     INSERT INTO topics (
       id, title, type, domain, difficulty, source, source_type,
-      tags, weight, status, batch_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tags, weight, status, batch_id, created_at, updated_at, custom_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   stmt.run(
@@ -210,7 +275,8 @@ function createTopic(data: TopicCreateInput): Topic {
     status,
     data.batch_id ?? null,
     now,
-    now
+    now,
+    customDataJson
   )
 
   const created = getTopicById(id)
@@ -236,8 +302,8 @@ function createMany(items: TopicCreateInput[]): Topic[] {
   const stmt = db.prepare(`
     INSERT INTO topics (
       id, title, type, domain, difficulty, source, source_type,
-      tags, weight, status, batch_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tags, weight, status, batch_id, created_at, updated_at, custom_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const insertMany = db.transaction((its: TopicCreateInput[]): Topic[] => {
@@ -247,6 +313,10 @@ function createMany(items: TopicCreateInput[]): Topic[] {
       const weight = data.weight ?? 1.0
       const status = data.status ?? 'active'
       const tagsJson = data.tags ? JSON.stringify(data.tags) : null
+      const customDataJson =
+        data.custom_data && Object.keys(data.custom_data).length > 0
+          ? JSON.stringify(data.custom_data)
+          : null
       stmt.run(
         id,
         data.title,
@@ -260,7 +330,8 @@ function createMany(items: TopicCreateInput[]): Topic[] {
         status,
         data.batch_id ?? null,
         now,
-        now
+        now,
+        customDataJson
       )
       const created = getTopicById(id)
       if (created) results.push(created)
@@ -312,6 +383,7 @@ function listTopics(filter?: TopicFilter): { items: Topic[]; total: number } {
 /**
  * 按 id 更新辩题，仅更新 data 中非 undefined 的字段。
  * tags 数组会 JSON.stringify。
+ * custom_data 对象会 JSON.stringify（空对象视为 null）。
  * 自动更新 updated_at。
  */
 function updateTopic(id: string, data: TopicUpdateInput): Topic | undefined {
@@ -342,6 +414,12 @@ function updateTopic(id: string, data: TopicUpdateInput): Topic | undefined {
   if (data.tags !== undefined) {
     setColumns.push('tags = ?')
     params.push(data.tags ? JSON.stringify(data.tags) : null)
+  }
+
+  if (data.custom_data !== undefined) {
+    setColumns.push('custom_data = ?')
+    const cd = data.custom_data
+    params.push(cd && Object.keys(cd).length > 0 ? JSON.stringify(cd) : null)
   }
 
   if (setColumns.length === 0) {
@@ -440,19 +518,18 @@ function countByFilter(filter?: TopicFilter): number {
 
 /**
  * 支持的分类维度。
- * - tags 维度不能用此方法（数组字段需拆 JSON），由调用方单独处理
+ * - 系统字段：type/domain/difficulty/source/source_type/status/batch_id
+ * - 自定义字段：任意通过 isValidIdentifier 校验的 fieldKey（走 json_extract 路径）
+ * - tags 维度不能用此方法（数组字段需拆 JSON），由 listAllTags 单独处理
  */
-export type CountableDimension =
-  | 'type'
-  | 'domain'
-  | 'difficulty'
-  | 'source'
-  | 'source_type'
-  | 'status'
-  | 'batch_id'
+export type CountableDimension = string
 
 /**
  * 按指定维度分组统计全库分布。
+ * - 系统字段（type/domain/difficulty/source/source_type/status/batch_id）走列查询
+ * - 其他字符串视为自定义字段 key，走 json_extract(custom_data, '$.key')
+ * - fieldKey 必须通过 isValidIdentifier 校验，否则抛错（防 SQL 注入）
+ *
  * 返回示例：[{ value: '价值辩', count: 234 }, { value: '政策辩', count: 156 }, ...]
  * 仅统计 status='active' 的题（与默认筛选一致）。
  * NULL 值聚合为 '(未设置)'。
@@ -460,15 +537,31 @@ export type CountableDimension =
 function countByDimension(
   dimension: CountableDimension
 ): Array<{ value: string; count: number }> {
+  if (!isValidIdentifier(dimension)) {
+    throw new Error(`[topicRepo] countByDimension: 非法字段名 "${dimension}"`)
+  }
   const db = getDb()
-  // dimension 是受限联合类型，非用户输入，可安全拼接
-  const rows = db.prepare(`
-    SELECT ${dimension} AS value, COUNT(*) AS count
-    FROM topics
-    WHERE status = 'active'
-    GROUP BY ${dimension}
-    ORDER BY count DESC
-  `).all() as Array<{ value: string | null; count: number }>
+
+  let rows: Array<{ value: string | null; count: number }>
+  if (SYSTEM_COUNTABLE_DIMENSIONS.has(dimension)) {
+    // 系统字段：直接列查询（dimension 已校验为合法标识符，可安全拼接）
+    rows = db.prepare(`
+      SELECT ${dimension} AS value, COUNT(*) AS count
+      FROM topics
+      WHERE status = 'active'
+      GROUP BY ${dimension}
+      ORDER BY count DESC
+    `).all() as Array<{ value: string | null; count: number }>
+  } else {
+    // 自定义字段：走 json_extract 路径
+    rows = db.prepare(`
+      SELECT json_extract(custom_data, '$.${dimension}') AS value, COUNT(*) AS count
+      FROM topics
+      WHERE status = 'active'
+      GROUP BY value
+      ORDER BY count DESC
+    `).all() as Array<{ value: string | null; count: number }>
+  }
   return rows.map((r) => ({
     value: r.value ?? '(未设置)',
     count: Number(r.count)
@@ -523,6 +616,91 @@ function clearAll(options: { keepOfficial: boolean }): number {
   return r.changes
 }
 
+/**
+ * 批量拉取系统字段的 distinct 值与出现次数。
+ * - 仅支持系统字段（type/domain/difficulty/source/source_type/status/batch_id）
+ * - 字段名必须通过 isValidIdentifier 校验，否则跳过（防注入）
+ * - 仅统计 status='active' 且字段非空（IS NOT NULL AND != ''）的行
+ *
+ * 用途：FilterPanel 候选值合并（系统候选 ∪ DB 实际值）。
+ *
+ * 返回示例：{ type: [{ value: '价值辩', count: 234 }, ...], difficulty: [...] }
+ */
+function listDistinctValues(
+  fields: string[]
+): Record<string, Array<{ value: string; count: number }>> {
+  const db = getDb()
+  const result: Record<string, Array<{ value: string; count: number }>> = {}
+
+  for (const f of fields) {
+    if (!isValidIdentifier(f)) continue
+    if (!SYSTEM_COUNTABLE_DIMENSIONS.has(f)) continue
+    // f 已校验为合法标识符 + 系统字段，可安全拼接
+    const rows = db
+      .prepare(
+        `SELECT ${f} AS value, COUNT(*) AS count
+         FROM topics
+         WHERE status = 'active' AND ${f} IS NOT NULL AND ${f} != ''
+         GROUP BY ${f}
+         ORDER BY count DESC`
+      )
+      .all() as Array<{ value: string | null; count: number }>
+    result[f] = rows.map((r) => ({ value: r.value ?? '', count: Number(r.count) }))
+  }
+  return result
+}
+
+/**
+ * 聚合某个 tags 类型自定义字段的全部 tag 值与出现次数（降序）。
+ * - 走 json_extract(custom_data, '$.fieldKey') 路径
+ * - fieldKey 必须通过 isValidIdentifier 校验，否则抛错（防注入）
+ * - 仅统计 status='active' 且 custom_data 非空的行
+ * - JS 层 JSON.parse 聚合，损坏 JSON 行跳过（不影响其他行）
+ *
+ * 用途：TopicLibrary 分类树的「自定义 tags 字段」维度计数。
+ *
+ * 返回示例：[{ value: '初赛', count: 12 }, { value: '复赛', count: 8 }, ...]
+ */
+function listCustomFieldTags(
+  fieldKey: string
+): Array<{ value: string; count: number }> {
+  if (!isValidIdentifier(fieldKey)) {
+    throw new Error(`[topicRepo] listCustomFieldTags: 非法字段名 "${fieldKey}"`)
+  }
+  const db = getDb()
+  // fieldKey 已校验，可安全拼入 SQL
+  const rows = db
+    .prepare(
+      `SELECT json_extract(custom_data, '$.${fieldKey}') AS raw
+       FROM topics
+       WHERE status = 'active' AND custom_data IS NOT NULL`
+    )
+    .all() as Array<{ raw: string | null }>
+
+  const counter = new Map<string, number>()
+  for (const row of rows) {
+    if (!row.raw) continue
+    try {
+      const parsed = JSON.parse(row.raw) as unknown
+      // tags 类型期望数组；如果是字符串则视为单值
+      if (Array.isArray(parsed)) {
+        for (const tag of parsed) {
+          if (typeof tag !== 'string' || tag.length === 0) continue
+          counter.set(tag, (counter.get(tag) ?? 0) + 1)
+        }
+      } else if (typeof parsed === 'string' && parsed.length > 0) {
+        counter.set(parsed, (counter.get(parsed) ?? 0) + 1)
+      }
+    } catch {
+      // 损坏 JSON 跳过
+    }
+  }
+
+  return Array.from(counter.entries())
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -541,5 +719,7 @@ export const topicRepo = {
   countByFilter,
   countByDimension,
   listAllTags,
+  listDistinctValues,
+  listCustomFieldTags,
   clearAll
 }

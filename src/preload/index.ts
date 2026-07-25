@@ -63,10 +63,22 @@ const topicAPI = {
     invoke(IPC_CHANNELS.TOPIC_UPDATE_WEIGHT, id, weight),
   count: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter),
   countByDimension: (
-    dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
+    dimension: string
   ) => invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_COUNT_BY_DIMENSION, dimension),
   listAllTags: () =>
-    invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_LIST_ALL_TAGS)
+    invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_LIST_ALL_TAGS),
+  /** 批量拉取系统字段的 distinct 值（用于 FilterPanel 候选值合并） */
+  listValues: (fields: string[]) =>
+    invoke<Record<string, Array<{ value: string; count: number }>>>(
+      IPC_CHANNELS.TOPIC_LIST_VALUES,
+      fields
+    ),
+  /** 聚合某个 tags 类型自定义字段的全部 tag 值与出现次数 */
+  listCustomFieldTags: (fieldKey: string) =>
+    invoke<Array<{ value: string; count: number }>>(
+      IPC_CHANNELS.TOPIC_LIST_CUSTOM_FIELD_TAGS,
+      fieldKey
+    )
 }
 
 // ============================================================

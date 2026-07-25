@@ -79,4 +79,16 @@ export function registerTopicIpc(): void {
   ipcMain.handle(IPC_CHANNELS.TOPIC_LIST_ALL_TAGS, () =>
     wrap(() => topicRepo.listAllTags())
   )
+
+  // 批量拉取系统字段的 distinct 值（用于 FilterPanel 候选值合并）
+  // 入参 fields: string[]，如 ['type','domain','difficulty','source','source_type']
+  ipcMain.handle(IPC_CHANNELS.TOPIC_LIST_VALUES, (_e, fields: string[]) =>
+    wrap(() => topicRepo.listDistinctValues(fields))
+  )
+
+  // 聚合某个 tags 类型自定义字段的全部 tag 值与出现次数（用于「自定义 tags」维度分类树）
+  // 入参 fieldKey: string，如 'event_tags'
+  ipcMain.handle(IPC_CHANNELS.TOPIC_LIST_CUSTOM_FIELD_TAGS, (_e, fieldKey: string) =>
+    wrap(() => topicRepo.listCustomFieldTags(fieldKey))
+  )
 }

@@ -80,9 +80,17 @@ export interface TopicAPI {
   updateWeight: (id: string, weight: number) => Promise<ApiResponse<boolean>>
   count: (filter?: TopicFilter) => Promise<ApiResponse<number>>
   countByDimension: (
-    dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
+    dimension: string
   ) => Promise<ApiResponse<Array<{ value: string; count: number }>>>
   listAllTags: () => Promise<ApiResponse<Array<{ value: string; count: number }>>>
+  /** 批量拉取系统字段的 distinct 值（用于 FilterPanel 候选值合并） */
+  listValues: (
+    fields: string[]
+  ) => Promise<ApiResponse<Record<string, Array<{ value: string; count: number }>>>>
+  /** 聚合某个 tags 类型自定义字段的全部 tag 值与出现次数 */
+  listCustomFieldTags: (
+    fieldKey: string
+  ) => Promise<ApiResponse<Array<{ value: string; count: number }>>>
 }
 
 export interface EventAPI {
