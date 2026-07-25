@@ -8,6 +8,7 @@ import {
   SOURCE_OPTIONS,
   SOURCE_TYPE_OPTIONS
 } from './FilterPanel';
+import { spacing } from '../styles/tokens';
 
 export interface TopicEditModalProps {
   open: boolean;
@@ -75,6 +76,8 @@ export default function TopicEditModal({
         onCancel={onCancel}
         okText="保存"
         cancelText="取消"
+        okButtonProps={{ size: 'middle' }}
+        cancelButtonProps={{ size: 'middle' }}
         width={560}
         destroyOnClose
       >
@@ -87,15 +90,15 @@ export default function TopicEditModal({
             <Input.TextArea rows={2} maxLength={200} showCount placeholder="请输入辩题标题" />
           </Form.Item>
 
-          <Space style={{ display: 'flex' }} size={12}>
-            <Form.Item name="type" label="类型" style={{ flex: 1, marginBottom: 12 }}>
+          <Space style={{ display: 'flex' }} size={spacing.md}>
+            <Form.Item name="type" label="类型" style={{ flex: 1, marginBottom: spacing.md }}>
               <Select
                 allowClear
                 placeholder="选择类型"
                 options={TYPE_OPTIONS.map((v) => ({ label: v, value: v }))}
               />
             </Form.Item>
-            <Form.Item name="domain" label="领域" style={{ flex: 1, marginBottom: 12 }}>
+            <Form.Item name="domain" label="领域" style={{ flex: 1, marginBottom: spacing.md }}>
               <Select
                 allowClear
                 placeholder="选择领域"
@@ -104,15 +107,15 @@ export default function TopicEditModal({
             </Form.Item>
           </Space>
 
-          <Space style={{ display: 'flex' }} size={12}>
-            <Form.Item name="difficulty" label="难度" style={{ flex: 1, marginBottom: 12 }}>
+          <Space style={{ display: 'flex' }} size={spacing.md}>
+            <Form.Item name="difficulty" label="难度" style={{ flex: 1, marginBottom: spacing.md }}>
               <Select
                 allowClear
                 placeholder="选择难度"
                 options={DIFFICULTY_OPTIONS.map((v) => ({ label: v, value: v }))}
               />
             </Form.Item>
-            <Form.Item name="source" label="来源" style={{ flex: 1, marginBottom: 12 }}>
+            <Form.Item name="source" label="来源" style={{ flex: 1, marginBottom: spacing.md }}>
               <Select
                 allowClear
                 placeholder="选择来源"
@@ -121,14 +124,14 @@ export default function TopicEditModal({
             </Form.Item>
           </Space>
 
-          <Space style={{ display: 'flex' }} size={12}>
-            <Form.Item name="source_type" label="来源类型" style={{ flex: 1, marginBottom: 12 }}>
+          <Space style={{ display: 'flex' }} size={spacing.md}>
+            <Form.Item name="source_type" label="来源类型" style={{ flex: 1, marginBottom: spacing.md }}>
               <Select
                 placeholder="选择来源类型"
                 options={SOURCE_TYPE_OPTIONS.map((v) => ({ label: v, value: v }))}
               />
             </Form.Item>
-            <Form.Item name="weight" label="权重" style={{ flex: 1, marginBottom: 12 }}>
+            <Form.Item name="weight" label="权重" style={{ flex: 1, marginBottom: spacing.md }}>
               <InputNumber min={0} max={10} step={0.1} style={{ width: '100%' }} />
             </Form.Item>
           </Space>
