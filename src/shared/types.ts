@@ -290,19 +290,32 @@ export type ApiResult<T = unknown> = ApiResponse<T>
 
 // ---------- 标签显示配置 ----------
 
+/** 标签类别（受 tagDisplay 配置控制） */
+export type TagCategory = 'type' | 'difficulty' | 'source_type' | 'custom';
+
 /**
  * 标签显示配置（存储在 settings 表 key='ui.tagDisplay'）
  *
  * 行为：
- * - enabled=false：不显示任何标签
- * - enabled=true + selectedTags 空：显示全部标签
- * - enabled=true + selectedTags 非空：只显示选中的标签
+ * - categoryEnabled[cat]=false：不显示该类别任何标签
+ * - categoryEnabled[cat]=true + selectedValues[cat] 空：显示该类别全部
+ * - categoryEnabled[cat]=true + selectedValues[cat] 非空：只显示选中的
  */
 export interface TagDisplayConfig {
-  /** 总开关：是否显示标签 */
-  enabled: boolean;
-  /** 选中的标签值（白名单）。空数组=显示全部，非空=只显示选中的 */
-  selectedTags: string[];
+  /** 各类别开关 */
+  categoryEnabled: {
+    type: boolean;
+    difficulty: boolean;
+    source_type: boolean;
+    custom: boolean;
+  };
+  /** 各类别选中的标签值（白名单）。空数组=显示该类别全部，非空=只显示选中的 */
+  selectedValues: {
+    type: string[];
+    difficulty: string[];
+    source_type: string[];
+    custom: string[];
+  };
 }
 
 // ---------- 通道名常量 ----------
