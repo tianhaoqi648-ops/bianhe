@@ -53,13 +53,6 @@ export interface EventFilter {
   pageSize?: number
 }
 
-export interface SessionListFilter {
-  // 不在这里用，仅声明
-  event_id?: string
-  round_id?: string
-  operator?: string
-}
-
 // ============================================================
 // 赛事 CRUD
 // ============================================================
