@@ -1,6 +1,20 @@
 import { create } from 'zustand';
-import type { ApiResponse } from '../../../shared/types';
-import { RESET_CATEGORY_KEYS, type ResetCategory } from '../../../shared/settings-defaults';
+import type { ApiResponse, ResetDataRequest, ResetDataResponse } from '../../../shared/types';
+import {
+  CONFIG_RESET_KEYS,
+  OFFICIAL_TOPIC_SETTINGS_KEYS,
+  type ConfigResetCategory,
+  type ResetCategory
+} from '../../../shared/settings-defaults';
+
+/** 数据类重置选项（与 ResetDataRequest.dataOptions 一致） */
+export interface DataResetOptions {
+  topics?: { keepOfficial: boolean };
+  events?: boolean;
+  drawSessions?: boolean;
+  importBatches?: boolean;
+  auditLogs?: boolean;
+}
 
 interface SettingsState {
   /** 内存中的全部设置（key -> value） */
@@ -20,6 +34,17 @@ interface SettingsState {
   deleteBatch: (keys: string[]) => Promise<number>;
   /** 按类别重置（语义化封装，内部映射 keys 调 deleteBatch） */
   resetByCategories: (categories: ResetCategory[]) => Promise<number>;
+  /**
+   * 统一数据重置入口：配置类 + 数据类。
+   * - 配置类：根据 configCategories 计算 keys 并集
+   * - 数据类：透传 dataOptions（topics/events/drawSessions/importBatches/auditLogs）
+   * - 同步更新内存：移除已删除的配置 key；题库重置不保留官方时同步移除 official_* 标记
+   * 返回各表删除行数详情。
+   */
+  resetAll: (
+    configCategories: ConfigResetCategory[],
+    dataOptions: DataResetOptions
+  ) => Promise<ResetDataResponse>;
 }
 
 function extractError<T>(res: ApiResponse<unknown>): T {
@@ -81,10 +106,38 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   resetByCategories: async (categories) => {
     const keys = Array.from(
-      new Set(categories.flatMap((c) => RESET_CATEGORY_KEYS[c] ?? []))
+      new Set(categories.flatMap((c) => CONFIG_RESET_KEYS[c] ?? []))
     );
     if (keys.length === 0) return 0;
     return await get().deleteBatch(keys);
+  },
+
+  resetAll: async (configCategories, dataOptions) => {
+    // 1. 计算 configKeys 并集
+    const configKeys = Array.from(
+      new Set(configCategories.flatMap((c) => CONFIG_RESET_KEYS[c] ?? []))
+    );
+
+    // 2. 调主进程统一重置入口
+    const req: ResetDataRequest = { configKeys, dataOptions };
+    const res = await window.systemAPI.resetData(req);
+    const data = extractError<ResetDataResponse>(res);
+
+    // 3. 同步更新内存：移除已删除的配置 key
+    const keysToRemove = new Set<string>(configKeys);
+    // 题库不保留官方时，official_* 标记在主进程也被删除，同步从内存移除
+    if (dataOptions.topics && !dataOptions.topics.keepOfficial) {
+      for (const k of OFFICIAL_TOPIC_SETTINGS_KEYS) keysToRemove.add(k);
+    }
+    if (keysToRemove.size > 0) {
+      set((s) => {
+        const next = { ...s.settings };
+        for (const k of keysToRemove) delete next[k];
+        return { settings: next };
+      });
+    }
+
+    return data;
   }
 }));
 
