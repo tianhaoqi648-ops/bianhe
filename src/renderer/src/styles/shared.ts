@@ -42,7 +42,8 @@ export const statCardStyle = (color: string): React.CSSProperties => ({
   position: 'relative',
   background: '#fff',
   border: '1px solid #f0f0f0',
-  boxShadow: shadow.sm
+  boxShadow: shadow.sm,
+  borderLeft: `4px solid ${color}`
 })
 
 /** 统计卡片左侧色块装饰 */
