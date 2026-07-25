@@ -1,6 +1,8 @@
 import { Input, Select, Tag, Space, Button, Divider, theme } from 'antd';
 import { SearchOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import type { TopicFilter } from '../../../shared/types';
+import { cardStyle } from '../styles/shared';
+import { spacing } from '../styles/tokens';
 
 // 维度选项（与设计文档 4.1 节字段对齐）
 export const TYPE_OPTIONS = ['价值辩', '政策辩', '事实辩', '哲理辩', '娱乐辩'];
@@ -47,9 +49,9 @@ export default function FilterPanel({
   return (
     <div
       style={{
-        padding: 16,
+        ...cardStyle,
+        padding: spacing.lg,
         background: token.colorBgContainer,
-        borderRadius: 8,
         border: `1px solid ${token.colorBorderSecondary}`
       }}
     >
@@ -61,14 +63,14 @@ export default function FilterPanel({
         prefix={<SearchOutlined style={{ color: token.colorTextSecondary }} />}
         value={filter.keyword ?? ''}
         onChange={(e) => onChange({ keyword: e.target.value || undefined })}
-        style={{ marginBottom: 12 }}
+        style={{ marginBottom: spacing.md }}
       />
 
       {/* 关键词包含/排除 */}
-      <div style={{ marginBottom: 12 }}>
-        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+      <div style={{ marginBottom: spacing.md }}>
+        <Space direction="vertical" size={spacing.sm} style={{ width: '100%' }}>
           <div>
-            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: 8 }}>
+            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: spacing.sm }}>
               包含关键词：
             </span>
             <Select
@@ -81,7 +83,7 @@ export default function FilterPanel({
             />
           </div>
           <div>
-            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: 8 }}>
+            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: spacing.sm }}>
               排除关键词：
             </span>
             <Select
@@ -96,10 +98,12 @@ export default function FilterPanel({
         </Space>
       </div>
 
-      <Divider style={{ margin: '8px 0' }} />
+      <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
+        维度筛选
+      </Divider>
 
       {/* 维度筛选 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md }}>
         <Field label="类型">
           <Select
             size="small"
@@ -181,9 +185,11 @@ export default function FilterPanel({
       {/* 标签筛选 */}
       {tagOptions.length > 0 && (
         <>
-          <Divider style={{ margin: '8px 0' }} />
+          <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
+            标签
+          </Divider>
           <div>
-            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: 8 }}>
+            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginRight: spacing.sm }}>
               标签：
             </span>
             <Select
@@ -191,7 +197,7 @@ export default function FilterPanel({
               size="small"
               allowClear
               placeholder="选择标签"
-              style={{ width: '100%', marginTop: 4 }}
+              style={{ width: '100%', marginTop: spacing.xs }}
               value={filter.tags}
               onChange={(v) => onChange({ tags: v as string[] | undefined })}
               options={tagOptions.map((t) => ({ label: `#${t}`, value: t }))}
@@ -210,12 +216,12 @@ export default function FilterPanel({
       )}
 
       {/* 已选摘要 + 重置 */}
-      <Divider style={{ margin: '8px 0' }} />
+      <Divider style={{ margin: `${spacing.sm} 0` }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
           已筛选维度：{countActiveFilters(filter) + includeKeywords.length + excludeKeywords.length} 项
         </span>
-        <Button size="small" type="link" icon={<CloseCircleOutlined />} onClick={onReset}>
+        <Button size="middle" type="link" icon={<CloseCircleOutlined />} onClick={onReset}>
           重置
         </Button>
       </div>
