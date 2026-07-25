@@ -291,7 +291,7 @@ export const IPC_CHANNELS = {
   EVENT_GET: 'event:get',
   EVENT_CREATE: 'event:create',
   EVENT_UPDATE: 'event:update',
-  EVENT_DELETE: 'event:event_delete',
+  EVENT_DELETE: 'event:delete',
   // round
   ROUND_LIST_BY_EVENT: 'round:listByEvent',
   ROUND_GET: 'round:get',
