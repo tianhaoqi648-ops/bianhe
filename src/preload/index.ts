@@ -167,7 +167,16 @@ const importAPI = {
     invoke<DuplicateGroup[]>(IPC_CHANNELS.IMPORT_FIND_DUPLICATES, topics, options),
   revokeBatch: (batchId: string) =>
     invoke<{ deletedCount: number }>(IPC_CHANNELS.IMPORT_REVOKE_BATCH, batchId),
-  listBatches: () => invoke<ImportBatch[]>(IPC_CHANNELS.IMPORT_LIST_BATCHES)
+  listBatches: () => invoke<ImportBatch[]>(IPC_CHANNELS.IMPORT_LIST_BATCHES),
+  applyFieldMapping: (
+    parsed: import('../shared/types').ParsedResult,
+    fieldMapping: import('../shared/types').FieldMapping
+  ) =>
+    invoke<import('../shared/types').ParsedResult>(
+      IPC_CHANNELS.IMPORT_APPLY_FIELD_MAPPING,
+      parsed,
+      fieldMapping
+    )
 }
 
 // ============================================================
