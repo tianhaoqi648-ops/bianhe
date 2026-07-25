@@ -11,12 +11,13 @@ import {
 } from '@ant-design/icons';
 import { useState } from 'react';
 import type { Topic } from '../../../shared/types';
+import { gradient } from '../styles/tokens';
 
-// 难度颜色映射
-const DIFFICULTY_COLOR: Record<string, string> = {
-  入门级: 'green',
-  进阶级: 'orange',
-  专业级: 'red'
+// 难度渐变色映射（入门=绿渐变、进阶=橙渐变、专业=红渐变）
+const DIFFICULTY_GRADIENT: Record<string, string> = {
+  入门级: gradient.difficultyEasy,
+  进阶级: gradient.difficultyMid,
+  专业级: gradient.difficultyHard
 };
 
 // 来源类型颜色
@@ -87,9 +88,14 @@ export default function TopicCard({
       size="small"
       hoverable
       style={{
+        position: 'relative',
         borderColor: selected ? token.colorPrimary : token.colorBorderSecondary,
-        borderWidth: selected ? 2 : 1,
-        opacity: isBlacklisted ? 0.6 : 1
+        borderWidth: selected ? 1 : 1,
+        boxShadow: selected
+          ? '0 4px 12px rgba(22,119,255,0.15)'
+          : undefined,
+        opacity: isBlacklisted ? 0.6 : 1,
+        overflow: 'hidden'
       }}
       onClick={(e) => {
         // 点击卡片空白处触发选择（避免点击按钮/菜单时触发）
@@ -99,15 +105,29 @@ export default function TopicCard({
         onSelect?.(topic.id, !selected);
       }}
     >
+      {/* 选中态顶部 2px 蓝条 */}
+      {selected && (
+        <span
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            right: 0,
+            height: 2,
+            background: token.colorPrimary,
+            zIndex: 1
+          }}
+        />
+      )}
       {/* 标题行 */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
         <div
           style={{
             flex: 1,
             fontWeight: 500,
-            fontSize: 14,
+            fontSize: 15,
             color: token.colorText,
-            lineHeight: 1.5,
+            lineHeight: 1.6,
             paddingRight: 4,
             textDecoration: isBlacklisted ? 'line-through' : 'none'
           }}
@@ -126,7 +146,15 @@ export default function TopicCard({
       <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {topic.type && <Tag color="geekblue">{topic.type}</Tag>}
         {topic.difficulty && (
-          <Tag color={DIFFICULTY_COLOR[topic.difficulty] ?? 'default'}>{topic.difficulty}</Tag>
+          <Tag
+            style={{
+              background: DIFFICULTY_GRADIENT[topic.difficulty] ?? undefined,
+              color: '#fff',
+              border: 'none'
+            }}
+          >
+            {topic.difficulty}
+          </Tag>
         )}
         {topic.source_type && (
           <Tag color={SOURCE_TYPE_COLOR[topic.source_type] ?? 'default'}>
@@ -194,15 +222,16 @@ export default function TopicCard({
             />
           ) : (
             <Tooltip title="点击修改权重">
-              <span
-                style={{ cursor: 'pointer', color: token.colorPrimary }}
+              <Tag
+                color="blue"
+                style={{ cursor: 'pointer', margin: 0 }}
                 onClick={(e) => {
                   e.stopPropagation();
                   setWeightEditing(true);
                 }}
               >
                 {topic.weight.toFixed(1)}
-              </span>
+              </Tag>
             </Tooltip>
           )}
         </Space>
@@ -218,6 +247,7 @@ export function TopicListItem({
   onDelete,
   onToggleStatus
 }: Omit<TopicCardProps, 'selected' | 'onSelect'>) {
+  const { token } = theme.useToken();
   const isFavorited = topic.status === 'favorited';
   const isBlacklisted = topic.status === 'blacklisted';
 
@@ -253,8 +283,8 @@ export function TopicListItem({
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '12px 16px',
-        borderBottom: '1px solid #f0f0f0'
+        padding: '16px 20px',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -264,7 +294,7 @@ export function TopicListItem({
             fontSize: 14,
             marginBottom: 4,
             textDecoration: isBlacklisted ? 'line-through' : 'none',
-            color: isBlacklisted ? '#999' : 'inherit'
+            color: isBlacklisted ? token.colorTextDisabled : 'inherit'
           }}
         >
           {isFavorited && <StarFilled style={{ color: '#faad14', marginRight: 6 }} />}
@@ -273,7 +303,13 @@ export function TopicListItem({
         <Space size={4} wrap>
           {topic.type && <Tag color="geekblue">{topic.type}</Tag>}
           {topic.difficulty && (
-            <Tag color={DIFFICULTY_COLOR[topic.difficulty] ?? 'default'}>
+            <Tag
+              style={{
+                background: DIFFICULTY_GRADIENT[topic.difficulty] ?? undefined,
+                color: '#fff',
+                border: 'none'
+              }}
+            >
               {topic.difficulty}
             </Tag>
           )}
