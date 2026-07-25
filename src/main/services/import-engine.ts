@@ -473,7 +473,7 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
   }
 
   const headers = (rows[0] as any[]).map((h) => String(h ?? '').trim())
-  const { mapping, titleField } = buildFieldMapping(headers)
+  const { mapping, titleField, unmatchedColumns } = buildFieldMapping(headers)
 
   // 多 sheet 文件信息性提示（不阻止导入，仅告知用户当前导入的是哪张表）
   const sheetCount = workbook.SheetNames.length
@@ -494,7 +494,9 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
         `未识别到 title 列（支持的别名：标题 / 题目 / 辩题 / 辩题标题 / 名称 / title / topic，大小写不敏感）`,
         `实际检测到的表头：${actualHeaders}`,
         `请检查表头第一行是否包含上述任一别名，或修改您的表头后重试`
-      ]
+      ],
+      unmatchedColumns,
+      rawTable: { headers, rows }
     }
   }
 
@@ -512,7 +514,9 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
   return {
     topics,
     mapping,
-    warnings: [...sheetNote, ...warnings, ...collectValueMismatchWarnings(topics)]
+    warnings: [...sheetNote, ...warnings, ...collectValueMismatchWarnings(topics)],
+    unmatchedColumns,
+    rawTable: { headers, rows }
   }
 }
 

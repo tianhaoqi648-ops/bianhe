@@ -16,7 +16,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import * as XLSX from 'xlsx'
-import { parseFile, HEADER_MAPPING } from '../import-engine'
+import { parseFile, HEADER_MAPPING, applyFieldMapping } from '../import-engine'
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures')
 
@@ -373,6 +373,149 @@ describe('parseFile XLSX buffer 读取路径（修复 readFile 缺失）', () =>
       expect(result.topics).toHaveLength(1000)
       expect(result.topics[0].title).toContain('测试辩题0')
       expect(result.topics[999].title).toContain('测试辩题999')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+// ============================================================
+// unmatchedColumns + applyFieldMapping
+// ============================================================
+
+describe('unmatchedColumns 收集', () => {
+  it('含「赛事」列的 xlsx → unmatchedColumns 含「赛事」', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '类型', '赛事'],
+          ['AI 是否应被禁止', '价值辩', '新国辩'],
+          ['死刑应否废除', '政策辩', '世锦赛']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.unmatchedColumns).toContain('赛事')
+      expect(result.mapping['标题']).toBe('title')
+      expect(result.mapping['类型']).toBe('type')
+      // 系统字段不被误判为 unmatched
+      expect(result.unmatchedColumns).not.toContain('标题')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('全部列都已识别 → unmatchedColumns 为空数组', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '类型', '难度'],
+          ['测试题1', '价值辩', '入门级']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.unmatchedColumns).toEqual([])
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('applyFieldMapping', () => {
+  it('kind=create → 值写入 custom_data', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '赛事'],
+          ['题1', '新国辩'],
+          ['题2', '世锦赛']
+        ]
+      }
+    ])
+    try {
+      const parsed = await parseFile(tmpPath, 'xlsx')
+      const fieldMapping = {
+        赛事: { kind: 'create' as const, fieldLabel: '赛事', fieldType: 'string' as const }
+      }
+      const result = applyFieldMapping(parsed, fieldMapping)
+      expect(result.topics).toHaveLength(2)
+      expect(result.topics[0].custom_data?.['赛事']).toBe('新国辩')
+      expect(result.topics[1].custom_data?.['赛事']).toBe('世锦赛')
+      expect(result.unmatchedColumns).toEqual([])
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('kind=bind → 值绑定到系统字段', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '赛事'],
+          ['题1', '新国辩']
+        ]
+      }
+    ])
+    try {
+      const parsed = await parseFile(tmpPath, 'xlsx')
+      const fieldMapping = {
+        赛事: { kind: 'bind' as const, fieldKey: 'source' }
+      }
+      const result = applyFieldMapping(parsed, fieldMapping)
+      expect(result.topics[0].source).toBe('新国辩')
+      expect(result.topics[0].custom_data).toBeUndefined()
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('kind=ignore → 该列值被丢弃', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '赛事'],
+          ['题1', '新国辩']
+        ]
+      }
+    ])
+    try {
+      const parsed = await parseFile(tmpPath, 'xlsx')
+      const fieldMapping = {
+        赛事: { kind: 'ignore' as const }
+      }
+      const result = applyFieldMapping(parsed, fieldMapping)
+      expect(result.topics[0].source).toBeNull()
+      expect(result.topics[0].custom_data).toBeUndefined()
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('kind=create + fieldType=tags → custom_data 为字符串数组', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '主题词'],
+          ['题1', 'AI,伦理,科技']
+        ]
+      }
+    ])
+    try {
+      const parsed = await parseFile(tmpPath, 'xlsx')
+      const fieldMapping = {
+        主题词: { kind: 'create' as const, fieldLabel: '主题词', fieldType: 'tags' as const }
+      }
+      const result = applyFieldMapping(parsed, fieldMapping)
+      expect(result.topics[0].custom_data?.['主题词']).toEqual(['AI', '伦理', '科技'])
     } finally {
       fs.unlinkSync(tmpPath)
     }
