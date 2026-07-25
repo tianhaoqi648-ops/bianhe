@@ -46,6 +46,37 @@ export interface DedupOptions {
 // ============================================================
 
 /**
+ * 提取标题的字符级 bigram 集合（去空白）。
+ * 用于构建倒排索引，预筛可能的相似对，避免 O(n²) 全两两比较。
+ *
+ * 例：'人工智能伦理' → Set { '人工', '工智', '智能', '能伦', '伦理' }
+ */
+function extractBigrams(text: string): Set<string> {
+  const cleaned = (text || '').replace(/\s+/g, '')
+  const bigrams = new Set<string>()
+  for (let i = 0; i < cleaned.length - 1; i++) {
+    bigrams.add(cleaned.slice(i, i + 2))
+  }
+  return bigrams
+}
+
+/**
+ * 为辩题列表构建 bigram → 主题索引列表 的倒排索引。
+ * 索引值为 topics 数组的下标，便于后续 O(1) 查找共享某 bigram 的所有主题。
+ */
+function buildBigramIndex(topics: Topic[]): Map<string, Set<number>> {
+  const index = new Map<string, Set<number>>()
+  topics.forEach((t, i) => {
+    const bigrams = extractBigrams(t.title)
+    bigrams.forEach((b) => {
+      if (!index.has(b)) index.set(b, new Set())
+      index.get(b)!.add(i)
+    })
+  })
+  return index
+}
+
+/**
  * 内置简易停用词表（中文高频虚词 + 常见辩论术语修饰词）。
  */
 const STOP_WORDS = new Set<string>([
@@ -298,17 +329,52 @@ export async function findDuplicates(
   }
 
   // 2. 文本匹配层（对未归组的对也跑一遍，补充 AI 漏网的）
+  //    使用 bigram 倒排索引预筛候选对，避免 O(n²) 全两两比较。
+  //    若两条辩题无任何共享 bigram，则不可能命中 exact / levenshtein(<5) / keyword(>0.8)
+  //    中的任一层（实测三层数学上都要求至少一个共享 2-gram），可直接跳过。
+  const bigramIndex = buildBigramIndex(topics)
+  const candidatePairs = new Set<string>()
   for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const { similarity, reason } = computeTextSimilarity(
-        topics[i],
-        topics[j],
-        levenshteinThreshold,
-        keywordThreshold
-      )
-      if (reason !== null && similarity > 0) {
-        uf.union(i, j, similarity, reason)
+    const bigrams = extractBigrams(topics[i].title)
+    for (const b of bigrams) {
+      const matches = bigramIndex.get(b)
+      if (matches) {
+        for (const j of matches) {
+          if (j > i) {
+            candidatePairs.add(`${i}-${j}`)
+          }
+        }
       }
+    }
+  }
+  // 此外，标题完全相同的对必须被纳入候选（兜底短字符串 / 单字符标题场景）：
+  // 这些标题的 bigram 集合可能为空（长度 < 2），但 exact 层仍应命中。
+  const titleMap = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) {
+    const title = (topics[i].title || '').trim()
+    if (title.length === 0) continue
+    if (!titleMap.has(title)) titleMap.set(title, [])
+    titleMap.get(title)!.push(i)
+  }
+  for (const indices of titleMap.values()) {
+    for (let a = 0; a < indices.length; a++) {
+      for (let b = a + 1; b < indices.length; b++) {
+        candidatePairs.add(`${indices[a]}-${indices[b]}`)
+      }
+    }
+  }
+  for (const pair of candidatePairs) {
+    const sepIdx = pair.indexOf('-')
+    const i = Number(pair.slice(0, sepIdx))
+    const j = Number(pair.slice(sepIdx + 1))
+    const { similarity, reason } = computeTextSimilarity(
+      topics[i],
+      topics[j],
+      levenshteinThreshold,
+      keywordThreshold
+    )
+    if (reason !== null && similarity > 0) {
+      uf.union(i, j, similarity, reason)
     }
   }
 
