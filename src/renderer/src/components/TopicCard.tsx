@@ -152,10 +152,10 @@ export default function TopicCard({
       {/* 标签行（应用显示配置） */}
       {(() => {
         const cfg = loadTagDisplayConfig(settings);
-        const typeTag = filterTag(cfg, topic.type);
-        const diffTag = filterTag(cfg, topic.difficulty);
-        const sourceTag = filterTag(cfg, topic.source_type);
-        const customTags = filterTags(cfg, topic.tags);
+        const typeTag = filterTag(cfg, topic.type, 'type');
+        const diffTag = filterTag(cfg, topic.difficulty, 'difficulty');
+        const sourceTag = filterTag(cfg, topic.source_type, 'source_type');
+        const customTags = filterTags(cfg, topic.tags, 'custom');
         const hasDimTags = typeTag || diffTag || sourceTag || isFavorited || isBlacklisted;
         return (
           <>
@@ -323,10 +323,10 @@ export function TopicListItem({
         <Space size={4} wrap>
           {(() => {
             const cfg = loadTagDisplayConfig(settings);
-            const typeTag = filterTag(cfg, topic.type);
-            const diffTag = filterTag(cfg, topic.difficulty);
-            const sourceTag = filterTag(cfg, topic.source);
-            const customTags = filterTags(cfg, topic.tags).slice(0, 3);
+            const typeTag = filterTag(cfg, topic.type, 'type');
+            const diffTag = filterTag(cfg, topic.difficulty, 'difficulty');
+            const sourceTag = filterTag(cfg, topic.source_type, 'source_type');
+            const customTags = filterTags(cfg, topic.tags, 'custom').slice(0, 3);
             return (
               <>
                 {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
