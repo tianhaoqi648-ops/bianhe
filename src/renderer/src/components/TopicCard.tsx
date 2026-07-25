@@ -12,6 +12,12 @@ import {
 import { useState } from 'react';
 import type { Topic } from '../../../shared/types';
 import { gradient } from '../styles/tokens';
+import { useSettingsStore } from '../stores/settingsStore';
+import {
+  loadTagDisplayConfig,
+  filterTag,
+  filterTags
+} from '../utils/tagDisplay';
 
 // 难度渐变色映射（入门=绿渐变、进阶=橙渐变、专业=红渐变）
 const DIFFICULTY_GRADIENT: Record<string, string> = {
@@ -48,6 +54,7 @@ export default function TopicCard({
 }: TopicCardProps) {
   const { token } = theme.useToken();
   const [weightEditing, setWeightEditing] = useState(false);
+  const settings = useSettingsStore((s) => s.settings);
 
   const isFavorited = topic.status === 'favorited';
   const isBlacklisted = topic.status === 'blacklisted';
@@ -142,47 +149,57 @@ export default function TopicCard({
         </Dropdown>
       </div>
 
-      {/* 标签行 */}
-      <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {topic.type && <Tag color="geekblue">{topic.type}</Tag>}
-        {topic.difficulty && (
-          <Tag
-            style={{
-              background: DIFFICULTY_GRADIENT[topic.difficulty] ?? undefined,
-              color: '#fff',
-              border: 'none'
-            }}
-          >
-            {topic.difficulty}
-          </Tag>
-        )}
-        {topic.source_type && (
-          <Tag color={SOURCE_TYPE_COLOR[topic.source_type] ?? 'default'}>
-            {topic.source_type}
-          </Tag>
-        )}
-        {isFavorited && (
-          <Tag icon={<StarFilled />} color="gold">
-            收藏
-          </Tag>
-        )}
-        {isBlacklisted && (
-          <Tag icon={<StopOutlined />} color="error">
-            黑名单
-          </Tag>
-        )}
-      </div>
-
-      {/* 自定义标签 */}
-      {topic.tags && topic.tags.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          {topic.tags.map((t) => (
-            <Tag key={t} style={{ marginBottom: 2 }}>
-              #{t}
-            </Tag>
-          ))}
-        </div>
-      )}
+      {/* 标签行（应用显示配置） */}
+      {(() => {
+        const cfg = loadTagDisplayConfig(settings);
+        const typeTag = filterTag(cfg, topic.type);
+        const diffTag = filterTag(cfg, topic.difficulty);
+        const sourceTag = filterTag(cfg, topic.source_type);
+        const customTags = filterTags(cfg, topic.tags);
+        const hasDimTags = typeTag || diffTag || sourceTag || isFavorited || isBlacklisted;
+        return (
+          <>
+            {hasDimTags && (
+              <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
+                {diffTag && (
+                  <Tag
+                    style={{
+                      background: DIFFICULTY_GRADIENT[diffTag] ?? undefined,
+                      color: '#fff',
+                      border: 'none'
+                    }}
+                  >
+                    {diffTag}
+                  </Tag>
+                )}
+                {sourceTag && (
+                  <Tag color={SOURCE_TYPE_COLOR[sourceTag] ?? 'default'}>{sourceTag}</Tag>
+                )}
+                {isFavorited && (
+                  <Tag icon={<StarFilled />} color="gold">
+                    收藏
+                  </Tag>
+                )}
+                {isBlacklisted && (
+                  <Tag icon={<StopOutlined />} color="error">
+                    黑名单
+                  </Tag>
+                )}
+              </div>
+            )}
+            {customTags.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                {customTags.map((t) => (
+                  <Tag key={t} style={{ marginBottom: 2 }}>
+                    #{t}
+                  </Tag>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* 来源 + 权重 */}
       <div
@@ -191,9 +208,9 @@ export default function TopicCard({
           justifyContent: 'space-between',
           alignItems: 'center',
           fontSize: 12,
-          color: token.colorTextSecondary,
+          color: '#999',
           paddingTop: 4,
-          borderTop: `1px dashed ${token.colorBorderSecondary}`
+          borderTop: '1px solid #f0f0f0'
         }}
       >
         <span>{topic.source || '未知来源'}</span>
@@ -247,7 +264,7 @@ export function TopicListItem({
   onDelete,
   onToggleStatus
 }: Omit<TopicCardProps, 'selected' | 'onSelect'>) {
-  const { token } = theme.useToken();
+  const settings = useSettingsStore((s) => s.settings);
   const isFavorited = topic.status === 'favorited';
   const isBlacklisted = topic.status === 'blacklisted';
 
@@ -279,12 +296,15 @@ export function TopicListItem({
 
   return (
     <div
+      className="topic-list-item"
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 12,
         padding: '16px 20px',
-        borderBottom: `1px solid ${token.colorBorderSecondary}`
+        borderBottom: '1px solid #f0f0f0',
+        transition: 'background 0.2s ease',
+        cursor: 'pointer'
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -294,29 +314,40 @@ export function TopicListItem({
             fontSize: 14,
             marginBottom: 4,
             textDecoration: isBlacklisted ? 'line-through' : 'none',
-            color: isBlacklisted ? token.colorTextDisabled : 'inherit'
+            color: isBlacklisted ? '#999' : 'inherit'
           }}
         >
           {isFavorited && <StarFilled style={{ color: '#faad14', marginRight: 6 }} />}
           {topic.title}
         </div>
         <Space size={4} wrap>
-          {topic.type && <Tag color="geekblue">{topic.type}</Tag>}
-          {topic.difficulty && (
-            <Tag
-              style={{
-                background: DIFFICULTY_GRADIENT[topic.difficulty] ?? undefined,
-                color: '#fff',
-                border: 'none'
-              }}
-            >
-              {topic.difficulty}
-            </Tag>
-          )}
-          {topic.source && <Tag>{topic.source}</Tag>}
-          {(topic.tags ?? []).slice(0, 3).map((t) => (
-            <Tag key={t}>#{t}</Tag>
-          ))}
+          {(() => {
+            const cfg = loadTagDisplayConfig(settings);
+            const typeTag = filterTag(cfg, topic.type);
+            const diffTag = filterTag(cfg, topic.difficulty);
+            const sourceTag = filterTag(cfg, topic.source);
+            const customTags = filterTags(cfg, topic.tags).slice(0, 3);
+            return (
+              <>
+                {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
+                {diffTag && (
+                  <Tag
+                    style={{
+                      background: DIFFICULTY_GRADIENT[diffTag] ?? undefined,
+                      color: '#fff',
+                      border: 'none'
+                    }}
+                  >
+                    {diffTag}
+                  </Tag>
+                )}
+                {sourceTag && <Tag>{sourceTag}</Tag>}
+                {customTags.map((t) => (
+                  <Tag key={t}>#{t}</Tag>
+                ))}
+              </>
+            );
+          })()}
         </Space>
       </div>
       <Dropdown menu={{ items: menuItems }} trigger={['click']}>
