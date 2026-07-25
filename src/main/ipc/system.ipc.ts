@@ -13,7 +13,7 @@ import { ipcMain, dialog } from 'electron'
 import { getActiveWindow } from './utils'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { ApiResponse, ResetDataRequest, ResetDataResponse } from '../../shared/types'
-import { getMergedCandidates } from '../services/candidate-service'
+import { getMergedCandidatesWithDB } from '../services/candidate-service'
 import { resetData } from '../services/reset-service'
 import type { CandidateField } from '../../shared/constants'
 
@@ -45,7 +45,7 @@ export function registerSystemIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.SYSTEM_GET_CANDIDATES,
     (): Record<CandidateField, string[]> => {
-      return getMergedCandidates()
+      return getMergedCandidatesWithDB()
     }
   )
 
