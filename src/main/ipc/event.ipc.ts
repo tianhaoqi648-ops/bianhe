@@ -2,7 +2,7 @@
 // event.ipc.ts — 赛事/轮次/队伍/队伍历史 IPC handler
 //
 // 注册通道：
-//   event:list / event:get / event:create / event:update / event:event_delete
+//   event:list / event:get / event:create / event:update / event:delete
 //   round:listByEvent / round:get / round:create / round:update / round:delete
 //   team:listByEvent / team:get / team:create / team:update / team:delete
 //   teamHistory:list / teamHistory:listByEvent / teamHistory:add / teamHistory:delete
