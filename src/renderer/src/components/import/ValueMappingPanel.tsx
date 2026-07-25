@@ -7,12 +7,34 @@
 //   - map（映射到...）：改写为已有候选值
 //   - add（加入候选）：原样入库 + 永久加入系统候选
 //
+// 新增功能：
+//   - 多选 Checkbox 支持批量映射
+//   - 智能推荐按钮（基于 Levenshtein 相似度）
+//   - 推荐结果以金色 Tag 显示在每行，可单独应用
+//
 // 通过 onMappingChange 回传 mapping 给父组件，由父组件在执行导入前应用。
 // ============================================================
 
 import { useState, useMemo } from 'react'
-import { Card, Tag, Select, Space, Button, Typography, Divider, Alert } from 'antd'
-import { SwapOutlined, PlusCircleOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import {
+  Card,
+  Tag,
+  Select,
+  Space,
+  Button,
+  Typography,
+  Divider,
+  Alert,
+  Checkbox,
+  Tooltip,
+  Modal
+} from 'antd'
+import {
+  SwapOutlined,
+  PlusCircleOutlined,
+  MinusCircleOutlined,
+  ThunderboltOutlined
+} from '@ant-design/icons'
 import type {
   UnknownValueItem,
   ValueMapping,
@@ -20,6 +42,7 @@ import type {
   ValueMappingRule
 } from '../../../../shared/types'
 import type { CandidateField } from '../../../../shared/constants'
+import { recommendMappings, type Recommendation } from '../../../../shared/utils/value-recommender'
 
 const { Text, Title } = Typography
 
@@ -50,6 +73,17 @@ export default function ValueMappingPanel({
   onMappingChange
 }: ValueMappingPanelProps) {
   const [mapping, setMapping] = useState<ValueMapping>(initialMapping)
+  const [selectedValues, setSelectedValues] = useState<Record<CandidateField, Set<string>>>(
+    {} as Record<CandidateField, Set<string>>
+  )
+  const [recommendations, setRecommendations] = useState<
+    Record<CandidateField, Recommendation[]>
+  >({} as Record<CandidateField, Recommendation[]>)
+  const [batchMapModal, setBatchMapModal] = useState<{
+    field: CandidateField | null
+    open: boolean
+  }>({ field: null, open: false })
+  const [batchMapTarget, setBatchMapTarget] = useState<string>('')
 
   // 计算总览
   const totalValues = useMemo(
@@ -83,7 +117,6 @@ export default function ValueMappingPanel({
     if (!next[field]) next[field] = {}
     const rule: ValueMappingRule = { action }
     if (action === 'map') {
-      // 默认 target 设为该字段第一个候选值（用户可改）
       rule.target = candidateOptions[field][0] ?? ''
     }
     next[field]![originValue] = rule
@@ -114,6 +147,63 @@ export default function ValueMappingPanel({
     updateMapping(next)
   }
 
+  // 多选/批量/推荐辅助函数
+  const toggleSelect = (field: CandidateField, value: string) => {
+    setSelectedValues((prev) => {
+      const next = { ...prev }
+      const set = new Set(next[field] ?? [])
+      if (set.has(value)) set.delete(value)
+      else set.add(value)
+      next[field] = set
+      return next
+    })
+  }
+
+  const handleSmartRecommend = (
+    field: CandidateField,
+    values: Array<{ value: string; count: number }>
+  ) => {
+    const newValues = values.map((v) => v.value)
+    const recs = recommendMappings(newValues, candidateOptions[field])
+    setRecommendations((prev) => ({ ...prev, [field]: recs }))
+    // 自动应用所有推荐：用户可逐条撤销
+    const next: ValueMapping = { ...mapping }
+    if (!next[field]) next[field] = {}
+    for (const r of recs) {
+      next[field]![r.originValue] = { action: 'map', target: r.recommendedTarget }
+    }
+    updateMapping(next)
+  }
+
+  const handleBatchMap = (field: CandidateField) => {
+    const selected = selectedValues[field]
+    if (!selected || selected.size === 0) return
+    setBatchMapTarget(candidateOptions[field][0] ?? '')
+    setBatchMapModal({ field, open: true })
+  }
+
+  const confirmBatchMap = () => {
+    if (!batchMapModal.field || !batchMapTarget) return
+    const field = batchMapModal.field
+    const selected = selectedValues[field]
+    if (!selected) return
+    const next: ValueMapping = { ...mapping }
+    if (!next[field]) next[field] = {}
+    for (const v of selected) {
+      next[field]![v] = { action: 'map', target: batchMapTarget }
+    }
+    updateMapping(next)
+    setSelectedValues((prev) => ({ ...prev, [field]: new Set() }))
+    setBatchMapModal({ field: null, open: false })
+  }
+
+  const handleApplySingleRecommend = (field: CandidateField, rec: Recommendation) => {
+    const next: ValueMapping = { ...mapping }
+    if (!next[field]) next[field] = {}
+    next[field]![rec.originValue] = { action: 'map', target: rec.recommendedTarget }
+    updateMapping(next)
+  }
+
   if (unknownValues.length === 0) return null
 
   return (
@@ -137,6 +227,7 @@ export default function ValueMappingPanel({
             <li><b>保留</b>：原样入库（后续在筛选面板可能选不到该值）</li>
             <li><b>映射到...</b>：改写为已有候选值（如把&quot;入门&quot;改为&quot;入门级&quot;）</li>
             <li><b>加入候选</b>：原样入库 + 永久加入系统候选（重启后仍可用）</li>
+            <li><b>智能推荐</b>：基于相似度自动推荐映射（可逐条撤销）</li>
           </ul>
         }
       />
@@ -150,6 +241,8 @@ export default function ValueMappingPanel({
           {item.values.map(({ value, count }) => {
             const rule = mapping[item.field]?.[value]
             const action = rule?.action ?? 'keep'
+            const isSelected = selectedValues[item.field]?.has(value) ?? false
+            const rec = recommendations[item.field]?.find((r) => r.originValue === value)
             return (
               <div
                 key={`${item.field}-${value}`}
@@ -163,10 +256,25 @@ export default function ValueMappingPanel({
                   borderRadius: 4
                 }}
               >
+                <Checkbox
+                  checked={isSelected}
+                  onChange={() => toggleSelect(item.field, value)}
+                />
                 <Tag color="orange" style={{ minWidth: 80, textAlign: 'center' }}>
                   {value}
                 </Tag>
                 <Text type="secondary" style={{ fontSize: 11 }}>×{count}</Text>
+                {rec && (
+                  <Tooltip title={`推荐匹配度 ${(rec.score * 100).toFixed(0)}%`}>
+                    <Tag
+                      color="gold"
+                      style={{ cursor: 'pointer', fontSize: 11 }}
+                      onClick={() => handleApplySingleRecommend(item.field, rec)}
+                    >
+                      <ThunderboltOutlined /> 推荐→{rec.recommendedTarget}
+                    </Tag>
+                  </Tooltip>
+                )}
                 <Text type="secondary" style={{ fontSize: 12 }}>→</Text>
                 <Select
                   size="small"
@@ -195,6 +303,32 @@ export default function ValueMappingPanel({
               </div>
             )
           })}
+          <Space style={{ marginTop: 4, marginLeft: 8 }}>
+            <Button
+              size="small"
+              icon={<ThunderboltOutlined />}
+              onClick={() => handleSmartRecommend(item.field, item.values)}
+            >
+              智能推荐
+            </Button>
+            <Button
+              size="small"
+              disabled={!selectedValues[item.field] || selectedValues[item.field].size === 0}
+              onClick={() => handleBatchMap(item.field)}
+            >
+              批量映射选中项（{selectedValues[item.field]?.size ?? 0}）
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              disabled={!selectedValues[item.field] || selectedValues[item.field].size === 0}
+              onClick={() =>
+                setSelectedValues((prev) => ({ ...prev, [item.field]: new Set() }))
+              }
+            >
+              清空选中
+            </Button>
+          </Space>
         </div>
       ))}
       <Divider style={{ margin: '8px 0' }} />
@@ -206,6 +340,30 @@ export default function ValueMappingPanel({
           全部加入候选
         </Button>
       </Space>
+
+      <Modal
+        title={batchMapModal.field ? `批量映射 ${FIELD_LABEL[batchMapModal.field]}` : ''}
+        open={batchMapModal.open}
+        onOk={confirmBatchMap}
+        onCancel={() => setBatchMapModal({ field: null, open: false })}
+        okText="确认映射"
+        cancelText="取消"
+      >
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+          将把 {selectedValues[batchMapModal.field ?? 'type']?.size ?? 0} 个新值映射到：
+        </Text>
+        <Select
+          style={{ width: '100%' }}
+          value={batchMapTarget}
+          onChange={setBatchMapTarget}
+          options={
+            batchMapModal.field
+              ? candidateOptions[batchMapModal.field].map((c) => ({ value: c, label: c }))
+              : []
+          }
+          showSearch
+        />
+      </Modal>
     </Card>
   )
 }
