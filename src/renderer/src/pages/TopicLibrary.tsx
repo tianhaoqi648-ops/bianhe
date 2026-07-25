@@ -18,7 +18,8 @@ import {
   Badge,
   Breadcrumb,
   Alert,
-  Checkbox
+  Checkbox,
+  Tooltip
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -28,6 +29,7 @@ import {
   ReloadOutlined,
   DeleteOutlined,
   TagOutlined,
+  TagsOutlined,
   GlobalOutlined,
   FireOutlined,
   DatabaseOutlined,
@@ -97,7 +99,7 @@ const DIMENSIONS: DimensionMeta[] = [
   { key: 'source', label: '来源', icon: <DatabaseOutlined />, source: 'ipc_count' },
   { key: 'source_type', label: '来源类型', icon: <AppstoreOutlined />, source: 'ipc_count' },
   { key: 'status', label: '状态', icon: <StarOutlined />, source: 'ipc_count' },
-  { key: 'tags', label: '标签', icon: <TagOutlined />, source: 'ipc_tags' },
+  { key: 'tags',        label: '标签',     icon: <TagsOutlined />,         source: 'ipc_tags' },
   { key: 'batch_id', label: '导入批次', icon: <FileOutlined />, source: 'ipc_batches' }
 ];
 
@@ -642,23 +644,28 @@ export default function TopicLibrary() {
           <div style={{ marginBottom: 8, padding: '4px 4px 8px' }}>
             <Text strong>分类维度</Text>
           </div>
-          {/* 维度切换 */}
-          <Segmented
-            block
-            size="middle"
-            value={dimension}
-            onChange={(v) => handleDimensionChange(v as DimensionKey)}
-            options={DIMENSIONS.map((d) => ({
-              label: (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  {d.icon}
-                  <span>{d.label}</span>
-                </span>
-              ),
-              value: d.key
-            }))}
-            style={{ marginBottom: 12 }}
-          />
+          {/* 维度切换：图标按钮组 + Tooltip */}
+          <Space size={2} style={{ marginBottom: 12, display: 'flex', flexWrap: 'nowrap' }}>
+            {DIMENSIONS.map((d) => (
+              <Tooltip key={d.key} title={d.label}>
+                <Button
+                  type={dimension === d.key ? 'primary' : 'text'}
+                  size="small"
+                  icon={d.icon}
+                  onClick={() => handleDimensionChange(d.key)}
+                  style={{
+                    width: 22,
+                    minWidth: 22,
+                    padding: 0,
+                    flex: '0 0 22px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </Space>
           {/* 面包屑导航 */}
           <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 8, fontSize: 12 }} />
           <Spin spinning={dimensionLoading} size="small">
