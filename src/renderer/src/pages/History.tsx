@@ -160,7 +160,8 @@ export default function History() {
         setDetailCache((c) => ({ ...c, [sessionId]: detail }));
       }
     } catch (e) {
-      messageApi.error('加载明细失败');
+      console.error('加载明细失败', e)
+      messageApi.error(e instanceof Error ? e.message : '加载明细失败')
     }
   };
 
