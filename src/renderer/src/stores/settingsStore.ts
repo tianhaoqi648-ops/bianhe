@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ApiResponse } from '../../../shared/types';
+import { RESET_CATEGORY_KEYS, type ResetCategory } from '../../../shared/settings-defaults';
 
 interface SettingsState {
   /** 内存中的全部设置（key -> value） */
@@ -15,6 +16,10 @@ interface SettingsState {
   set: (key: string, value: any) => Promise<boolean>;
   /** 删除单个 key，同时从内存中移除 */
   delete: (key: string) => Promise<boolean>;
+  /** 批量删除 keys，同步更新内存 */
+  deleteBatch: (keys: string[]) => Promise<number>;
+  /** 按类别重置（语义化封装，内部映射 keys 调 deleteBatch） */
+  resetByCategories: (categories: ResetCategory[]) => Promise<number>;
 }
 
 function extractError<T>(res: ApiResponse<unknown>): T {
@@ -22,7 +27,7 @@ function extractError<T>(res: ApiResponse<unknown>): T {
   throw new Error(res.error || '未知错误');
 }
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: {},
   loading: false,
   error: null,
@@ -60,6 +65,26 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       return { settings: next };
     });
     return true;
+  },
+
+  deleteBatch: async (keys) => {
+    const res = await window.settingsAPI.deleteBatch(keys);
+    const deleted = extractError<number>(res);
+    // 从内存 map 移除对应 key
+    set((s) => {
+      const next = { ...s.settings };
+      for (const k of keys) delete next[k];
+      return { settings: next };
+    });
+    return deleted;
+  },
+
+  resetByCategories: async (categories) => {
+    const keys = Array.from(
+      new Set(categories.flatMap((c) => RESET_CATEGORY_KEYS[c] ?? []))
+    );
+    if (keys.length === 0) return 0;
+    return await get().deleteBatch(keys);
   }
 }));
 

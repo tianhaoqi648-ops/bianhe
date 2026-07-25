@@ -257,6 +257,24 @@ function deleteSetting(key: string): boolean {
   return result.changes > 0
 }
 
+/**
+ * 批量删除配置项（事务）。返回实际删除的条数。
+ * 用于「一键恢复初始设置」按类别清空。
+ */
+function deleteSettingsByKeys(keys: string[]): number {
+  if (keys.length === 0) return 0
+  const db = getDb()
+  const stmt = db.prepare('DELETE FROM settings WHERE key = ?')
+  let deleted = 0
+  const tx = db.transaction((ks: string[]) => {
+    for (const k of ks) {
+      deleted += stmt.run(k).changes
+    }
+  })
+  tx(keys)
+  return deleted
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -271,5 +289,6 @@ export const auditRepo = {
   getSetting,
   setSetting,
   getAllSettings,
-  deleteSetting
+  deleteSetting,
+  deleteSettingsByKeys
 }
