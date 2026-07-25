@@ -132,7 +132,9 @@ const settingsAPI = {
   get: (key: string) => invoke(IPC_CHANNELS.SETTINGS_GET, key),
   set: (key: string, value: unknown) => invoke(IPC_CHANNELS.SETTINGS_SET, key, value),
   getAll: () => invoke(IPC_CHANNELS.SETTINGS_GET_ALL),
-  delete: (key: string) => invoke(IPC_CHANNELS.SETTINGS_DELETE, key)
+  delete: (key: string) => invoke(IPC_CHANNELS.SETTINGS_DELETE, key),
+  getCandidates: () =>
+    invoke<Record<string, string[]>>(IPC_CHANNELS.SYSTEM_GET_CANDIDATES)
 }
 
 // ============================================================

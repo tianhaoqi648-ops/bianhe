@@ -6,6 +6,7 @@ import type {
   RoundUpdateInput
 } from '../../../shared/types';
 import { DIFFICULTY_OPTIONS } from './FilterPanel';
+import { primaryButtonStyle } from '../styles/shared';
 
 export interface RoundEditModalProps {
   open: boolean;
@@ -42,7 +43,9 @@ export default function RoundEditModal({
         form.resetFields();
         form.setFieldsValue({
           round_number: nextRoundNumber ?? 1,
-          topic_count: 4
+          topic_count: 4,
+          name: `第 ${nextRoundNumber ?? 1} 轮`,
+          difficulty_override: '入门级'
         });
       }
     }
@@ -77,6 +80,7 @@ export default function RoundEditModal({
       cancelText="取消"
       width={520}
       destroyOnClose
+      okButtonProps={{ style: primaryButtonStyle }}
     >
       <Form form={form} layout="vertical" preserve={false}>
         <Form.Item name="name" label="轮次名称">

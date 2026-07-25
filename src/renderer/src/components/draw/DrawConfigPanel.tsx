@@ -7,6 +7,7 @@ import {
   Slider,
   Button,
   Divider,
+  Alert,
   Typography,
   Space
 } from 'antd';
@@ -14,6 +15,7 @@ import { ThunderboltOutlined } from '@ant-design/icons';
 import type { TopicFilter, Team } from '../../../../shared/types';
 import FilterPanel from '../FilterPanel';
 import TeamPairing, { type TeamPair } from './TeamPairing';
+import { primaryButtonStyle, titleBarStyle } from '../../styles/shared';
 
 export interface DrawConfigState {
   eventId: string | null;
@@ -61,15 +63,15 @@ export default function DrawConfigPanel({
   return (
     <Card
       title={
-        <Space>
+        <div style={titleBarStyle}>
           <ThunderboltOutlined />
           <span>抽取配置</span>
-        </Space>
+        </div>
       }
       size="small"
       style={{ height: '100%', overflow: 'auto' }}
     >
-      <Form layout="vertical" size="small">
+      <Form layout="vertical" size="middle">
         <Form.Item label="赛事" required>
           <Select
             placeholder="选择赛事"
@@ -118,7 +120,9 @@ export default function DrawConfigPanel({
 
         {state.includeStance && (
           <>
-            <Divider style={{ margin: '8px 0' }} />
+            <Divider plain orientation="left" style={{ margin: '12px 0' }}>
+              持方配置
+            </Divider>
             <TeamPairing
               teams={teams}
               pairs={state.teamPairs}
@@ -177,17 +181,19 @@ export default function DrawConfigPanel({
           onClick={onDraw}
           disabled={!canDraw || loading}
           loading={loading}
+          style={primaryButtonStyle}
           className={canDraw && !loading ? 'pulse-primary' : ''}
         >
           开始抽取
         </Button>
         {!canDraw && (
-          <Typography.Text
-            type="secondary"
-            style={{ fontSize: 12, marginTop: 4, display: 'block', textAlign: 'center' }}
-          >
-            请完善赛事/数量/队伍配置
-          </Typography.Text>
+          <Alert
+            type="warning"
+            showIcon
+            banner
+            message="请完善赛事/数量/队伍配置"
+            style={{ marginTop: 8 }}
+          />
         )}
       </Form>
     </Card>

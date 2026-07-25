@@ -1,10 +1,12 @@
-import { Modal, Form, Input, Select } from 'antd';
+import { Modal, Form, Input, Select, DatePicker } from 'antd';
 import { useEffect } from 'react';
+import dayjs from 'dayjs';
 import type {
   Event,
   EventCreateInput,
   EventUpdateInput
 } from '../../../shared/types';
+import { primaryButtonStyle } from '../styles/shared';
 
 export interface EventEditModalProps {
   open: boolean;
@@ -31,28 +33,33 @@ export default function EventEditModal({
   useEffect(() => {
     if (open) {
       if (event) {
+        // 编辑模式：把 YYYY-MM-DD 字符串转回 dayjs 对象
         form.setFieldsValue({
           name: event.name,
           status: event.status ?? 'preparing',
-          // DatePicker 需要传 moment 或 dayjs，这里只保存原始字符串
-          start_date: event.start_date ?? undefined,
-          end_date: event.end_date ?? undefined
+          start_date: event.start_date ? dayjs(event.start_date, 'YYYY-MM-DD') : undefined,
+          end_date: event.end_date ? dayjs(event.end_date, 'YYYY-MM-DD') : undefined
         });
       } else {
+        // 新建模式：默认今天开始，一周后结束
         form.resetFields();
-        form.setFieldsValue({ status: 'preparing' });
+        form.setFieldsValue({
+          status: 'preparing',
+          start_date: dayjs(),
+          end_date: dayjs().add(7, 'day')
+        });
       }
     }
   }, [open, event, form]);
 
   const handleOk = async () => {
     const values = await form.validateFields();
-    // 字符串日期保持原样（YYYY-MM-DD）；若用户用 DatePicker 选了 dayjs，需 .format()
+    // DatePicker 的 value 是 dayjs 对象，提交时转回 YYYY-MM-DD 字符串保持后端兼容
     const data: EventCreateInput | EventUpdateInput = {
       name: values.name,
       status: values.status,
-      start_date: values.start_date ?? null,
-      end_date: values.end_date ?? null
+      start_date: values.start_date ? dayjs(values.start_date).format('YYYY-MM-DD') : null,
+      end_date: values.end_date ? dayjs(values.end_date).format('YYYY-MM-DD') : null
     };
     await onOk(data, isEdit);
   };
@@ -67,6 +74,7 @@ export default function EventEditModal({
       cancelText="取消"
       width={520}
       destroyOnClose
+      okButtonProps={{ style: primaryButtonStyle }}
     >
       <Form form={form} layout="vertical" preserve={false}>
         <Form.Item
@@ -82,11 +90,11 @@ export default function EventEditModal({
         </Form.Item>
 
         <Form.Item name="start_date" label="开始日期">
-          <Input placeholder="YYYY-MM-DD（可留空）" />
+          <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" placeholder="选择开始日期" />
         </Form.Item>
 
         <Form.Item name="end_date" label="结束日期">
-          <Input placeholder="YYYY-MM-DD（可留空）" />
+          <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" placeholder="选择结束日期" />
         </Form.Item>
       </Form>
     </Modal>

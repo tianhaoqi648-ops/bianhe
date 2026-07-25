@@ -1,25 +1,20 @@
 import { Input, Select, Tag, Space, Button, Divider, theme } from 'antd';
 import { SearchOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import type { TopicFilter } from '../../../shared/types';
+import { SYSTEM_CANDIDATES } from '../../../shared/constants';
 import { cardStyle } from '../styles/shared';
 import { spacing } from '../styles/tokens';
 import { useSettingsStore } from '../stores/settingsStore';
 import { loadTagDisplayConfig } from '../utils/tagDisplay';
 
-// 维度选项（与设计文档 4.1 节字段对齐）
-export const TYPE_OPTIONS = ['价值辩', '政策辩', '事实辩', '哲理辩', '娱乐辩'];
-export const DOMAIN_OPTIONS = [
-  '社会热点',
-  '科技伦理',
-  '教育文化',
-  '法律政策',
-  '经济商业',
-  '环保公益',
-  '情感人际'
-];
-export const DIFFICULTY_OPTIONS = ['入门级', '进阶级', '专业级'];
-export const SOURCE_OPTIONS = ['新国辩', '华语辩论世界杯', '老友赛', '世锦赛', '年度原创'];
-export const SOURCE_TYPE_OPTIONS = ['官方', '自定义'];
+// 维度选项：统一引用 SYSTEM_CANDIDATES 单一来源，
+// 避免与 import-engine 候选值不一致。
+// 保留具名导出以兼容 TopicLibrary.tsx 现有 import。
+export const TYPE_OPTIONS = SYSTEM_CANDIDATES.type;
+export const DOMAIN_OPTIONS = SYSTEM_CANDIDATES.domain;
+export const DIFFICULTY_OPTIONS = SYSTEM_CANDIDATES.difficulty;
+export const SOURCE_OPTIONS = SYSTEM_CANDIDATES.source;
+export const SOURCE_TYPE_OPTIONS = SYSTEM_CANDIDATES.source_type;
 export const STATUS_OPTIONS = ['active', 'favorited', 'blacklisted'];
 
 export interface FilterPanelProps {
@@ -36,6 +31,22 @@ export interface FilterPanelProps {
   onExcludeKeywordsChange?: (kws: string[]) => void;
 }
 
+/**
+ * 按场景配置过滤维度候选
+ * - 类别关闭：返回 null（表示该维度整体隐藏）
+ * - selectedValues 非空：只保留选中的候选
+ * - selectedValues 空：返回原候选
+ */
+function filterOptions(
+  options: readonly string[],
+  enabled: boolean,
+  selected: string[]
+): string[] | null {
+  if (!enabled) return null;
+  if (selected.length === 0) return [...options];
+  return options.filter((o) => selected.includes(o));
+}
+
 export default function FilterPanel({
   filter,
   onChange,
@@ -49,14 +60,18 @@ export default function FilterPanel({
   const { token } = theme.useToken();
   const settings = useSettingsStore((s) => s.settings);
 
-  // 根据标签显示配置过滤自定义标签候选
-  // - custom 类别关闭：不显示标签筛选区
-  // - selectedValues.custom 空：显示全部候选
-  // - selectedValues.custom 非空：只显示选中的候选
+  // 根据 filter 场景配置过滤各维度候选
+  // 类别关闭 → 该维度整体隐藏（不渲染字段）
+  // selectedValues 非空 → 只显示选中的候选
+  // selectedValues 空 → 显示全部候选
   const cfg = loadTagDisplayConfig(settings);
-  const visibleTagOptions = cfg.categoryEnabled.custom
-    ? (cfg.selectedValues.custom.length > 0
-        ? tagOptions.filter((t) => cfg.selectedValues.custom.includes(t))
+  const filterScene = cfg.scenes.filter;
+  const typeOpts = filterOptions(TYPE_OPTIONS, filterScene.categoryEnabled.type, filterScene.selectedValues.type);
+  const diffOpts = filterOptions(DIFFICULTY_OPTIONS, filterScene.categoryEnabled.difficulty, filterScene.selectedValues.difficulty);
+  const sourceTypeOpts = filterOptions(SOURCE_TYPE_OPTIONS, filterScene.categoryEnabled.source_type, filterScene.selectedValues.source_type);
+  const visibleTagOptions = filterScene.categoryEnabled.custom
+    ? (filterScene.selectedValues.custom.length > 0
+        ? tagOptions.filter((t) => filterScene.selectedValues.custom.includes(t))
         : tagOptions)
     : [];
 
@@ -112,91 +127,103 @@ export default function FilterPanel({
         </Space>
       </div>
 
-      <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
-        维度筛选
-      </Divider>
+      {/* 维度筛选（受 filter 场景配置控制：类别关闭则隐藏整个字段） */}
+      {(typeOpts || diffOpts || sourceTypeOpts) && (
+        <>
+          <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
+            维度筛选
+          </Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md }}>
+            {/* 类型（如果 filter 场景关闭了 type 类别则隐藏） */}
+            {typeOpts && (
+              <Field label="类型">
+                <Select
+                  size="small"
+                  allowClear
+                  mode="multiple"
+                  maxTagCount="responsive"
+                  placeholder="全部"
+                  style={{ width: '100%' }}
+                  value={filter.types ?? []}
+                  onChange={(v) => onChange({ types: v as string[] | undefined, type: undefined })}
+                  options={typeOpts.map((v) => ({ label: v, value: v }))}
+                />
+              </Field>
+            )}
+            <Field label="领域">
+              <Select
+                size="small"
+                allowClear
+                mode="multiple"
+                maxTagCount="responsive"
+                placeholder="全部"
+                style={{ width: '100%' }}
+                value={filter.domains ?? []}
+                onChange={(v) => onChange({ domains: v as string[] | undefined, domain: undefined })}
+                options={DOMAIN_OPTIONS.map((v) => ({ label: v, value: v }))}
+              />
+            </Field>
+            {/* 难度（如果 filter 场景关闭了 difficulty 类别则隐藏） */}
+            {diffOpts && (
+              <Field label="难度">
+                <Select
+                  size="small"
+                  allowClear
+                  mode="multiple"
+                  maxTagCount="responsive"
+                  placeholder="全部"
+                  style={{ width: '100%' }}
+                  value={filter.difficulties ?? []}
+                  onChange={(v) => onChange({ difficulties: v as string[] | undefined, difficulty: undefined })}
+                  options={diffOpts.map((v) => ({ label: v, value: v }))}
+                />
+              </Field>
+            )}
+            <Field label="来源">
+              <Select
+                size="small"
+                allowClear
+                placeholder="全部"
+                style={{ width: '100%' }}
+                value={filter.source}
+                onChange={(v) => onChange({ source: v ?? undefined })}
+                options={SOURCE_OPTIONS.map((v) => ({ label: v, value: v }))}
+              />
+            </Field>
+            {/* 来源类型（如果 filter 场景关闭了 source_type 类别则隐藏） */}
+            {sourceTypeOpts && (
+              <Field label="来源类型">
+                <Select
+                  size="small"
+                  allowClear
+                  placeholder="全部"
+                  style={{ width: '100%' }}
+                  value={filter.source_type}
+                  onChange={(v) => onChange({ source_type: v ?? undefined })}
+                  options={sourceTypeOpts.map((v) => ({ label: v, value: v }))}
+                />
+              </Field>
+            )}
+            <Field label="状态">
+              <Select
+                size="small"
+                allowClear
+                placeholder="全部"
+                style={{ width: '100%' }}
+                value={filter.status}
+                onChange={(v) => onChange({ status: v ?? undefined })}
+                options={STATUS_OPTIONS.map((v) => ({
+                  label:
+                    v === 'active' ? '正常' : v === 'favorited' ? '收藏' : '黑名单',
+                  value: v
+                }))}
+              />
+            </Field>
+          </div>
+        </>
+      )}
 
-      {/* 维度筛选 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md }}>
-        <Field label="类型">
-          <Select
-            size="small"
-            allowClear
-            mode="multiple"
-            maxTagCount="responsive"
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.types ?? []}
-            onChange={(v) => onChange({ types: v as string[] | undefined, type: undefined })}
-            options={TYPE_OPTIONS.map((v) => ({ label: v, value: v }))}
-          />
-        </Field>
-        <Field label="领域">
-          <Select
-            size="small"
-            allowClear
-            mode="multiple"
-            maxTagCount="responsive"
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.domains ?? []}
-            onChange={(v) => onChange({ domains: v as string[] | undefined, domain: undefined })}
-            options={DOMAIN_OPTIONS.map((v) => ({ label: v, value: v }))}
-          />
-        </Field>
-        <Field label="难度">
-          <Select
-            size="small"
-            allowClear
-            mode="multiple"
-            maxTagCount="responsive"
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.difficulties ?? []}
-            onChange={(v) => onChange({ difficulties: v as string[] | undefined, difficulty: undefined })}
-            options={DIFFICULTY_OPTIONS.map((v) => ({ label: v, value: v }))}
-          />
-        </Field>
-        <Field label="来源">
-          <Select
-            size="small"
-            allowClear
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.source}
-            onChange={(v) => onChange({ source: v ?? undefined })}
-            options={SOURCE_OPTIONS.map((v) => ({ label: v, value: v }))}
-          />
-        </Field>
-        <Field label="来源类型">
-          <Select
-            size="small"
-            allowClear
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.source_type}
-            onChange={(v) => onChange({ source_type: v ?? undefined })}
-            options={SOURCE_TYPE_OPTIONS.map((v) => ({ label: v, value: v }))}
-          />
-        </Field>
-        <Field label="状态">
-          <Select
-            size="small"
-            allowClear
-            placeholder="全部"
-            style={{ width: '100%' }}
-            value={filter.status}
-            onChange={(v) => onChange({ status: v ?? undefined })}
-            options={STATUS_OPTIONS.map((v) => ({
-              label:
-                v === 'active' ? '正常' : v === 'favorited' ? '收藏' : '黑名单',
-              value: v
-            }))}
-          />
-        </Field>
-      </div>
-
-      {/* 标签筛选 */}
+      {/* 标签筛选（仅当 filter 场景 custom 类别开启且有可见候选时显示） */}
       {visibleTagOptions.length > 0 && (
         <>
           <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>

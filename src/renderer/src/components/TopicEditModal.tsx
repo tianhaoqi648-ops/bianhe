@@ -1,5 +1,4 @@
 import { Modal, Form, Input, Select, InputNumber, Tag, Space, message } from 'antd';
-import { useEffect } from 'react';
 import type { Topic, TopicCreateInput, TopicUpdateInput } from '../../../shared/types';
 import {
   TYPE_OPTIONS,
@@ -9,6 +8,45 @@ import {
   SOURCE_TYPE_OPTIONS
 } from './FilterPanel';
 import { spacing } from '../styles/tokens';
+import { primaryButtonStyle } from '../styles/shared';
+
+/**
+ * 新增辩题时的默认值（用户偏好：减少手动输入）
+ * 编辑模式不受影响，仍预填原值
+ */
+const DEFAULT_NEW_TOPIC_VALUES = {
+  title: '', // 标题必填，预填空让 Ant Design 必填校验生效
+  type: '价值辩', // TYPE_OPTIONS 第一项，最常用
+  domain: '社会热点', // DOMAIN_OPTIONS 第一项
+  difficulty: '入门级', // DIFFICULTY_OPTIONS 第一项，新手友好
+  source: '新国辩', // SOURCE_OPTIONS 第一项
+  source_type: '自定义', // 用户手动新增默认为自定义
+  tags: [] as string[],
+  weight: 1.0,
+  status: 'active'
+} as const;
+
+/**
+ * 根据模式计算 Form 的 initialValues
+ * - 编辑模式：预填 topic 原值
+ * - 新增模式：预填 DEFAULT_NEW_TOPIC_VALUES
+ */
+function computeInitialValues(topic?: Topic | null) {
+  if (topic) {
+    return {
+      title: topic.title,
+      type: topic.type ?? undefined,
+      domain: topic.domain ?? undefined,
+      difficulty: topic.difficulty ?? undefined,
+      source: topic.source ?? undefined,
+      source_type: topic.source_type ?? undefined,
+      tags: topic.tags ?? [],
+      weight: topic.weight,
+      status: topic.status
+    };
+  }
+  return { ...DEFAULT_NEW_TOPIC_VALUES };
+}
 
 export interface TopicEditModalProps {
   open: boolean;
@@ -28,30 +66,9 @@ export default function TopicEditModal({
   const isEdit = !!topic;
   const [messageApi, contextHolder] = message.useMessage();
 
-  useEffect(() => {
-    if (open) {
-      if (topic) {
-        form.setFieldsValue({
-          title: topic.title,
-          type: topic.type ?? undefined,
-          domain: topic.domain ?? undefined,
-          difficulty: topic.difficulty ?? undefined,
-          source: topic.source ?? undefined,
-          source_type: topic.source_type ?? undefined,
-          tags: topic.tags ?? [],
-          weight: topic.weight,
-          status: topic.status
-        });
-      } else {
-        form.resetFields();
-        form.setFieldsValue({
-          weight: 1.0,
-          source_type: '自定义',
-          status: 'active'
-        });
-      }
-    }
-  }, [open, topic, form]);
+  // 不再需要 useEffect 设置字段值
+  // Form 通过 key={topic?.id ?? 'new-topic'} 强制重新挂载
+  // 配合 initialValues={computeInitialValues(topic)} 一次性初始化
 
   const handleOk = async () => {
     try {
@@ -76,12 +93,17 @@ export default function TopicEditModal({
         onCancel={onCancel}
         okText="保存"
         cancelText="取消"
-        okButtonProps={{ size: 'middle' }}
+        okButtonProps={{ size: 'middle', style: primaryButtonStyle }}
         cancelButtonProps={{ size: 'middle' }}
         width={560}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" preserve={false}>
+        <Form
+          key={topic?.id ?? 'new-topic'}
+          form={form}
+          layout="vertical"
+          initialValues={computeInitialValues(topic)}
+        >
           <Form.Item
             name="title"
             label="辩题标题"

@@ -28,6 +28,8 @@ import { topicRepo } from '../db/repository/topic.repo'
 import type { Topic, TopicCreateInput } from '../db/repository/topic.repo'
 import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { auditRepo } from '../db/repository/audit.repo'
+import { addCandidateValue } from '../services/candidate-service'
+import type { CandidateField } from '../../shared/constants'
 import {
   IPC_CHANNELS,
   type ApiResponse,
@@ -55,7 +57,7 @@ export function registerImportIpc(): void {
     IPC_CHANNELS.IMPORT_EXECUTE,
     async (_e, req: ImportExecuteRequest): Promise<ApiResponse<ImportExecuteResult>> => {
       try {
-        const { topics, checkDuplicates = true, fileName } = req
+        const { topics, checkDuplicates = true, fileName, valueMapping } = req
         const duplicateGroups: ImportExecuteResult['duplicateGroups'] = []
         let imported = 0
         let duplicates = 0
@@ -69,6 +71,27 @@ export function registerImportIpc(): void {
           duplicates_count: 0,
           failed_count: 0
         })
+
+        // 1.5 持久化「加入候选」动作：在 createMany 之前完成，
+        // 这样同一批次内若有多个相同新值，第一次 add 后续自动去重；
+        // 用户重启后仍可在筛选/抽取筛选中看到这些新候选。
+        // try-catch 单独捕获，失败不阻断主流程（仅记录日志）。
+        if (valueMapping) {
+          try {
+            for (const field of Object.keys(valueMapping) as CandidateField[]) {
+              const valueMap = valueMapping[field]
+              if (!valueMap) continue
+              for (const originValue of Object.keys(valueMap)) {
+                const rule = valueMap[originValue]
+                if (rule?.action === 'add') {
+                  addCandidateValue(field, originValue)
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[import.ipc] addCandidateValue failed:', e)
+          }
+        }
 
         // 2. 拉取全量已有辩题用于去重比对
         const { items: existing } = topicRepo.listTopics({ page: 1, pageSize: 100000 })

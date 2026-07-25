@@ -127,6 +127,7 @@ export interface SettingsAPI {
   set: (key: string, value: unknown) => Promise<ApiResponse<boolean>>
   getAll: () => Promise<ApiResponse<Record<string, unknown>>>
   delete: (key: string) => Promise<ApiResponse<boolean>>
+  getCandidates: () => Promise<ApiResponse<Record<string, string[]>>>
 }
 
 export interface ImportAPI {

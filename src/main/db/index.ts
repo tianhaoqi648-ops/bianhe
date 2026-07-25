@@ -4,6 +4,7 @@ import { join } from 'path'
 // 使用 ?raw 将 schema.sql 作为字符串内联进打包产物，
 // 避免 electron-vite 打包后运行期再 readFileSync 文件路径错乱的问题。
 import schemaSql from './schema.sql?raw'
+import { runMigrations } from './migrations'
 
 let db: Database.Database | null = null
 
@@ -31,6 +32,10 @@ export function initDatabase(): Database.Database {
 
   // 执行 schema.sql（建表 + 索引）
   db.exec(schemaSql)
+
+  // 执行增量迁移（ALTER TABLE / 新表）
+  // 在 schema.sql 之后运行，确保基表存在后再添加字段或新表
+  runMigrations(db)
 
   // 记录 schema 版本
   const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')

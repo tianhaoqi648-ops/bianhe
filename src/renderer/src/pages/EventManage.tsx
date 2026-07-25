@@ -13,6 +13,9 @@ import {
   Tabs,
   Popconfirm,
   Alert,
+  Row,
+  Col,
+  Progress,
   message,
   theme
 } from 'antd';
@@ -44,9 +47,19 @@ import type {
   TeamUpdateInput
 } from '../../../shared/types';
 import EventEditModal from '../components/EventEditModal';
+import EventWizardModal from '../components/EventWizardModal';
 import RoundEditModal from '../components/RoundEditModal';
 import TeamEditModal from '../components/TeamEditModal';
 import TeamHistoryModal from '../components/TeamHistoryModal';
+import {
+  toolbarStyle,
+  cardStyle,
+  primaryButtonStyle,
+  titleBarStyle,
+  selectedStyle,
+  pageContainerStyle
+} from '../styles/shared';
+import { spacing, shadow, transition } from '../styles/tokens';
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -107,6 +120,8 @@ export default function EventManage() {
   // 弹窗状态
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  // 新建赛事向导弹窗
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [roundModalOpen, setRoundModalOpen] = useState(false);
   const [editingRound, setEditingRound] = useState<Round | null>(null);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
@@ -117,6 +132,15 @@ export default function EventManage() {
   const [teamHistory, setTeamHistory] = useState<TeamHistory[]>([]);
   // 预设弹窗
   const [presetModalOpen, setPresetModalOpen] = useState(false);
+  // 预设选中态（最近应用的方案）
+  const [appliedPresetKey, setAppliedPresetKey] = useState<string | null>(null);
+  // 预设卡片 hover 态
+  const [hoveredPresetKey, setHoveredPresetKey] = useState<string | null>(null);
+
+  // 赛事卡片统计：每个赛事的轮次数与队伍数
+  const [eventStats, setEventStats] = useState<Record<string, { rounds: number; teams: number }>>({});
+  // 详情头部 Progress：已完成轮次（有抽取记录的轮次）/ 总轮次
+  const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
 
   // ====== 数据加载 ======
   useEffect(() => {
@@ -125,14 +149,61 @@ export default function EventManage() {
     if (topicStore.items.length === 0) {
       void topicStore.fetchList({ pageSize: 1000 });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 拉取每个赛事的轮次/队伍数量（用于卡片显示）
+  useEffect(() => {
+    if (eventStore.events.length === 0) return;
+    void (async () => {
+      const stats: Record<string, { rounds: number; teams: number }> = {};
+      await Promise.all(
+        eventStore.events.map(async (e) => {
+          try {
+            const [roundsRes, teamsRes] = await Promise.all([
+              window.eventAPI.listRoundsByEvent(e.id),
+              window.eventAPI.listTeamsByEvent(e.id)
+            ]);
+            stats[e.id] = {
+              rounds: roundsRes.success && roundsRes.data ? roundsRes.data.length : 0,
+              teams: teamsRes.success && teamsRes.data ? teamsRes.data.length : 0
+            };
+          } catch {
+            stats[e.id] = { rounds: 0, teams: 0 };
+          }
+        })
+      );
+      setEventStats(stats);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventStore.events]);
 
   // 选中赛事后加载详情
   useEffect(() => {
     if (selectedEvent) {
       void eventStore.listRoundsByEvent(selectedEvent.id);
       void eventStore.listTeamsByEvent(selectedEvent.id);
+      // 拉取该赛事的抽取记录，统计已完成的轮次（有抽取记录即视为已完成）
+      void (async () => {
+        try {
+          const res = await window.drawAPI.listSessions({ event_id: selectedEvent.id, pageSize: 1000 });
+          if (res.success && res.data) {
+            const ids = new Set<string>();
+            (res.data.items ?? []).forEach((s) => {
+              if (s.round_id) ids.add(s.round_id);
+            });
+            setCompletedRoundIds(ids);
+          } else {
+            setCompletedRoundIds(new Set());
+          }
+        } catch {
+          setCompletedRoundIds(new Set());
+        }
+      })();
+    } else {
+      setCompletedRoundIds(new Set());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEvent?.id]);
 
   // 队伍历史相关：需要题库候选 + 赛事候选
@@ -141,10 +212,19 @@ export default function EventManage() {
     [eventStore.events]
   );
 
+  // 状态分布统计
+  const statusDistribution = useMemo(() => {
+    const dist: Record<string, number> = { preparing: 0, ongoing: 0, finished: 0 };
+    eventStore.events.forEach((e) => {
+      const s = e.status ?? 'preparing';
+      if (dist[s] !== undefined) dist[s] += 1;
+    });
+    return dist;
+  }, [eventStore.events]);
+
   // ====== 赛事 CRUD ======
   const handleCreateEvent = () => {
-    setEditingEvent(null);
-    setEventModalOpen(true);
+    setWizardOpen(true);
   };
   const handleEditEvent = (event: Event) => {
     setEditingEvent(event);
@@ -274,6 +354,7 @@ export default function EventManage() {
             });
           }
           messageApi.success('难度梯度已应用');
+          setAppliedPresetKey(presetKey);
           setPresetModalOpen(false);
           await eventStore.listRoundsByEvent(selectedEvent.id);
         } catch (e) {
@@ -345,7 +426,7 @@ export default function EventManage() {
         setTeamHistory(res.data as TeamHistory[]);
       }
     } catch (e) {
-      messageApi.error('加载历史失败');
+      messageApi.error(e instanceof Error ? e.message : '加载历史失败');
     }
   };
   const handleAddHistory = async (data: {
@@ -376,76 +457,6 @@ export default function EventManage() {
   };
 
   // ====== 表格列定义 ======
-  const eventColumns: ColumnsType<Event> = [
-    {
-      title: '赛事名称',
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, record: Event) => (
-        <Button
-          type="link"
-          style={{ padding: 0 }}
-          onClick={() => setSelectedEvent(record)}
-        >
-          {name}
-        </Button>
-      )
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      render: (status: string | null) => {
-        const tag = status ? STATUS_TAG[status] : null;
-        return tag ? <Tag color={tag.color}>{tag.label}</Tag> : <Text type="secondary">-</Text>;
-      }
-    },
-    {
-      title: '开始日期',
-      dataIndex: 'start_date',
-      key: 'start_date',
-      width: 120,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '结束日期',
-      dataIndex: 'end_date',
-      key: 'end_date',
-      width: 120,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 220,
-      render: (_: any, record: Event) => (
-        <Space size={4}>
-          <Button
-            size="small"
-            type="primary"
-            icon={<ThunderboltOutlined />}
-            onClick={() => handleGotoDraw(record)}
-          >
-            抽取
-          </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEditEvent(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除该赛事？"
-            onConfirm={() => handleDeleteEvent(record)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      )
-    }
-  ];
-
   const roundColumns: ColumnsType<Round> = [
     {
       title: '#',
@@ -542,43 +553,111 @@ export default function EventManage() {
     }
   ];
 
+  // ====== 渲染：赛事卡片 ======
+  const renderEventCard = (event: Event) => {
+    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0 };
+    const statusInfo = event.status ? STATUS_TAG[event.status] : null;
+    return (
+      <Col xs={24} sm={12} md={8} lg={6} key={event.id}>
+        <Card
+          size="small"
+          hoverable
+          style={{
+            ...cardStyle,
+            height: '100%',
+            transition: transition.base,
+            cursor: 'pointer'
+          }}
+          styles={{ body: { padding: spacing.lg } }}
+          onClick={() => setSelectedEvent(event)}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.sm }}>
+            <Text strong style={{ fontSize: 15, flex: 1, marginRight: spacing.sm }} ellipsis={{ tooltip: event.name }}>
+              {event.name}
+            </Text>
+            {statusInfo && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
+          </div>
+          <div style={{ display: 'flex', gap: spacing.lg, marginBottom: spacing.md, color: token.colorTextSecondary }}>
+            <span>
+              <CalendarOutlined style={{ marginRight: 4 }} />
+              <Text type="secondary" style={{ fontSize: 12 }}>轮次 </Text>
+              <Text strong>{stats.rounds}</Text>
+            </span>
+            <span>
+              <TeamOutlined style={{ marginRight: 4 }} />
+              <Text type="secondary" style={{ fontSize: 12 }}>队伍 </Text>
+              <Text strong>{stats.teams}</Text>
+            </span>
+          </div>
+          {event.start_date && (
+            <div style={{ marginBottom: spacing.sm }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {event.start_date}{event.end_date ? ` ~ ${event.end_date}` : ''}
+              </Text>
+            </div>
+          )}
+          <Space size={4} onClick={(e) => e.stopPropagation()}>
+            <Button
+              size="small"
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={() => handleGotoDraw(event)}
+            >
+              抽取
+            </Button>
+            <Button size="small" icon={<EditOutlined />} onClick={() => handleEditEvent(event)}>
+              编辑
+            </Button>
+            <Popconfirm
+              title="确认删除该赛事？"
+              onConfirm={() => handleDeleteEvent(event)}
+              okText="删除"
+              okType="danger"
+              cancelText="取消"
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Space>
+        </Card>
+      </Col>
+    );
+  };
+
   // ====== 渲染 ======
   return (
     <>
       {contextHolder}
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ padding: '0 16px 16px', overflow: 'auto' }}>
+        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
           {/* 顶部工具栏 */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-              padding: 12,
-              background: token.colorBgContainer,
-              borderRadius: 8,
-              border: `1px solid ${token.colorBorderSecondary}`
-            }}
-          >
+          <div style={toolbarStyle}>
             <Space>
               <TrophyOutlined style={{ color: '#1677ff' }} />
               <Text strong>赛事管理</Text>
+              <Tag color="blue">共 {eventStore.events.length} 场</Tag>
+              <Tag color="default">筹备中 {statusDistribution.preparing}</Tag>
+              <Tag color="processing">进行中 {statusDistribution.ongoing}</Tag>
+              <Tag color="success">已结束 {statusDistribution.finished}</Tag>
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={() => eventStore.listEvents()}>
                 刷新
               </Button>
-              <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateEvent}>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreateEvent}
+                style={primaryButtonStyle}
+              >
                 新建赛事
               </Button>
             </Space>
           </div>
 
-          {/* 赛事列表 */}
+          {/* 赛事列表 — 卡片网格视图 */}
           <Card
             size="small"
-            style={{ marginBottom: 12, background: token.colorBgContainer }}
+            style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
             title={
               <Space>
                 <Text strong>赛事列表</Text>
@@ -596,13 +675,9 @@ export default function EventManage() {
                   </Button>
                 </Empty>
               ) : (
-                <Table
-                  columns={eventColumns}
-                  dataSource={eventStore.events}
-                  rowKey="id"
-                  size="small"
-                  pagination={{ pageSize: 10, showSizeChanger: false }}
-                />
+                <Row gutter={[spacing.lg, spacing.lg]}>
+                  {eventStore.events.map(renderEventCard)}
+                </Row>
               )}
             </Spin>
           </Card>
@@ -611,9 +686,9 @@ export default function EventManage() {
           {selectedEvent && (
             <Card
               size="small"
-              style={{ background: token.colorBgContainer }}
+              style={{ marginTop: spacing.lg, background: token.colorBgContainer, ...cardStyle }}
               title={
-                <Space>
+                <div style={titleBarStyle}>
                   <Text strong>{selectedEvent.name}</Text>
                   {selectedEvent.status && (
                     <Tag color={STATUS_TAG[selectedEvent.status]?.color ?? 'default'}>
@@ -623,7 +698,7 @@ export default function EventManage() {
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     详情
                   </Text>
-                </Space>
+                </div>
               }
               extra={
                 <Space>
@@ -645,6 +720,29 @@ export default function EventManage() {
                 </Space>
               }
             >
+              {/* Progress：已完成轮次 / 总轮次 */}
+              <div style={{ marginBottom: spacing.lg, padding: `${spacing.sm} ${spacing.md}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: spacing.xs }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    赛事进度：已完成 {completedRoundIds.size} / {eventStore.rounds.length} 轮次
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {eventStore.rounds.length > 0
+                      ? `${Math.round((completedRoundIds.size / eventStore.rounds.length) * 100)}%`
+                      : '0%'}
+                  </Text>
+                </div>
+                <Progress
+                  percent={
+                    eventStore.rounds.length > 0
+                      ? Math.round((completedRoundIds.size / eventStore.rounds.length) * 100)
+                      : 0
+                  }
+                  size="small"
+                  status={completedRoundIds.size === eventStore.rounds.length && eventStore.rounds.length > 0 ? 'success' : 'active'}
+                />
+              </div>
+
               <Tabs
                 activeKey={detailTab}
                 onChange={(k) => setDetailTab(k as 'teams' | 'rounds')}
@@ -655,14 +753,14 @@ export default function EventManage() {
                       <Space>
                         <TeamOutlined />
                         <span>队伍管理</span>
-                        <Tag style={{ marginInlineStart: 4 }}>
+                        <Tag color="blue" style={{ marginInlineStart: 4 }}>
                           {eventStore.teams.length}
                         </Tag>
                       </Space>
                     ),
                     children: (
                       <div>
-                        <div style={{ marginBottom: 12 }}>
+                        <div style={{ marginBottom: spacing.md }}>
                           <Button
                             type="primary"
                             icon={<PlusOutlined />}
@@ -676,7 +774,15 @@ export default function EventManage() {
                           dataSource={eventStore.teams}
                           rowKey="id"
                           size="small"
-                          pagination={false}
+                          pagination={
+                            eventStore.teams.length > 10
+                              ? {
+                                  pageSize: 10,
+                                  showSizeChanger: false,
+                                  showTotal: (t) => `共 ${t} 支队伍`
+                                }
+                              : false
+                          }
                           locale={{ emptyText: <Empty description="暂无队伍" /> }}
                         />
                       </div>
@@ -688,14 +794,14 @@ export default function EventManage() {
                       <Space>
                         <CalendarOutlined />
                         <span>轮次设置</span>
-                        <Tag style={{ marginInlineStart: 4 }}>
+                        <Tag color="blue" style={{ marginInlineStart: 4 }}>
                           {eventStore.rounds.length}
                         </Tag>
                       </Space>
                     ),
                     children: (
                       <div>
-                        <div style={{ marginBottom: 12 }}>
+                        <div style={{ marginBottom: spacing.md }}>
                           <Space>
                             <Button
                               type="primary"
@@ -714,7 +820,15 @@ export default function EventManage() {
                           dataSource={eventStore.rounds}
                           rowKey="id"
                           size="small"
-                          pagination={false}
+                          pagination={
+                            eventStore.rounds.length > 10
+                              ? {
+                                  pageSize: 10,
+                                  showSizeChanger: false,
+                                  showTotal: (t) => `共 ${t} 个轮次`
+                                }
+                              : false
+                          }
                           locale={{ emptyText: <Empty description="暂无轮次" /> }}
                         />
                       </div>
@@ -735,6 +849,24 @@ export default function EventManage() {
         onCancel={() => {
           setEventModalOpen(false);
           setEditingEvent(null);
+        }}
+      />
+
+      {/* 新建赛事向导弹窗 */}
+      <EventWizardModal
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={async (eventId) => {
+          setWizardOpen(false);
+          await eventStore.listEvents();
+          // 选中新创建的赛事
+          const created = eventStore.events.find((e) => e.id === eventId);
+          if (created) setSelectedEvent(created);
+          else {
+            // events 可能还没刷新完，再查一次
+            const fresh = await window.eventAPI.getEvent(eventId);
+            if (fresh.success && fresh.data) setSelectedEvent(fresh.data);
+          }
         }}
       />
 
@@ -793,29 +925,41 @@ export default function EventManage() {
           message="应用预设将清空当前赛事的所有轮次并按预设重建"
           type="warning"
           showIcon
-          style={{ marginBottom: 12 }}
+          banner
         />
-        <Space direction="vertical" style={{ width: '100%' }}>
-          {DIFFICULTY_PRESETS.map((p) => (
-            <Card
-              key={p.key}
-              size="small"
-              hoverable
-              onClick={() => handleApplyPreset(p.key)}
-              style={{ cursor: 'pointer' }}
-            >
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <Text strong>{p.label}</Text>
-                <Space wrap>
-                  {p.presets.map((s, i) => (
-                    <Tag key={i} color="blue">
-                      {s.name}: {s.difficulty_override}
-                    </Tag>
-                  ))}
+        <Space direction="vertical" style={{ width: '100%', marginTop: spacing.md }}>
+          {DIFFICULTY_PRESETS.map((p) => {
+            const isSelected = appliedPresetKey === p.key;
+            const isHovered = hoveredPresetKey === p.key;
+            return (
+              <Card
+                key={p.key}
+                size="small"
+                hoverable
+                onClick={() => handleApplyPreset(p.key)}
+                onMouseEnter={() => setHoveredPresetKey(p.key)}
+                onMouseLeave={() => setHoveredPresetKey(null)}
+                style={{
+                  cursor: 'pointer',
+                  transition: transition.base,
+                  transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
+                  boxShadow: isHovered ? shadow.cardHover : shadow.sm,
+                  ...(isSelected ? selectedStyle : {})
+                }}
+              >
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Text strong>{p.label}</Text>
+                  <Space wrap>
+                    {p.presets.map((s, i) => (
+                      <Tag key={i} color="blue">
+                        {s.name}: {s.difficulty_override}
+                      </Tag>
+                    ))}
+                  </Space>
                 </Space>
-              </Space>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </Space>
       </Modal>
     </>

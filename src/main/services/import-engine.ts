@@ -16,6 +16,11 @@ import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
 import * as iconv from 'iconv-lite'
 import type { TopicCreateInput } from '../db/repository/topic.repo'
+import {
+  SYSTEM_CANDIDATES as SYSTEM_CANDIDATES_SRC,
+  type CandidateField
+} from '../../shared/constants'
+import type { ParsedResult, UnknownValueItem } from '../../shared/types'
 
 // ============================================================
 // 类型定义
@@ -23,26 +28,45 @@ import type { TopicCreateInput } from '../db/repository/topic.repo'
 
 export type FileType = 'xlsx' | 'csv' | 'docx'
 
-export interface ParsedResult {
-  /** 解析出的辩题列表（未入库） */
-  topics: TopicCreateInput[]
-  /** 实际使用的表头映射：原始表头 → Topic 字段名 */
-  mapping: Record<string, string>
-  /** 警告信息（如某行 title 缺失） */
-  warnings: string[]
-}
+// ParsedResult 从 shared/types 引入并 re-export，保持 IPC 边界类型一致
+export type { ParsedResult }
 
 /**
  * 中文表头 → Topic 字段的映射规则。
- * 同一字段可有多个中文别名。
+ * 同一字段可有多个别名（中英文均可，大小写不敏感）。
  */
 export const HEADER_MAPPING: Record<string, string[]> = {
-  title: ['标题', '题目', '辩题', '辩题标题', '名称'],
-  type: ['类型', '辩题类型'],
-  domain: ['领域', '主题领域', '分类'],
-  difficulty: ['难度', '难度等级'],
-  source: ['来源', '出处'],
-  tags: ['标签', '标记']
+  title: ['标题', '题目', '辩题', '辩题标题', '名称', 'title', 'topic'],
+  type: ['类型', '辩题类型', 'type', 'category'],
+  domain: ['领域', '主题领域', '分类', 'domain'],
+  difficulty: ['难度', '难度等级', 'difficulty', 'level'],
+  source: ['来源', '出处', 'source'],
+  tags: ['标签', '标记', 'tags', 'tag']
+}
+
+/**
+ * 系统候选值（引用 shared/constants.ts 单一来源）。
+ * 用于在导入时检查字段值是否在系统候选内——
+ * 不在候选内的值会原样入库（不阻断），但生成非阻断警告告知用户：
+ * 后续在筛选面板中可能选不到这些值，建议导入后批量编辑。
+ *
+ * 暴露 5 个字段：type/domain/difficulty/source/source_type。
+ */
+export const SYSTEM_CANDIDATES: Record<CandidateField, string[]> = {
+  type: [...SYSTEM_CANDIDATES_SRC.type],
+  domain: [...SYSTEM_CANDIDATES_SRC.domain],
+  difficulty: [...SYSTEM_CANDIDATES_SRC.difficulty],
+  source: [...SYSTEM_CANDIDATES_SRC.source],
+  source_type: [...SYSTEM_CANDIDATES_SRC.source_type]
+}
+
+/** 中文标签：字段 key → 显示名 */
+const FIELD_LABEL: Record<CandidateField, string> = {
+  type: '类型',
+  domain: '领域',
+  difficulty: '难度',
+  source: '来源',
+  source_type: '来源类型'
 }
 
 // ============================================================
@@ -50,14 +74,15 @@ export const HEADER_MAPPING: Record<string, string[]> = {
 // ============================================================
 
 /**
- * 反向映射：中文表头 → Topic 字段名。
- * 遍历 HEADER_MAPPING，构建 { '标题': 'title', '题目': 'title', ... }。
+ * 反向映射：表头 → Topic 字段名。
+ * 遍历 HEADER_MAPPING，构建 { '标题': 'title', 'title': 'title', ... }。
+ * key 统一转小写，匹配时也用小写比较，实现大小写不敏感。
  */
 const HEADER_REVERSE_MAP: Record<string, string> = (() => {
   const m: Record<string, string> = {}
   for (const [field, aliases] of Object.entries(HEADER_MAPPING)) {
     for (const alias of aliases) {
-      m[alias] = field
+      m[alias.toLowerCase()] = field
     }
   }
   return m
@@ -65,28 +90,102 @@ const HEADER_REVERSE_MAP: Record<string, string> = (() => {
 
 /**
  * 根据表头行构建本次解析用的字段映射。
+ * 大小写不敏感：表头转小写后查反向映射。
+ * mapping 的 key 保留原始表头（用户写啥就是啥），下游 rowToTopic 用 headers.indexOf 查找列索引。
+ *
  * @param headers 表头单元格数组
- * @returns { mapping: Record<原始表头, 字段名>, titleField: 找到的 title 列名 }
+ * @returns { mapping, titleField, unmatchedHeaders }
+ *   - mapping: 原始表头 → 字段名
+ *   - titleField: 找到的 title 列名（原始表头形式）
+ *   - unmatchedHeaders: 未识别的表头列表（供诊断提示用）
  */
 function buildFieldMapping(
   headers: string[]
-): { mapping: Record<string, string>; titleField: string | null } {
+): { mapping: Record<string, string>; titleField: string | null; unmatchedHeaders: string[] } {
   const mapping: Record<string, string> = {}
+  const unmatchedHeaders: string[] = []
   let titleField: string | null = null
 
   for (const h of headers) {
     const trimmed = String(h ?? '').trim()
     if (!trimmed) continue
-    const field = HEADER_REVERSE_MAP[trimmed]
+    const field = HEADER_REVERSE_MAP[trimmed.toLowerCase()]
     if (field) {
       mapping[trimmed] = field
       if (field === 'title' && !titleField) {
         titleField = trimmed
       }
+    } else {
+      unmatchedHeaders.push(trimmed)
     }
   }
 
-  return { mapping, titleField }
+  return { mapping, titleField, unmatchedHeaders }
+}
+
+/**
+ * 收集所有解析出的 topic 中，字段值不在 SYSTEM_CANDIDATES 内的项，
+ * 生成非阻断性警告（不阻止导入，仅告知用户后续筛选可能选不到）。
+ *
+ * 每个字段一条警告，最多列前 10 个值，超过则附「等 N 个值」。
+ */
+function collectValueMismatchWarnings(topics: TopicCreateInput[]): string[] {
+  const mismatches: Record<CandidateField, Set<string>> = {
+    type: new Set(),
+    domain: new Set(),
+    difficulty: new Set(),
+    source: new Set(),
+    source_type: new Set()
+  }
+  for (const t of topics) {
+    for (const key of Object.keys(SYSTEM_CANDIDATES) as CandidateField[]) {
+      const v = (t as any)[key] as string | null | undefined
+      if (v && !SYSTEM_CANDIDATES[key].includes(v)) {
+        mismatches[key].add(v)
+      }
+    }
+  }
+  const warnings: string[] = []
+  for (const key of Object.keys(mismatches) as CandidateField[]) {
+    if (mismatches[key].size > 0) {
+      const allValues = Array.from(mismatches[key])
+      const shown = allValues.slice(0, 10).join('、')
+      const more = allValues.length > 10 ? ` 等 ${allValues.length} 个值` : ''
+      warnings.push(
+        `${FIELD_LABEL[key]}「${shown}${more}」不在系统候选值内，已原样入库；后续在筛选面板中可能选不到这些值，建议导入后批量编辑`
+      )
+    }
+  }
+  return warnings
+}
+
+/**
+ * 收集所有 topics 中字段值不在 SYSTEM_CANDIDATES 内的项。
+ * 同值去重并累加出现次数。
+ * null/空字符串跳过，不算"新值"。
+ * 返回结构化数据，供渲染进程 ValueMappingPanel 展示与映射。
+ */
+export function collectUnknownValues(topics: TopicCreateInput[]): UnknownValueItem[] {
+  const fields: CandidateField[] = ['type', 'domain', 'difficulty', 'source', 'source_type']
+  const result: UnknownValueItem[] = []
+  for (const field of fields) {
+    const counter = new Map<string, number>()
+    for (const t of topics) {
+      const v = (t as any)[field] as string | null | undefined
+      if (!v || typeof v !== 'string') continue
+      if (SYSTEM_CANDIDATES[field].includes(v)) continue
+      counter.set(v, (counter.get(v) ?? 0) + 1)
+    }
+    if (counter.size > 0) {
+      result.push({
+        field,
+        values: Array.from(counter.entries())
+          .map(([value, count]) => ({ value, count }))
+          .sort((a, b) => b.count - a.count)
+      })
+    }
+  }
+  return result
 }
 
 /**
@@ -247,7 +346,9 @@ function detectEncoding(buffer: Buffer): string {
  * - title 列缺失的行跳过并加入 warnings
  *
  * 编码处理：
- *   - xlsx：ZIP+XML 二进制，XLSX.readFile 直接处理（cellEncoding 内部已 UTF-8）
+ *   - xlsx：ZIP+XML 二进制，用 fs 读取 buffer 后交给 XLSX.read（type: 'buffer'），
+ *          规避 ESM 模式下 `import * as XLSX from 'xlsx'` 加载 CommonJS 版本时
+ *          readFile 命名导出丢失（cjs-module-lexer 无法识别动态赋值）的问题
  *   - csv：先读 buffer，用 detectEncoding 自动识别 UTF-8 / UTF-16 / GBK，
  *          用 iconv-lite 解码后传给 XLSX.read（type: 'string'），
  *          替代旧的 codepage=65001 固定 UTF-8 写法，修复 GBK 文件中文乱码
@@ -261,8 +362,9 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
     const text = iconv.decode(buffer, encoding)
     workbook = XLSX.read(text, { type: 'string' })
   } else {
-    // XLSX：二进制 ZIP，保持原 readFile 调用
-    workbook = XLSX.readFile(filePath, { type: 'file', codepage: 65001 })
+    // XLSX：fs 读 buffer 后交给 XLSX.read，规避 ESM 下 readFile 命名导出丢失
+    const buffer = fs.readFileSync(filePath)
+    workbook = XLSX.read(buffer, { type: 'buffer' })
   }
   const firstSheetName = workbook.SheetNames[0]
   if (!firstSheetName) {
@@ -279,11 +381,26 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
   const headers = (rows[0] as any[]).map((h) => String(h ?? '').trim())
   const { mapping, titleField } = buildFieldMapping(headers)
 
+  // 多 sheet 文件信息性提示（不阻止导入，仅告知用户当前导入的是哪张表）
+  const sheetCount = workbook.SheetNames.length
+  const sheetNote =
+    sheetCount > 1
+      ? [
+          `当前导入的是第 1 张工作表「${firstSheetName}」（共 ${sheetCount} 张：${workbook.SheetNames.join('、')}）。如需导入其他工作表，请单独保存为 xlsx 文件`
+        ]
+      : []
+
   if (!titleField) {
+    const actualHeaders = headers.filter((h) => h).join(' / ') || '(空)'
     return {
       topics: [],
       mapping,
-      warnings: ['未识别到 title 列（标题/题目/辩题），无法解析']
+      warnings: [
+        ...sheetNote,
+        `未识别到 title 列（支持的别名：标题 / 题目 / 辩题 / 辩题标题 / 名称 / title / topic，大小写不敏感）`,
+        `实际检测到的表头：${actualHeaders}`,
+        `请检查表头第一行是否包含上述任一别名，或修改您的表头后重试`
+      ]
     }
   }
 
@@ -298,7 +415,11 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
     if (topic) topics.push(topic)
   }
 
-  return { topics, mapping, warnings }
+  return {
+    topics,
+    mapping,
+    warnings: [...sheetNote, ...warnings, ...collectValueMismatchWarnings(topics)]
+  }
 }
 
 // ============================================================
@@ -368,7 +489,11 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
         const topic = rowToTopic(row, headers, mapping, titleField, i, warnings)
         if (topic) topics.push(topic)
       }
-      return { topics, mapping, warnings }
+      return {
+        topics,
+        mapping,
+        warnings: [...warnings, ...collectValueMismatchWarnings(topics)]
+      }
     }
 
     // 表头无 title 列，但表格第一列可能是 title

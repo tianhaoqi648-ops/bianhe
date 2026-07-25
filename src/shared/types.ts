@@ -6,6 +6,8 @@
 // 主进程内部仍用 repository 类型，IPC 边界处 TypeScript 自动做结构化类型检查。
 // ============================================================
 
+import type { CandidateField } from './constants'
+
 // ---------- 业务实体（结构等价于 repository 中的类型） ----------
 
 export interface Topic {
@@ -279,6 +281,8 @@ export interface ParsedResult {
   topics: TopicCreateInput[]
   mapping: Record<string, string>
   warnings: string[]
+  /** 检测到的非系统候选值（按字段分组） */
+  unknownValues?: UnknownValueItem[]
 }
 
 // ---------- 统一响应封装 ----------
@@ -405,7 +409,8 @@ export const IPC_CHANNELS = {
   DEDUP_RUN: 'dedup:run',
   DEDUP_DELETE_TOPICS: 'dedup:deleteTopics',
   // system
-  SYSTEM_PICK_FILE: 'system:pickFile'
+  SYSTEM_PICK_FILE: 'system:pickFile',
+  SYSTEM_GET_CANDIDATES: 'system:getCandidates'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -418,6 +423,8 @@ export interface ImportExecuteRequest {
   checkDuplicates?: boolean
   /** 导入文件名（用于批次记录） */
   fileName?: string
+  /** 新值映射规则（渲染进程已应用 map 改写 topics，主进程仅需持久化 add） */
+  valueMapping?: ValueMapping
 }
 
 export interface ImportExecuteResult {
@@ -444,6 +451,27 @@ export interface ImportBatch {
   notes: string | null
   /** 当前剩余题数（listBatches 时返回，用户可能已单独删除部分） */
   remainingCount?: number
+}
+
+// ---------- 新值映射（导入时处理非系统候选值） ----------
+
+/** 新值映射动作 */
+export type ValueMappingAction = 'keep' | 'map' | 'add'
+
+/** 单条映射规则 */
+export interface ValueMappingRule {
+  action: ValueMappingAction
+  /** action='map' 时必填，目标候选值 */
+  target?: string
+}
+
+/** 完整映射结构：field → 原值 → 规则 */
+export type ValueMapping = Partial<Record<CandidateField, Record<string, ValueMappingRule>>>
+
+/** 检测到的新值（按字段分组，含出现次数） */
+export interface UnknownValueItem {
+  field: CandidateField
+  values: Array<{ value: string; count: number }>
 }
 
 export interface ExportLogsRequest {
