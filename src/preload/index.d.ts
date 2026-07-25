@@ -44,7 +44,9 @@ import type {
   ExportResult,
   DedupOptions,
   DedupRunResult,
-  DuplicateGroup
+  DuplicateGroup,
+  ResetDataRequest,
+  ResetDataResponse
 } from '../shared/types'
 
 interface TopicListResponse {
@@ -168,6 +170,15 @@ export interface FileAPI {
   ) => Promise<string | null>
 }
 
+export interface SystemAPI {
+  /**
+   * 统一数据重置入口。
+   * 配置类：删除 settings keys；数据类：清空对应业务表。
+   * 返回各表删除行数。
+   */
+  resetData: (req: ResetDataRequest) => Promise<ApiResponse<ResetDataResponse>>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -180,6 +191,7 @@ declare global {
     exportAPI: ExportAPI
     dedupAPI: DedupAPI
     fileAPI: FileAPI
+    systemAPI: SystemAPI
   }
 }
 
