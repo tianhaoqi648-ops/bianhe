@@ -32,6 +32,8 @@ interface TopicState {
   setViewMode: (mode: 'list' | 'grid') => void;
   setSelectedIds: (ids: string[]) => void;
   toggleSelect: (id: string) => void;
+  select: (id: string) => void;
+  deselect: (id: string) => void;
   clearSelection: () => void;
 
   fetchList: (overrideFilter?: Partial<TopicFilter>) => Promise<void>;
@@ -76,6 +78,14 @@ export const useTopicStore = create<TopicState>((set, get) => ({
       selectedIds: s.selectedIds.includes(id)
         ? s.selectedIds.filter((x) => x !== id)
         : [...s.selectedIds, id]
+    })),
+  select: (id: string) =>
+    set((s) => ({
+      selectedIds: s.selectedIds.includes(id) ? s.selectedIds : [...s.selectedIds, id]
+    })),
+  deselect: (id: string) =>
+    set((s) => ({
+      selectedIds: s.selectedIds.filter((x) => x !== id)
     })),
   clearSelection: () => set({ selectedIds: [] }),
 

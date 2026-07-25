@@ -509,7 +509,7 @@ export default function TopicLibrary() {
                     topic={t}
                     selected={store.selectedIds.includes(t.id)}
                     onSelect={(id, sel) =>
-                      sel ? store.toggleSelect(id) : store.toggleSelect(id)
+                      sel ? store.select(id) : store.deselect(id)
                     }
                     onEdit={handleEdit}
                     onDelete={handleDelete}
