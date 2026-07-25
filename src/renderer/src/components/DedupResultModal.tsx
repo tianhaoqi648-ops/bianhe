@@ -3,7 +3,6 @@ import {
   Modal,
   Button,
   Space,
-  Table,
   Empty,
   Spin,
   Typography,
@@ -15,7 +14,10 @@ import {
   Card,
   Row,
   Col,
-  Result
+  Result,
+  Progress,
+  Checkbox,
+  theme
 } from 'antd';
 import {
   DeleteOutlined,
@@ -23,14 +25,14 @@ import {
   WarningOutlined,
   ReloadOutlined
 } from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
 import type {
   DedupRunResult,
   DuplicateGroup,
   Topic
 } from '../../../shared/types';
+import { spacing } from '../styles/tokens';
 
-const { Text } = Typography;
+const { Text, Paragraph } = Typography;
 
 export interface DedupResultModalProps {
   open: boolean;
@@ -51,6 +53,7 @@ export default function DedupResultModal({
   onClose,
   onRerun
 }: DedupResultModalProps) {
+  const { token } = theme.useToken();
   const [messageApi, contextHolder] = message.useMessage();
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -134,44 +137,7 @@ export default function DedupResultModal({
   // ---------- 渲染 ----------
   const renderGroupCard = (group: DuplicateGroup, index: number) => {
     const reason = REASON_LABELS[group.reason] ?? { label: group.reason, color: 'default' };
-    const tableColumns: ColumnsType<Topic> = [
-      {
-        title: '',
-        key: 'select',
-        width: 40,
-        render: (_: any, record: Topic) => {
-          const checked = selectedIds.has(record.id);
-          // 每组至少保留一条，所以已选中的可取消，未选中的可选
-          return (
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => handleToggleSelect(record.id)}
-            />
-          );
-        }
-      },
-      {
-        title: '标题',
-        dataIndex: 'title',
-        key: 'title'
-      },
-      {
-        title: '来源',
-        dataIndex: 'source',
-        key: 'source',
-        width: 130,
-        render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-      },
-      {
-        title: '创建时间',
-        dataIndex: 'created_at',
-        key: 'created_at',
-        width: 160,
-        render: (v: string | null) =>
-          v ? new Date(v).toLocaleString('zh-CN') : <Text type="secondary">-</Text>
-      }
-    ];
+    const similarityPct = Math.round(group.similarity * 100);
 
     return (
       <Card
@@ -182,22 +148,89 @@ export default function DedupResultModal({
             <Text strong>组 {index + 1}</Text>
             <Tag color={reason.color}>{reason.label}</Tag>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              相似度 {(group.similarity * 100).toFixed(0)}%
-            </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
               {group.topics.length} 条
             </Text>
           </Space>
         }
-        style={{ marginBottom: 12 }}
+        style={{ marginBottom: spacing.md }}
       >
-        <Table
-          columns={tableColumns}
-          dataSource={group.topics}
-          rowKey="id"
-          size="small"
-          pagination={false}
-        />
+        {/* 相似度进度条 */}
+        <div style={{ marginBottom: spacing.md }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 4
+            }}
+          >
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              相似度
+            </Text>
+            <Text strong style={{ color: token.colorPrimary }}>
+              {similarityPct}%
+            </Text>
+          </div>
+          <Progress
+            percent={similarityPct}
+            size="small"
+            status={similarityPct >= 90 ? 'exception' : similarityPct >= 70 ? 'active' : 'normal'}
+            showInfo={false}
+          />
+        </div>
+
+        {/* 成员列表：Space + Typography */}
+        <Space direction="vertical" size={spacing.sm} style={{ width: '100%' }}>
+          {group.topics.map((topic: Topic, i: number) => {
+            const checked = selectedIds.has(topic.id);
+            return (
+              <div
+                key={topic.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: spacing.sm,
+                  padding: `${spacing.sm} ${spacing.md}`,
+                  background: checked
+                    ? token.colorFillAlter
+                    : token.colorBgContainer,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  borderRadius: 6
+                }}
+              >
+                <Checkbox
+                  checked={checked}
+                  onChange={() => handleToggleSelect(topic.id)}
+                  style={{ marginTop: 2 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Paragraph
+                    style={{
+                      margin: 0,
+                      fontWeight: i === 0 ? 500 : 400,
+                      color: i === 0 ? token.colorText : token.colorTextSecondary
+                    }}
+                  >
+                    {i === 0 && (
+                      <Tag color="green" style={{ marginRight: 6 }}>
+                        保留
+                      </Tag>
+                    )}
+                    {topic.title}
+                  </Paragraph>
+                  <Space size={spacing.sm} style={{ marginTop: 4, fontSize: 12 }}>
+                    <Text type="secondary">{topic.source ?? '未知来源'}</Text>
+                    {topic.created_at && (
+                      <Text type="secondary">
+                        {new Date(topic.created_at).toLocaleString('zh-CN')}
+                      </Text>
+                    )}
+                  </Space>
+                </div>
+              </div>
+            );
+          })}
+        </Space>
       </Card>
     );
   };
@@ -212,10 +245,17 @@ export default function DedupResultModal({
         width={920}
         footer={
           <Space>
-            <Button onClick={onClose}>关闭</Button>
-            <Button icon={<ReloadOutlined />} onClick={runCheck} loading={loading}>
+            <Button size="middle" onClick={onClose}>
+              关闭
+            </Button>
+            <Button
+              size="middle"
+              icon={<ReloadOutlined />}
+              onClick={runCheck}
+              loading={loading}
+            >
               重新检查
-          </Button>
+            </Button>
             {result && result.groups.length > 0 && (
               <Popconfirm
                 title={`确认删除选中的 ${selectedIds.size} 条辩题？`}
@@ -226,6 +266,7 @@ export default function DedupResultModal({
                 onConfirm={handleDelete}
               >
                 <Button
+                  size="middle"
                   type="primary"
                   danger
                   icon={<DeleteOutlined />}
@@ -251,7 +292,7 @@ export default function DedupResultModal({
             type="error"
             showIcon
             action={
-              <Button size="small" onClick={runCheck}>
+              <Button size="middle" onClick={runCheck}>
                 重试
               </Button>
             }
@@ -260,7 +301,7 @@ export default function DedupResultModal({
           <Empty description="尚未检查" />
         ) : (
           <div>
-            <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Row gutter={spacing.md} style={{ marginBottom: spacing.md }}>
               <Col span={8}>
                 <Card size="small">
                   <Statistic
@@ -303,9 +344,9 @@ export default function DedupResultModal({
                   description="默认勾选每组中除第一条外的所有辩题，可手动调整勾选项后批量删除。每组至少应保留一条。"
                   type="info"
                   showIcon
-                  style={{ marginBottom: 12 }}
+                  style={{ marginBottom: spacing.md }}
                 />
-                <div style={{ maxHeight: 480, overflow: 'auto', paddingRight: 8 }}>
+                <div style={{ maxHeight: 480, overflow: 'auto', paddingRight: spacing.sm }}>
                   {result.groups.map((g, i) => renderGroupCard(g, i))}
                 </div>
               </div>
