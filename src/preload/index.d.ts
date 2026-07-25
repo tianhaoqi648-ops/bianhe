@@ -10,16 +10,28 @@ import type {
   ApiResponse,
   Topic,
   TopicFilter,
+  TopicCreateInput,
+  TopicUpdateInput,
   Event,
   EventFilter,
+  EventCreateInput,
+  EventUpdateInput,
   Round,
+  RoundCreateInput,
+  RoundUpdateInput,
   Team,
+  TeamCreateInput,
+  TeamUpdateInput,
   TeamHistory,
+  TeamHistoryCreateInput,
   DrawSession,
   DrawSessionDetail,
+  DrawParams,
+  DrawResult,
   SessionFilter,
   AuditLog,
   AuditLogFilter,
+  AuditLogCreateInput,
   ImportExecuteRequest,
   ImportExecuteResult,
   ParsedResult,
@@ -29,7 +41,9 @@ import type {
   ExportDrawSessionsRequest,
   ExportEventPackageRequest,
   ExportResult,
-  DedupRunResult
+  DedupOptions,
+  DedupRunResult,
+  DuplicateGroup
 } from '../shared/types'
 
 interface TopicListResponse {
@@ -55,8 +69,8 @@ interface AuditLogListResponse {
 export interface TopicAPI {
   list: (filter?: TopicFilter) => Promise<ApiResponse<TopicListResponse>>
   get: (id: string) => Promise<ApiResponse<Topic>>
-  create: (data: any) => Promise<ApiResponse<Topic>>
-  update: (id: string, data: any) => Promise<ApiResponse<Topic>>
+  create: (data: TopicCreateInput) => Promise<ApiResponse<Topic>>
+  update: (id: string, data: TopicUpdateInput) => Promise<ApiResponse<Topic>>
   delete: (id: string) => Promise<ApiResponse<boolean>>
   batchDelete: (ids: string[]) => Promise<ApiResponse<number>>
   updateStatus: (id: string, status: string) => Promise<ApiResponse<boolean>>
@@ -67,46 +81,47 @@ export interface TopicAPI {
 export interface EventAPI {
   listEvents: (filter?: EventFilter) => Promise<ApiResponse<EventListResponse>>
   getEvent: (id: string) => Promise<ApiResponse<Event | undefined>>
-  createEvent: (data: any) => Promise<ApiResponse<Event>>
-  updateEvent: (id: string, data: any) => Promise<ApiResponse<Event>>
+  createEvent: (data: EventCreateInput) => Promise<ApiResponse<Event>>
+  updateEvent: (id: string, data: EventUpdateInput) => Promise<ApiResponse<Event>>
   deleteEvent: (id: string) => Promise<ApiResponse<boolean>>
   listRoundsByEvent: (eventId: string) => Promise<ApiResponse<Round[]>>
   getRound: (id: string) => Promise<ApiResponse<Round | undefined>>
-  createRound: (data: any) => Promise<ApiResponse<Round>>
-  updateRound: (id: string, data: any) => Promise<ApiResponse<Round>>
+  createRound: (data: RoundCreateInput) => Promise<ApiResponse<Round>>
+  updateRound: (id: string, data: RoundUpdateInput) => Promise<ApiResponse<Round>>
   deleteRound: (id: string) => Promise<ApiResponse<boolean>>
   listTeamsByEvent: (eventId: string) => Promise<ApiResponse<Team[]>>
   getTeam: (id: string) => Promise<ApiResponse<Team | undefined>>
-  createTeam: (data: any) => Promise<ApiResponse<Team>>
-  updateTeam: (id: string, data: any) => Promise<ApiResponse<Team>>
+  createTeam: (data: TeamCreateInput) => Promise<ApiResponse<Team>>
+  updateTeam: (id: string, data: TeamUpdateInput) => Promise<ApiResponse<Team>>
   deleteTeam: (id: string) => Promise<ApiResponse<boolean>>
   listTeamHistory: (teamId: string) => Promise<ApiResponse<TeamHistory[]>>
   listTeamHistoryByEvent: (eventId: string) => Promise<ApiResponse<TeamHistory[]>>
-  addTeamHistory: (data: any) => Promise<ApiResponse<TeamHistory>>
+  addTeamHistory: (data: TeamHistoryCreateInput) => Promise<ApiResponse<TeamHistory>>
   deleteTeamHistory: (id: string) => Promise<ApiResponse<boolean>>
 }
 
 export interface DrawAPI {
-  execute: (params: any) => Promise<ApiResponse<any>>
+  execute: (params: DrawParams) => Promise<ApiResponse<DrawResult>>
   listSessions: (filter?: SessionFilter) => Promise<ApiResponse<SessionListResponse>>
   getSession: (id: string) => Promise<ApiResponse<DrawSessionDetail | undefined>>
   deleteSession: (id: string) => Promise<ApiResponse<boolean>>
   listDrawnTopicIds: (eventId: string) => Promise<ApiResponse<string[]>>
-  redo: (oldSessionId: string, params: any) => Promise<ApiResponse<any>>
+  redo: (oldSessionId: string, params: DrawParams) => Promise<ApiResponse<DrawResult>>
 }
 
 export interface AuditAPI {
   listLogs: (filter?: AuditLogFilter) => Promise<ApiResponse<AuditLogListResponse>>
-  addLog: (input: any) => Promise<ApiResponse<AuditLog>>
+  addLog: (input: AuditLogCreateInput) => Promise<ApiResponse<AuditLog>>
   deleteLog: (id: string) => Promise<ApiResponse<boolean>>
   clearLogs: (beforeDate?: string) => Promise<ApiResponse<number>>
   exportLogs: (req: ExportLogsRequest) => Promise<ApiResponse<ExportLogsResult>>
 }
 
 export interface SettingsAPI {
-  get: (key: string) => Promise<ApiResponse<any>>
-  set: (key: string, value: any) => Promise<ApiResponse<boolean>>
-  getAll: () => Promise<ApiResponse<Record<string, any>>>
+  // settings 的 value 可为任意可序列化结构，使用 unknown 替代 any
+  get: (key: string) => Promise<ApiResponse<unknown>>
+  set: (key: string, value: unknown) => Promise<ApiResponse<boolean>>
+  getAll: () => Promise<ApiResponse<Record<string, unknown>>>
   delete: (key: string) => Promise<ApiResponse<boolean>>
 }
 
@@ -116,7 +131,10 @@ export interface ImportAPI {
     fileType: 'xlsx' | 'csv' | 'docx'
   ) => Promise<ApiResponse<ParsedResult>>
   execute: (req: ImportExecuteRequest) => Promise<ApiResponse<ImportExecuteResult>>
-  findDuplicates: (topics: any[], options?: any) => Promise<ApiResponse<any>>
+  findDuplicates: (
+    topics: Topic[],
+    options?: DedupOptions
+  ) => Promise<ApiResponse<DuplicateGroup[]>>
 }
 
 export interface ExportAPI {
@@ -130,7 +148,7 @@ export interface ExportAPI {
 }
 
 export interface DedupAPI {
-  run: (options?: any) => Promise<ApiResponse<DedupRunResult>>
+  run: (options?: DedupOptions) => Promise<ApiResponse<DedupRunResult>>
   deleteTopics: (ids: string[]) => Promise<ApiResponse<{ deleted: number }>>
 }
 

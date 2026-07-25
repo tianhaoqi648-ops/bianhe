@@ -8,12 +8,38 @@
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import { IPC_CHANNELS } from '../shared/types'
+import {
+  IPC_CHANNELS,
+  type TopicFilter,
+  type TopicCreateInput,
+  type TopicUpdateInput,
+  type EventFilter,
+  type EventCreateInput,
+  type EventUpdateInput,
+  type RoundCreateInput,
+  type RoundUpdateInput,
+  type TeamCreateInput,
+  type TeamUpdateInput,
+  type TeamHistoryCreateInput,
+  type DrawParams,
+  type SessionFilter,
+  type AuditLogFilter,
+  type AuditLogCreateInput,
+  type ImportExecuteRequest,
+  type ExportTopicsRequest,
+  type ExportDrawSessionsRequest,
+  type ExportEventPackageRequest,
+  type ExportLogsRequest,
+  type DedupOptions,
+  type DuplicateGroup,
+  type Topic
+} from '../shared/types'
 
 /**
  * 通用 invoke 封装：自动展开参数。
+ * 使用 unknown[] 而非 any[]，迫使调用方在必要时显式断言类型。
  */
-function invoke<T>(channel: string, ...args: any[]): Promise<T> {
+function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return ipcRenderer.invoke(channel, ...args)
 }
 
@@ -21,17 +47,18 @@ function invoke<T>(channel: string, ...args: any[]): Promise<T> {
 // 题库 API
 // ============================================================
 const topicAPI = {
-  list: (filter?: any) => invoke(IPC_CHANNELS.TOPIC_LIST, filter),
+  list: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_LIST, filter),
   get: (id: string) => invoke(IPC_CHANNELS.TOPIC_GET, id),
-  create: (data: any) => invoke(IPC_CHANNELS.TOPIC_CREATE, data),
-  update: (id: string, data: any) => invoke(IPC_CHANNELS.TOPIC_UPDATE, id, data),
+  create: (data: TopicCreateInput) => invoke(IPC_CHANNELS.TOPIC_CREATE, data),
+  update: (id: string, data: TopicUpdateInput) =>
+    invoke(IPC_CHANNELS.TOPIC_UPDATE, id, data),
   delete: (id: string) => invoke(IPC_CHANNELS.TOPIC_DELETE, id),
   batchDelete: (ids: string[]) => invoke(IPC_CHANNELS.TOPIC_BATCH_DELETE, ids),
   updateStatus: (id: string, status: string) =>
     invoke(IPC_CHANNELS.TOPIC_UPDATE_STATUS, id, status),
   updateWeight: (id: string, weight: number) =>
     invoke(IPC_CHANNELS.TOPIC_UPDATE_WEIGHT, id, weight),
-  count: (filter?: any) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter)
+  count: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter)
 }
 
 // ============================================================
@@ -39,28 +66,32 @@ const topicAPI = {
 // ============================================================
 const eventAPI = {
   // event
-  listEvents: (filter?: any) => invoke(IPC_CHANNELS.EVENT_LIST, filter),
+  listEvents: (filter?: EventFilter) => invoke(IPC_CHANNELS.EVENT_LIST, filter),
   getEvent: (id: string) => invoke(IPC_CHANNELS.EVENT_GET, id),
-  createEvent: (data: any) => invoke(IPC_CHANNELS.EVENT_CREATE, data),
-  updateEvent: (id: string, data: any) => invoke(IPC_CHANNELS.EVENT_UPDATE, id, data),
+  createEvent: (data: EventCreateInput) => invoke(IPC_CHANNELS.EVENT_CREATE, data),
+  updateEvent: (id: string, data: EventUpdateInput) =>
+    invoke(IPC_CHANNELS.EVENT_UPDATE, id, data),
   deleteEvent: (id: string) => invoke(IPC_CHANNELS.EVENT_DELETE, id),
   // round
   listRoundsByEvent: (eventId: string) => invoke(IPC_CHANNELS.ROUND_LIST_BY_EVENT, eventId),
   getRound: (id: string) => invoke(IPC_CHANNELS.ROUND_GET, id),
-  createRound: (data: any) => invoke(IPC_CHANNELS.ROUND_CREATE, data),
-  updateRound: (id: string, data: any) => invoke(IPC_CHANNELS.ROUND_UPDATE, id, data),
+  createRound: (data: RoundCreateInput) => invoke(IPC_CHANNELS.ROUND_CREATE, data),
+  updateRound: (id: string, data: RoundUpdateInput) =>
+    invoke(IPC_CHANNELS.ROUND_UPDATE, id, data),
   deleteRound: (id: string) => invoke(IPC_CHANNELS.ROUND_DELETE, id),
   // team
   listTeamsByEvent: (eventId: string) => invoke(IPC_CHANNELS.TEAM_LIST_BY_EVENT, eventId),
   getTeam: (id: string) => invoke(IPC_CHANNELS.TEAM_GET, id),
-  createTeam: (data: any) => invoke(IPC_CHANNELS.TEAM_CREATE, data),
-  updateTeam: (id: string, data: any) => invoke(IPC_CHANNELS.TEAM_UPDATE, id, data),
+  createTeam: (data: TeamCreateInput) => invoke(IPC_CHANNELS.TEAM_CREATE, data),
+  updateTeam: (id: string, data: TeamUpdateInput) =>
+    invoke(IPC_CHANNELS.TEAM_UPDATE, id, data),
   deleteTeam: (id: string) => invoke(IPC_CHANNELS.TEAM_DELETE, id),
   // team history
   listTeamHistory: (teamId: string) => invoke(IPC_CHANNELS.TEAM_HISTORY_LIST, teamId),
   listTeamHistoryByEvent: (eventId: string) =>
     invoke(IPC_CHANNELS.TEAM_HISTORY_LIST_BY_EVENT, eventId),
-  addTeamHistory: (data: any) => invoke(IPC_CHANNELS.TEAM_HISTORY_ADD, data),
+  addTeamHistory: (data: TeamHistoryCreateInput) =>
+    invoke(IPC_CHANNELS.TEAM_HISTORY_ADD, data),
   deleteTeamHistory: (id: string) => invoke(IPC_CHANNELS.TEAM_HISTORY_DELETE, id)
 }
 
@@ -68,13 +99,13 @@ const eventAPI = {
 // 抽取 API
 // ============================================================
 const drawAPI = {
-  execute: (params: any) => invoke(IPC_CHANNELS.DRAW_EXECUTE, params),
-  listSessions: (filter?: any) => invoke(IPC_CHANNELS.DRAW_LIST_SESSIONS, filter),
+  execute: (params: DrawParams) => invoke(IPC_CHANNELS.DRAW_EXECUTE, params),
+  listSessions: (filter?: SessionFilter) => invoke(IPC_CHANNELS.DRAW_LIST_SESSIONS, filter),
   getSession: (id: string) => invoke(IPC_CHANNELS.DRAW_GET_SESSION, id),
   deleteSession: (id: string) => invoke(IPC_CHANNELS.DRAW_DELETE_SESSION, id),
   listDrawnTopicIds: (eventId: string) =>
     invoke(IPC_CHANNELS.DRAW_LIST_DRAWN_TOPIC_IDS, eventId),
-  redo: (oldSessionId: string, params: any) =>
+  redo: (oldSessionId: string, params: DrawParams) =>
     invoke(IPC_CHANNELS.DRAW_REDO, oldSessionId, params)
 }
 
@@ -82,19 +113,20 @@ const drawAPI = {
 // 审计 API
 // ============================================================
 const auditAPI = {
-  listLogs: (filter?: any) => invoke(IPC_CHANNELS.AUDIT_LIST_LOGS, filter),
-  addLog: (input: any) => invoke(IPC_CHANNELS.AUDIT_ADD_LOG, input),
+  listLogs: (filter?: AuditLogFilter) => invoke(IPC_CHANNELS.AUDIT_LIST_LOGS, filter),
+  addLog: (input: AuditLogCreateInput) => invoke(IPC_CHANNELS.AUDIT_ADD_LOG, input),
   deleteLog: (id: string) => invoke(IPC_CHANNELS.AUDIT_DELETE_LOG, id),
   clearLogs: (beforeDate?: string) => invoke(IPC_CHANNELS.AUDIT_CLEAR_LOGS, beforeDate),
-  exportLogs: (req: any) => invoke(IPC_CHANNELS.AUDIT_EXPORT_LOGS, req)
+  exportLogs: (req: ExportLogsRequest) => invoke(IPC_CHANNELS.AUDIT_EXPORT_LOGS, req)
 }
 
 // ============================================================
 // 系统设置 API
+// 注：settings 的 value 可为任意可序列化结构，使用 unknown 替代 any
 // ============================================================
 const settingsAPI = {
   get: (key: string) => invoke(IPC_CHANNELS.SETTINGS_GET, key),
-  set: (key: string, value: any) => invoke(IPC_CHANNELS.SETTINGS_SET, key, value),
+  set: (key: string, value: unknown) => invoke(IPC_CHANNELS.SETTINGS_SET, key, value),
   getAll: () => invoke(IPC_CHANNELS.SETTINGS_GET_ALL),
   delete: (key: string) => invoke(IPC_CHANNELS.SETTINGS_DELETE, key)
 }
@@ -105,25 +137,27 @@ const settingsAPI = {
 const importAPI = {
   parseFile: (filePath: string, fileType: 'xlsx' | 'csv' | 'docx') =>
     invoke(IPC_CHANNELS.IMPORT_PARSE_FILE, filePath, fileType),
-  execute: (req: any) => invoke(IPC_CHANNELS.IMPORT_EXECUTE, req),
-  findDuplicates: (topics: any[], options?: any) =>
-    invoke(IPC_CHANNELS.IMPORT_FIND_DUPLICATES, topics, options)
+  execute: (req: ImportExecuteRequest) => invoke(IPC_CHANNELS.IMPORT_EXECUTE, req),
+  findDuplicates: (topics: Topic[], options?: DedupOptions) =>
+    invoke<DuplicateGroup[]>(IPC_CHANNELS.IMPORT_FIND_DUPLICATES, topics, options)
 }
 
 // ============================================================
 // 导出 API
 // ============================================================
 const exportAPI = {
-  exportTopics: (req: any) => invoke(IPC_CHANNELS.EXPORT_TOPICS, req),
-  exportDrawSessions: (req: any) => invoke(IPC_CHANNELS.EXPORT_DRAW_SESSIONS, req),
-  exportEventPackage: (req: any) => invoke(IPC_CHANNELS.EXPORT_EVENT_PACKAGE, req)
+  exportTopics: (req: ExportTopicsRequest) => invoke(IPC_CHANNELS.EXPORT_TOPICS, req),
+  exportDrawSessions: (req: ExportDrawSessionsRequest) =>
+    invoke(IPC_CHANNELS.EXPORT_DRAW_SESSIONS, req),
+  exportEventPackage: (req: ExportEventPackageRequest) =>
+    invoke(IPC_CHANNELS.EXPORT_EVENT_PACKAGE, req)
 }
 
 // ============================================================
 // 去重检查 API
 // ============================================================
 const dedupAPI = {
-  run: (options?: any) => invoke(IPC_CHANNELS.DEDUP_RUN, options),
+  run: (options?: DedupOptions) => invoke(IPC_CHANNELS.DEDUP_RUN, options),
   deleteTopics: (ids: string[]) => invoke(IPC_CHANNELS.DEDUP_DELETE_TOPICS, ids)
 }
 
@@ -156,24 +190,31 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore
-  window.topicAPI = topicAPI
-  // @ts-ignore
-  window.eventAPI = eventAPI
-  // @ts-ignore
-  window.drawAPI = drawAPI
-  // @ts-ignore
-  window.auditAPI = auditAPI
-  // @ts-ignore
-  window.settingsAPI = settingsAPI
-  // @ts-ignore
-  window.importAPI = importAPI
-  // @ts-ignore
-  window.exportAPI = exportAPI
-  // @ts-ignore
-  window.dedupAPI = dedupAPI
-  // @ts-ignore
-  window.fileAPI = fileAPI
+  // 非 contextIsolated 场景（如浏览器测试环境）：通过类型化 cast 直接挂到 window
+  // index.d.ts 中已为 Window 接口声明这些字段；由于 .d.ts 是模块（含 export），
+  // 其 declare global 在 tsconfig.node.json 上下文中不会自动加载，
+  // 因此这里用本地类型别名显式扩展 Window，保证类型安全且无需 @ts-ignore
+  type GlobalWindow = Window & {
+    electron: typeof electronAPI
+    topicAPI: typeof topicAPI
+    eventAPI: typeof eventAPI
+    drawAPI: typeof drawAPI
+    auditAPI: typeof auditAPI
+    settingsAPI: typeof settingsAPI
+    importAPI: typeof importAPI
+    exportAPI: typeof exportAPI
+    dedupAPI: typeof dedupAPI
+    fileAPI: typeof fileAPI
+  }
+  const w = window as unknown as GlobalWindow
+  w.electron = electronAPI
+  w.topicAPI = topicAPI
+  w.eventAPI = eventAPI
+  w.drawAPI = drawAPI
+  w.auditAPI = auditAPI
+  w.settingsAPI = settingsAPI
+  w.importAPI = importAPI
+  w.exportAPI = exportAPI
+  w.dedupAPI = dedupAPI
+  w.fileAPI = fileAPI
 }
