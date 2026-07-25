@@ -27,6 +27,7 @@
     "antd": "^5.29.3",
     "better-sqlite3": "^12.11.1",
     "diff-match-patch": "^1.0.5",
+    "iconv-lite": "^0.7.3",
     "mammoth": "^1.11.0",
     "react-router-dom": "^7.18.1",
     "uuid": "^14.0.1",

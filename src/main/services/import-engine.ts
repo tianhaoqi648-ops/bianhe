@@ -14,6 +14,7 @@
 import fs from 'fs'
 import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
+import * as iconv from 'iconv-lite'
 import type { TopicCreateInput } from '../db/repository/topic.repo'
 
 // ============================================================
@@ -157,6 +158,87 @@ function rowToTopic(
 // ============================================================
 
 /**
+ * 自动检测文件 buffer 的文本编码：
+ *   - UTF-8 BOM (EF BB BF) → 'utf-8'
+ *   - UTF-16LE BOM (FF FE) → 'utf-16le'
+ *   - UTF-16BE BOM (FE FF) → 'utf-16be'
+ *   - 否则采样前 4KB，做 UTF-8 序列校验：若 > 30% 非 ASCII 字节处于无效 UTF-8
+ *     序列位置（如孤立的续字节、0xC0/0xC1/0xF5-0xFF 非法首字节、首字节后续字节
+ *     不符合 10xxxxxx），则判定为 GBK；否则默认 UTF-8
+ *
+ * 用于 CSV 文件解码，避免 GBK 编码文件中文乱码。
+ * XLSX 文件本身是 ZIP+XML，内部固定 UTF-8，无需走此分支。
+ */
+function detectEncoding(buffer: Buffer): string {
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return 'utf-8'
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return 'utf-16le'
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return 'utf-16be'
+  }
+  // 采样前 4KB，逐字节扫描 UTF-8 多字节序列，统计无效位置占比
+  const sample = buffer.slice(0, Math.min(buffer.length, 4096))
+  let nonAscii = 0
+  let invalidUtf8 = 0
+  let i = 0
+  while (i < sample.length) {
+    const byte = sample[i]
+    if (byte <= 0x7f) {
+      i++
+      continue
+    }
+    // 非 ASCII 字节
+    nonAscii++
+    // 期望的续字节数
+    let expected = 0
+    if ((byte & 0xe0) === 0xc0) {
+      // 110xxxxx → 2 字节序列（排除 0xC0/0xC1，它们在 UTF-8 中非法）
+      if (byte < 0xc2) {
+        invalidUtf8++
+        i++
+        continue
+      }
+      expected = 1
+    } else if ((byte & 0xf0) === 0xe0) {
+      // 1110xxxx → 3 字节序列
+      expected = 2
+    } else if ((byte & 0xf8) === 0xf0) {
+      // 11110xxx → 4 字节序列（排除 0xF5-0xFF，UTF-8 上限 U+10FFFF）
+      if (byte > 0xf4) {
+        invalidUtf8++
+        i++
+        continue
+      }
+      expected = 3
+    } else {
+      // 0x80-0xBF（孤立的续字节，无前置首字节）或 0xF8-0xFF（永不合法）
+      invalidUtf8++
+      i++
+      continue
+    }
+    // 检查后续 expected 个字节是否都是 10xxxxxx
+    let valid = true
+    for (let k = 1; k <= expected; k++) {
+      if (i + k >= sample.length || (sample[i + k] & 0xc0) !== 0x80) {
+        valid = false
+        break
+      }
+    }
+    if (!valid) {
+      invalidUtf8++
+      i++
+    } else {
+      i += 1 + expected
+    }
+  }
+  if (nonAscii > 0 && invalidUtf8 / nonAscii > 0.3) return 'gbk'
+  return 'utf-8'
+}
+
+/**
  * 用 xlsx 库读取 Excel/CSV 文件并解析为辩题列表。
  *
  * - 第一张工作表
@@ -164,11 +246,24 @@ function rowToTopic(
  * - 按 HEADER_MAPPING 自动映射字段
  * - title 列缺失的行跳过并加入 warnings
  *
- * 注：CSV 是 UTF-8 文本，XLSX 库默认用 Latin1 解码会导致中文乱码，
- *     因此显式指定 codepage=65001 (UTF-8)。对 .xlsx 文件无影响（内部是 XML）。
+ * 编码处理：
+ *   - xlsx：ZIP+XML 二进制，XLSX.readFile 直接处理（cellEncoding 内部已 UTF-8）
+ *   - csv：先读 buffer，用 detectEncoding 自动识别 UTF-8 / UTF-16 / GBK，
+ *          用 iconv-lite 解码后传给 XLSX.read（type: 'string'），
+ *          替代旧的 codepage=65001 固定 UTF-8 写法，修复 GBK 文件中文乱码
  */
-function parseExcelOrCsv(filePath: string): ParsedResult {
-  const workbook = XLSX.readFile(filePath, { type: 'file', codepage: 65001 })
+function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
+  let workbook: XLSX.WorkBook
+  if (fileType === 'csv') {
+    // CSV：buffer → 自动检测编码 → iconv-lite 解码 → 字符串传给 XLSX
+    const buffer = fs.readFileSync(filePath)
+    const encoding = detectEncoding(buffer)
+    const text = iconv.decode(buffer, encoding)
+    workbook = XLSX.read(text, { type: 'string' })
+  } else {
+    // XLSX：二进制 ZIP，保持原 readFile 调用
+    workbook = XLSX.readFile(filePath, { type: 'file', codepage: 65001 })
+  }
   const firstSheetName = workbook.SheetNames[0]
   if (!firstSheetName) {
     return { topics: [], mapping: {}, warnings: ['工作簿无任何工作表'] }
@@ -392,7 +487,7 @@ export async function parseFile(filePath: string, fileType: FileType): Promise<P
 
   // 按类型分发
   if (fileType === 'xlsx' || fileType === 'csv') {
-    return parseExcelOrCsv(filePath)
+    return parseExcelOrCsv(filePath, fileType)
   }
   if (fileType === 'docx') {
     return parseDocx(filePath)
