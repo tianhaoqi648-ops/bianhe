@@ -134,7 +134,7 @@ const fileAPI = {
   /** 调用主进程 dialog.showOpenDialog 选择单个文件，返回文件路径或 null */
   pickFile: (
     filters?: Array<{ name: string; extensions: string[] }>
-  ) => invoke<string | null>('system:pickFile', filters)
+  ) => invoke<string | null>(IPC_CHANNELS.SYSTEM_PICK_FILE, filters)
 }
 
 // ============================================================

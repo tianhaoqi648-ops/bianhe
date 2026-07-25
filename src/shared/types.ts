@@ -337,7 +337,9 @@ export const IPC_CHANNELS = {
   EXPORT_EVENT_PACKAGE: 'export:eventPackage',
   // dedup
   DEDUP_RUN: 'dedup:run',
-  DEDUP_DELETE_TOPICS: 'dedup:deleteTopics'
+  DEDUP_DELETE_TOPICS: 'dedup:deleteTopics',
+  // system
+  SYSTEM_PICK_FILE: 'system:pickFile'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
