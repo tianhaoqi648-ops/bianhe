@@ -3,6 +3,8 @@ import { SearchOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import type { TopicFilter } from '../../../shared/types';
 import { cardStyle } from '../styles/shared';
 import { spacing } from '../styles/tokens';
+import { useSettingsStore } from '../stores/settingsStore';
+import { loadTagDisplayConfig } from '../utils/tagDisplay';
 
 // 维度选项（与设计文档 4.1 节字段对齐）
 export const TYPE_OPTIONS = ['价值辩', '政策辩', '事实辩', '哲理辩', '娱乐辩'];
@@ -45,6 +47,18 @@ export default function FilterPanel({
   onExcludeKeywordsChange
 }: FilterPanelProps) {
   const { token } = theme.useToken();
+  const settings = useSettingsStore((s) => s.settings);
+
+  // 根据标签显示配置过滤候选标签
+  // - 总开关关：不显示标签筛选区
+  // - selectedTags 空：显示全部候选
+  // - selectedTags 非空：只显示选中的候选
+  const cfg = loadTagDisplayConfig(settings);
+  const visibleTagOptions = cfg.enabled
+    ? (cfg.selectedTags.length > 0
+        ? tagOptions.filter((t) => cfg.selectedTags.includes(t))
+        : tagOptions)
+    : [];
 
   return (
     <div
@@ -183,7 +197,7 @@ export default function FilterPanel({
       </div>
 
       {/* 标签筛选 */}
-      {tagOptions.length > 0 && (
+      {visibleTagOptions.length > 0 && (
         <>
           <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
             标签
@@ -200,7 +214,7 @@ export default function FilterPanel({
               style={{ width: '100%', marginTop: spacing.xs }}
               value={filter.tags}
               onChange={(v) => onChange({ tags: v as string[] | undefined })}
-              options={tagOptions.map((t) => ({ label: `#${t}`, value: t }))}
+              options={visibleTagOptions.map((t) => ({ label: `#${t}`, value: t }))}
               tagRender={(props) => (
                 <Tag
                   closable
