@@ -11,6 +11,12 @@ import {
 import type { DrawResult, Team, Round } from '../../../../shared/types';
 import { kbdStyle } from '../../styles/shared';
 import { spacing, radius } from '../../styles/tokens';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+  loadTagDisplayConfig,
+  filterTag,
+  filterTags
+} from '../../utils/tagDisplay';
 
 export interface BigScreenProps {
   result: DrawResult;
@@ -25,6 +31,7 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
   const [revealedCount, setRevealedCount] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const settings = useSettingsStore((s) => s.settings);
 
   // ESC 退出 + 左右切换
   useEffect(() => {
@@ -182,6 +189,51 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
             <div className="bigscreen-topic-title" style={{ position: 'relative', zIndex: 1 }}>
               {currentTopic.title}
             </div>
+
+            {/* 标签显示区（统一使用全局配置，不再有独立大屏配置） */}
+            {(() => {
+              const cfg = loadTagDisplayConfig(settings);
+              const typeTag = filterTag(cfg, currentTopic.type);
+              const diffTag = filterTag(cfg, currentTopic.difficulty);
+              const sourceTag = filterTag(cfg, currentTopic.source_type);
+              const customTags = filterTags(cfg, currentTopic.tags);
+              const visibleTags: Array<{ key: string; label: string; color?: string }> = [];
+              if (typeTag) visibleTags.push({ key: 'type', label: typeTag, color: 'geekblue' });
+              if (diffTag) visibleTags.push({ key: 'diff', label: diffTag, color: 'orange' });
+              if (sourceTag) visibleTags.push({ key: 'source', label: sourceTag, color: 'purple' });
+              customTags.forEach((t) => visibleTags.push({ key: `tag-${t}`, label: `#${t}` }));
+
+              if (visibleTags.length === 0) return null;
+
+              return (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    gap: 12,
+                    marginTop: 16,
+                    fontSize: 18,
+                    position: 'relative',
+                    zIndex: 1
+                  }}
+                >
+                  {visibleTags.map((t) => (
+                    <span
+                      key={t.key}
+                      style={{
+                        padding: '4px 16px',
+                        borderRadius: 16,
+                        background: t.color ? 'rgba(22,119,255,0.2)' : 'rgba(255,255,255,0.1)',
+                        border: `1px solid ${t.color ? 'rgba(22,119,255,0.4)' : 'rgba(255,255,255,0.2)'}`,
+                        color: 'rgba(255,255,255,0.9)'
+                      }}
+                    >
+                      {t.label}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
 
             {/* 持方对阵 */}
             {teamA && teamB && currentItem && (
