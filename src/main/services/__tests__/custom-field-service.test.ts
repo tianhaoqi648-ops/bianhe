@@ -23,6 +23,19 @@ let mockRows: MockRow[] = []
 function makePrepare() {
   return (sql: string) => {
     const trimmed = sql.trim()
+    // 注意：更具体的 SQL 模式必须先匹配，否则 startsWith 会误匹配
+    // exists 的 SQL（含 OR field_label）必须在 createField 的 SQL 之前判断
+    if (
+      trimmed.startsWith('SELECT field_key FROM topic_custom_fields WHERE field_key = ? OR field_label = ?')
+    ) {
+      return {
+        get: (keyOrLabel: string) =>
+          mockRows.find((r) => r.field_key === keyOrLabel || r.field_label === keyOrLabel) ??
+          undefined,
+        all: () => [],
+        run: () => {}
+      }
+    }
     if (trimmed.startsWith('SELECT field_key FROM topic_custom_fields WHERE field_key = ?')) {
       return {
         get: (key: string) => mockRows.find((r) => r.field_key === key) ?? undefined,
@@ -43,17 +56,6 @@ function makePrepare() {
       return {
         all: () => [...mockRows].sort((a, b) => a.sort_order - b.sort_order),
         get: () => undefined,
-        run: () => {}
-      }
-    }
-    if (
-      trimmed.startsWith('SELECT field_key FROM topic_custom_fields WHERE field_key = ? OR field_label = ?')
-    ) {
-      return {
-        get: (keyOrLabel: string) =>
-          mockRows.find((r) => r.field_key === keyOrLabel || r.field_label === keyOrLabel) ??
-          undefined,
-        all: () => [],
         run: () => {}
       }
     }
@@ -202,9 +204,10 @@ describe('custom-field-service', () => {
     })
 
     it('更新 sort_order', () => {
-      customFieldService.createField('A', 'string') // order 0
-      customFieldService.createField('B', 'string') // order 1
-      customFieldService.updateField('B', { sort_order: -1 })
+      customFieldService.createField('A', 'string') // key='a', order 0
+      customFieldService.createField('B', 'string') // key='b', order 1
+      // updateField 第一个参数是 field_key（labelToKey('B')='b'），不是 label
+      customFieldService.updateField('b', { sort_order: -1 })
       const all = customFieldService.listAll()
       expect(all[0].field_label).toBe('B')
     })

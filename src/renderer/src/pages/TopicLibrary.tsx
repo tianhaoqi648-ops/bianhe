@@ -47,7 +47,13 @@ import {
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useTopicStore } from '../stores/topicStore';
-import type { Topic, TopicCreateInput, TopicUpdateInput, ImportBatch } from '../../../shared/types';
+import type {
+  Topic,
+  TopicCreateInput,
+  TopicUpdateInput,
+  ImportBatch,
+  CustomField
+} from '../../../shared/types';
 import TopicCard, { TopicListItem } from '../components/TopicCard';
 import FilterPanel, {
   TYPE_OPTIONS,
@@ -70,10 +76,10 @@ const { Sider, Content } = Layout;
 const { Text } = Typography;
 
 // ============================================================
-// 8 维分类维度定义
+// 8 维分类维度定义 + 动态自定义字段维度
 // ============================================================
 
-type DimensionKey =
+type SystemDimensionKey =
   | 'type'
   | 'domain'
   | 'difficulty'
@@ -83,16 +89,24 @@ type DimensionKey =
   | 'tags'
   | 'batch_id';
 
-type DimensionSource = 'ipc_count' | 'ipc_tags' | 'ipc_batches';
+/** 自定义字段维度的 key 前缀，避免与系统维度冲突 */
+const CUSTOM_DIM_PREFIX = 'custom:';
+
+type DimensionKey = SystemDimensionKey | string;
+
+type DimensionSource = 'ipc_count' | 'ipc_tags' | 'ipc_batches' | 'ipc_custom_field_tags';
 
 interface DimensionMeta {
   key: DimensionKey;
   label: string;
   icon: React.ReactNode;
   source: DimensionSource;
+  /** 自定义字段原始 key（仅 custom:* 维度有值），用于 IPC 调用 */
+  customFieldKey?: string;
 }
 
-const DIMENSIONS: DimensionMeta[] = [
+/** 系统维度（静态） */
+const SYSTEM_DIMENSIONS: DimensionMeta[] = [
   { key: 'type', label: '类型', icon: <TagOutlined />, source: 'ipc_count' },
   { key: 'domain', label: '领域', icon: <GlobalOutlined />, source: 'ipc_count' },
   { key: 'difficulty', label: '难度', icon: <FireOutlined />, source: 'ipc_count' },
@@ -102,6 +116,16 @@ const DIMENSIONS: DimensionMeta[] = [
   { key: 'tags',        label: '标签',     icon: <TagsOutlined />,         source: 'ipc_tags' },
   { key: 'batch_id', label: '导入批次', icon: <FileOutlined />, source: 'ipc_batches' }
 ];
+
+/** 判断维度 key 是否为自定义字段维度 */
+function isCustomDimension(key: string): boolean {
+  return key.startsWith(CUSTOM_DIM_PREFIX);
+}
+
+/** 从维度 key 提取自定义字段原始 key */
+function extractCustomFieldKey(dimKey: string): string {
+  return dimKey.slice(CUSTOM_DIM_PREFIX.length);
+}
 
 interface DimensionItem {
   value: string;
@@ -133,12 +157,60 @@ export default function TopicLibrary() {
   const [dimensionData, setDimensionData] = useState<DimensionItem[]>([]);
   const [dimensionLoading, setDimensionLoading] = useState(false);
 
+  // ====== 自定义字段元数据（动态加载到 DIMENSIONS 和 FilterPanel） ======
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  // 自定义字段候选值：fieldKey → 候选值数组（用于 FilterPanel 下拉）
+  const [customFieldOptions, setCustomFieldOptions] = useState<Record<string, string[]>>({});
+
   // 拉取所有 tag 候选（取自当前列表，简化处理）
   const tagOptions = useMemo(() => {
     const s = new Set<string>();
     store.items.forEach((t) => (t.tags ?? []).forEach((tag) => s.add(tag)));
     return Array.from(s);
   }, [store.items]);
+
+  // ====== 动态 DIMENSIONS：系统维度 + 自定义字段维度 ======
+  const DIMENSIONS: DimensionMeta[] = useMemo(() => {
+    const customDims: DimensionMeta[] = customFields.map((cf) => ({
+      key: `${CUSTOM_DIM_PREFIX}${cf.field_key}`,
+      label: cf.field_label,
+      icon: <TagsOutlined />,
+      source: cf.field_type === 'tags' ? 'ipc_custom_field_tags' : 'ipc_count',
+      customFieldKey: cf.field_key
+    }));
+    return [...SYSTEM_DIMENSIONS, ...customDims];
+  }, [customFields]);
+
+  // 加载自定义字段元数据 + 候选值
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await window.customFieldAPI.list();
+        if (!cancelled && res.success && res.data) {
+          setCustomFields(res.data);
+          // 拉取每个自定义字段的候选值（统一用 listCustomFieldTags，支持 string 和 tags 类型）
+          const optionsMap: Record<string, string[]> = {};
+          await Promise.all(
+            res.data.map(async (cf) => {
+              const tagRes = await window.topicAPI.listCustomFieldTags(cf.field_key);
+              if (tagRes.success && tagRes.data) {
+                optionsMap[cf.field_key] = tagRes.data.map((r) => r.value);
+              }
+            })
+          );
+          if (!cancelled) {
+            setCustomFieldOptions(optionsMap);
+          }
+        }
+      } catch (e) {
+        console.error('[TopicLibrary] load customFields failed:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ====== 数据加载 ======
   useEffect(() => {
@@ -152,6 +224,7 @@ export default function TopicLibrary() {
     store.filter.source_type,
     store.filter.status,
     store.filter.tags,
+    store.filter.custom_filters,
     store.filter.page,
     store.filter.pageSize
   ]);
@@ -166,23 +239,38 @@ export default function TopicLibrary() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.filter.keyword]);
 
-  // ====== 分类树数据加载（8 维全库分布） ======
+  // ====== 分类树数据加载（8 维全库分布 + 自定义字段维度） ======
   // 维度切换或刷新触发：按 source 类型调用不同 IPC
   useEffect(() => {
     let cancelled = false;
-    const dim = DIMENSIONS.find((d) => d.key === dimension)!;
+    const dim = DIMENSIONS.find((d) => d.key === dimension);
+    if (!dim) {
+      setDimensionData([]);
+      return;
+    }
     setDimensionLoading(true);
     (async () => {
       try {
         let items: DimensionItem[] = [];
         if (dim.source === 'ipc_count') {
-          // countByDimension 返回 NULL → '(未设置)'，需翻译为 '__unset__'
-          const res = await window.topicAPI.countByDimension(dim.key as any);
+          // 系统字段 countByDimension：dim.key 即系统字段名
+          // 自定义 string 字段也走此分支，但 countByDimension 内部会用 json_extract
+          // 注意：自定义字段维度需传入原始 fieldKey，而非带前缀的 dim.key
+          const fieldKey = dim.customFieldKey ?? dim.key;
+          const res = await window.topicAPI.countByDimension(fieldKey as any);
           if (res.success && res.data) {
             items = res.data.map((r) => ({
               value: r.value === '(未设置)' ? '__unset__' : r.value,
               count: r.count
             }));
+          }
+        } else if (dim.source === 'ipc_custom_field_tags') {
+          // tags 类型自定义字段：用 listCustomFieldTags 聚合数组内每个 tag
+          if (dim.customFieldKey) {
+            const res = await window.topicAPI.listCustomFieldTags(dim.customFieldKey);
+            if (res.success && res.data) {
+              items = res.data.map((r) => ({ value: r.value, count: r.count }));
+            }
           }
         } else if (dim.source === 'ipc_tags') {
           // listAllTags 聚合所有 active 题的 tags
@@ -232,7 +320,7 @@ export default function TopicLibrary() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dimension, store.total]);
+  }, [dimension, store.total, DIMENSIONS]);
 
   // 批次维度：id → 显示名映射（处理同名加后缀）
   const [dimensionBatchNames, setDimensionBatchNames] = useState<Record<string, string>>({});
@@ -250,7 +338,7 @@ export default function TopicLibrary() {
 
   // 分类树节点渲染（图标 + 标题 + Badge 计数）
   const renderTreeNode = (node: DataNode) => {
-    const dim = DIMENSIONS.find((d) => d.key === dimension)!;
+    const dim = DIMENSIONS.find((d) => d.key === dimension);
     const key = String(node.key);
     if (key === '__all__') {
       return (
@@ -272,7 +360,7 @@ export default function TopicLibrary() {
     const count = item?.count ?? 0;
     // 显示名：批次维度用 dimensionBatchNames 处理同名后缀
     let displayLabel = key;
-    if (dim.key === 'batch_id') {
+    if (dim?.key === 'batch_id') {
       // 同名加后缀逻辑：在 dimensionData 加载时已处理，此处从 dimensionData 中读
       // 这里 key 已经是批次 id，需用 id → name 映射显示
       const baseName = dimensionBatchNames[key] ?? '(未命名)';
@@ -288,9 +376,9 @@ export default function TopicLibrary() {
     return (
       <span
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        title={dim.key === 'batch_id' ? dimensionBatchNames[key] : displayLabel}
+        title={dim?.key === 'batch_id' ? dimensionBatchNames[key] : displayLabel}
       >
-        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{dim.icon}</span>
+        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{dim?.icon}</span>
         <span
           style={{
             maxWidth: 140,
@@ -319,15 +407,35 @@ export default function TopicLibrary() {
   // 选中分类 → 自动同步到 filter
   useEffect(() => {
     if (selectedCategory === '__all__') {
-      store.setFilter({ [dimension]: undefined } as any);
+      if (isCustomDimension(dimension)) {
+        // 自定义字段维度：清除 custom_filters[fieldKey]
+        const fieldKey = extractCustomFieldKey(dimension);
+        const next = { ...(store.filter.custom_filters ?? {}) };
+        delete next[fieldKey];
+        store.setFilter({ custom_filters: Object.keys(next).length > 0 ? next : undefined });
+      } else {
+        store.setFilter({ [dimension]: undefined } as any);
+      }
     } else if (selectedCategory === '__unset__') {
       // __unset__ 在 repo.buildWhereClause 中翻译为 IS NULL
-      store.setFilter({ [dimension]: '__unset__' } as any);
+      if (isCustomDimension(dimension)) {
+        const fieldKey = extractCustomFieldKey(dimension);
+        const next = { ...(store.filter.custom_filters ?? {}), [fieldKey]: '__unset__' };
+        store.setFilter({ custom_filters: next });
+      } else {
+        store.setFilter({ [dimension]: '__unset__' } as any);
+      }
     } else if (dimension === 'tags') {
       // tags 维度特殊：筛选为单值数组
       store.setFilter({ tags: [selectedCategory] } as any);
     } else {
-      store.setFilter({ [dimension]: selectedCategory } as any);
+      if (isCustomDimension(dimension)) {
+        const fieldKey = extractCustomFieldKey(dimension);
+        const next = { ...(store.filter.custom_filters ?? {}), [fieldKey]: selectedCategory };
+        store.setFilter({ custom_filters: next });
+      } else {
+        store.setFilter({ [dimension]: selectedCategory } as any);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, dimension]);
@@ -340,7 +448,7 @@ export default function TopicLibrary() {
 
   // ====== 面包屑导航 ======
   const breadcrumbItems = useMemo(() => {
-    const dim = DIMENSIONS.find((d) => d.key === dimension)!;
+    const dim = DIMENSIONS.find((d) => d.key === dimension);
     const items = [
       {
         title: (
@@ -348,7 +456,7 @@ export default function TopicLibrary() {
         )
       }
     ];
-    if (selectedCategory !== '__all__') {
+    if (selectedCategory !== '__all__' && dim) {
       let label = selectedCategory;
       if (selectedCategory === '__unset__') {
         label = '(未设置)';
@@ -364,7 +472,7 @@ export default function TopicLibrary() {
       });
     }
     return items;
-  }, [dimension, selectedCategory, dimensionBatchNames]);
+  }, [dimension, selectedCategory, dimensionBatchNames, DIMENSIONS]);
 
   // 面包屑「全部」点击：清除当前维度筛选
   const handleResetToAll = () => {
@@ -382,6 +490,14 @@ export default function TopicLibrary() {
       if (Array.isArray(v) && v.length === 0) continue;
       // dimension 字段由分类树管理，不计入 FilterPanel 激活判定
       if (key === dimension) continue;
+      // custom_filters：当前选中的自定义字段维度不计入
+      if (key === 'custom_filters' && isCustomDimension(dimension)) {
+        const fieldKey = extractCustomFieldKey(dimension);
+        const customFilters = (v ?? {}) as Record<string, string>;
+        const others = { ...customFilters };
+        delete others[fieldKey];
+        if (Object.keys(others).length === 0) continue;
+      }
       return true;
     }
     return false;
@@ -389,11 +505,20 @@ export default function TopicLibrary() {
 
   // 重置 FilterPanel 字段但保留当前 dimension 筛选
   const handleResetFilterPanel = () => {
-    const dimValue = store.filter[dimension as keyof typeof store.filter];
-    store.resetFilter();
-    // 恢复当前 dimension 的筛选
-    if (dimValue !== undefined) {
-      store.setFilter({ [dimension]: dimValue } as any);
+    if (isCustomDimension(dimension)) {
+      // 自定义字段维度：保留 custom_filters[fieldKey]
+      const fieldKey = extractCustomFieldKey(dimension);
+      const customValue = store.filter.custom_filters?.[fieldKey];
+      store.resetFilter();
+      if (customValue !== undefined) {
+        store.setFilter({ custom_filters: { [fieldKey]: customValue } });
+      }
+    } else {
+      const dimValue = store.filter[dimension as keyof typeof store.filter];
+      store.resetFilter();
+      if (dimValue !== undefined) {
+        store.setFilter({ [dimension]: dimValue } as any);
+      }
     }
   };
 
@@ -832,6 +957,8 @@ export default function TopicLibrary() {
                 onChange={(f) => store.setFilter(f)}
                 onReset={() => store.resetFilter()}
                 tagOptions={tagOptions}
+                customFields={customFields}
+                customFieldOptions={customFieldOptions}
               />
             </div>
           )}
@@ -1051,6 +1178,8 @@ export default function TopicLibrary() {
           setEditModalOpen(false);
           setEditingTopic(null);
         }}
+        customFields={customFields}
+        customFieldOptions={customFieldOptions}
       />
 
       {/* 导入辩题弹窗 */}

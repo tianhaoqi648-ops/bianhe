@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Input, Select, Tag, Space, Button, Divider, theme } from 'antd';
 import { SearchOutlined, CloseCircleOutlined } from '@ant-design/icons';
-import type { TopicFilter } from '../../../shared/types';
+import type { TopicFilter, CustomField } from '../../../shared/types';
 import { SYSTEM_CANDIDATES } from '../../../shared/constants';
 import { cardStyle } from '../styles/shared';
 import { spacing } from '../styles/tokens';
@@ -29,6 +30,10 @@ export interface FilterPanelProps {
   excludeKeywords?: string[];
   onIncludeKeywordsChange?: (kws: string[]) => void;
   onExcludeKeywordsChange?: (kws: string[]) => void;
+  /** 自定义字段元数据（由父组件 TopicLibrary 传入） */
+  customFields?: CustomField[];
+  /** 自定义字段候选值：fieldKey → 候选值数组 */
+  customFieldOptions?: Record<string, string[]>;
 }
 
 /**
@@ -55,10 +60,64 @@ export default function FilterPanel({
   includeKeywords = [],
   excludeKeywords = [],
   onIncludeKeywordsChange,
-  onExcludeKeywordsChange
+  onExcludeKeywordsChange,
+  customFields = [],
+  customFieldOptions = {}
 }: FilterPanelProps) {
   const { token } = theme.useToken();
   const settings = useSettingsStore((s) => s.settings);
+
+  // ====== 拉取 DB 实际值，与 SYSTEM_CANDIDATES 合并 ======
+  // 解决用户「保留」新值后筛选不到的问题
+  const [dbMergedOptions, setDbMergedOptions] = useState<{
+    type: string[];
+    domain: string[];
+    difficulty: string[];
+    source: string[];
+    source_type: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    window.topicAPI
+      .listValues(['type', 'domain', 'difficulty', 'source', 'source_type'])
+      .then((res) => {
+        if (res.success && res.data) {
+          const merged = {
+            type: Array.from(
+              new Set([...SYSTEM_CANDIDATES.type, ...(res.data.type?.map((r) => r.value) ?? [])])
+            ),
+            domain: Array.from(
+              new Set([
+                ...SYSTEM_CANDIDATES.domain,
+                ...(res.data.domain?.map((r) => r.value) ?? [])
+              ])
+            ),
+            difficulty: Array.from(
+              new Set([
+                ...SYSTEM_CANDIDATES.difficulty,
+                ...(res.data.difficulty?.map((r) => r.value) ?? [])
+              ])
+            ),
+            source: Array.from(
+              new Set([
+                ...SYSTEM_CANDIDATES.source,
+                ...(res.data.source?.map((r) => r.value) ?? [])
+              ])
+            ),
+            source_type: Array.from(
+              new Set([
+                ...SYSTEM_CANDIDATES.source_type,
+                ...(res.data.source_type?.map((r) => r.value) ?? [])
+              ])
+            )
+          };
+          setDbMergedOptions(merged);
+        }
+      })
+      .catch(() => {
+        // 拉取失败用 SYSTEM_CANDIDATES 兜底
+      });
+  }, []);
 
   // 根据 filter 场景配置过滤各维度候选
   // 类别关闭 → 该维度整体隐藏（不渲染字段）
@@ -66,9 +125,15 @@ export default function FilterPanel({
   // selectedValues 空 → 显示全部候选
   const cfg = loadTagDisplayConfig(settings);
   const filterScene = cfg.scenes.filter;
-  const typeOpts = filterOptions(TYPE_OPTIONS, filterScene.categoryEnabled.type, filterScene.selectedValues.type);
-  const diffOpts = filterOptions(DIFFICULTY_OPTIONS, filterScene.categoryEnabled.difficulty, filterScene.selectedValues.difficulty);
-  const sourceTypeOpts = filterOptions(SOURCE_TYPE_OPTIONS, filterScene.categoryEnabled.source_type, filterScene.selectedValues.source_type);
+  // 合并 DB 实际值后的候选（仍受 filterScene 场景配置控制）
+  const BASE_TYPE = dbMergedOptions?.type ?? TYPE_OPTIONS;
+  const BASE_DOMAIN = dbMergedOptions?.domain ?? DOMAIN_OPTIONS;
+  const BASE_DIFFICULTY = dbMergedOptions?.difficulty ?? DIFFICULTY_OPTIONS;
+  const BASE_SOURCE = dbMergedOptions?.source ?? SOURCE_OPTIONS;
+  const BASE_SOURCE_TYPE = dbMergedOptions?.source_type ?? SOURCE_TYPE_OPTIONS;
+  const typeOpts = filterOptions(BASE_TYPE, filterScene.categoryEnabled.type, filterScene.selectedValues.type);
+  const diffOpts = filterOptions(BASE_DIFFICULTY, filterScene.categoryEnabled.difficulty, filterScene.selectedValues.difficulty);
+  const sourceTypeOpts = filterOptions(BASE_SOURCE_TYPE, filterScene.categoryEnabled.source_type, filterScene.selectedValues.source_type);
   const visibleTagOptions = filterScene.categoryEnabled.custom
     ? (filterScene.selectedValues.custom.length > 0
         ? tagOptions.filter((t) => filterScene.selectedValues.custom.includes(t))
@@ -160,7 +225,7 @@ export default function FilterPanel({
                 style={{ width: '100%' }}
                 value={filter.domains ?? []}
                 onChange={(v) => onChange({ domains: v as string[] | undefined, domain: undefined })}
-                options={DOMAIN_OPTIONS.map((v) => ({ label: v, value: v }))}
+                options={BASE_DOMAIN.map((v) => ({ label: v, value: v }))}
               />
             </Field>
             {/* 难度（如果 filter 场景关闭了 difficulty 类别则隐藏） */}
@@ -187,7 +252,7 @@ export default function FilterPanel({
                 style={{ width: '100%' }}
                 value={filter.source}
                 onChange={(v) => onChange({ source: v ?? undefined })}
-                options={SOURCE_OPTIONS.map((v) => ({ label: v, value: v }))}
+                options={BASE_SOURCE.map((v) => ({ label: v, value: v }))}
               />
             </Field>
             {/* 来源类型（如果 filter 场景关闭了 source_type 类别则隐藏） */}
@@ -256,6 +321,41 @@ export default function FilterPanel({
         </>
       )}
 
+      {/* 自定义字段筛选（仅当存在自定义字段元数据时显示） */}
+      {customFields.length > 0 && (
+        <>
+          <Divider orientation="left" plain style={{ margin: `${spacing.sm} 0` }}>
+            自定义字段
+          </Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md }}>
+            {customFields.map((cf) => {
+              const opts = customFieldOptions[cf.field_key] ?? [];
+              return (
+                <Field key={cf.field_key} label={cf.field_label}>
+                  <Select
+                    size="small"
+                    allowClear
+                    placeholder="全部"
+                    style={{ width: '100%' }}
+                    value={filter.custom_filters?.[cf.field_key]}
+                    onChange={(v) => {
+                      const next = { ...(filter.custom_filters ?? {}) };
+                      if (v) {
+                        next[cf.field_key] = v;
+                      } else {
+                        delete next[cf.field_key];
+                      }
+                      onChange({ custom_filters: next });
+                    }}
+                    options={opts.map((o) => ({ label: o, value: o }))}
+                  />
+                </Field>
+              );
+            })}
+          </div>
+        </>
+      )}
+
       {/* 已选摘要 + 重置 */}
       <Divider style={{ margin: `${spacing.sm} 0` }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -289,5 +389,8 @@ function countActiveFilters(f: TopicFilter): number {
   if (f.status) n++;
   if (f.keyword) n++;
   if (f.tags && f.tags.length > 0) n++;
+  if (f.custom_filters && Object.keys(f.custom_filters).length > 0) {
+    n += Object.keys(f.custom_filters).length;
+  }
   return n;
 }
