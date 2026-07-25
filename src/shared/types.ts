@@ -288,6 +288,23 @@ export interface ApiResponse<T = unknown> {
 
 export type ApiResult<T = unknown> = ApiResponse<T>
 
+// ---------- 标签显示配置 ----------
+
+/**
+ * 标签显示配置（存储在 settings 表 key='ui.tagDisplay'）
+ *
+ * 行为：
+ * - enabled=false：不显示任何标签
+ * - enabled=true + selectedTags 空：显示全部标签
+ * - enabled=true + selectedTags 非空：只显示选中的标签
+ */
+export interface TagDisplayConfig {
+  /** 总开关：是否显示标签 */
+  enabled: boolean;
+  /** 选中的标签值（白名单）。空数组=显示全部，非空=只显示选中的 */
+  selectedTags: string[];
+}
+
 // ---------- 通道名常量 ----------
 // 命名规范：'<domain>:<action>'，例 'topic:list'、'draw:execute'
 
