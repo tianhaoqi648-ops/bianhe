@@ -26,17 +26,6 @@ import {
 } from '../../shared/types'
 import { getActiveWindow } from './utils'
 
-function wrap<T>(fn: () => T): ApiResponse<T> {
-  try {
-    const data = fn()
-    return { success: true, data }
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) }
-  }
-}
-
-void wrap // 暂未使用，保留以便后续扩展
-
 /**
  * 把对象数组转 CSV 字符串（含表头）。
  * - 嵌套对象/数组用 JSON.stringify 后写入
