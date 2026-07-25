@@ -568,8 +568,9 @@ export default function Settings() {
         }
       >
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          控制辩题卡片、抽取结果、大屏投影、筛选面板中标签的显示。总开关 + 多选标签值，
-          隐藏仅影响 UI 展示，不影响数据与抽题范围。
+          按类别（题型/难度/来源类型/自定义标签）开关 + 每类多选标签值，
+          控制辩题卡片、抽取结果、大屏投影、筛选面板中标签的显示。
+          隐藏仅影响 UI 展示，不影响数据与抽题范围；编辑弹窗不受影响。
         </Paragraph>
       </Card>
     </div>
