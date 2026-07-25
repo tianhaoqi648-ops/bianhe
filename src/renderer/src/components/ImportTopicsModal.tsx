@@ -25,6 +25,7 @@ import type {
   TopicCreateInput,
   ImportExecuteResult
 } from '../../../shared/types';
+import { spacing } from '../styles/tokens';
 
 const { Text } = Typography;
 
@@ -195,15 +196,22 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     switch (step) {
       case 0:
         return (
-          <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <UploadOutlined style={{ fontSize: 48, color: '#1677ff', marginBottom: 16 }} />
-            <div style={{ marginBottom: 8 }}>
+          <div style={{ textAlign: 'center', padding: `${spacing.xxxl} 0` }}>
+            <UploadOutlined
+              style={{ fontSize: 48, color: '#1677ff', marginBottom: spacing.lg }}
+            />
+            <div style={{ marginBottom: spacing.sm }}>
               <Text strong>选择要导入的文件</Text>
             </div>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+            <Text type="secondary" style={{ display: 'block', marginBottom: spacing.lg }}>
               支持 .xlsx / .csv / .docx 格式
             </Text>
-            <Button type="primary" icon={<UploadOutlined />} onClick={handlePickFile}>
+            <Button
+              size="middle"
+              type="primary"
+              icon={<UploadOutlined />}
+              onClick={handlePickFile}
+            >
               选择文件
             </Button>
           </div>
@@ -211,13 +219,13 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
 
       case 1:
         return (
-          <div style={{ padding: '24px 0' }}>
-            <Space style={{ marginBottom: 16 }}>
+          <div style={{ padding: `${spacing.xxl} 0` }}>
+            <Space style={{ marginBottom: spacing.lg }}>
               {fileIcon}
               <Text strong>{fileName}</Text>
             </Space>
             {parsing ? (
-              <div style={{ textAlign: 'center', padding: 24 }}>
+              <div style={{ textAlign: 'center', padding: spacing.xxl }}>
                 <Spin tip="正在解析文件..." />
               </div>
             ) : (
@@ -227,7 +235,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                 type="error"
                 showIcon
                 action={
-                  <Button size="small" onClick={() => setStep(0)}>
+                  <Button size="middle" onClick={() => setStep(0)}>
                     重新选择
                   </Button>
                 }
@@ -240,7 +248,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         if (!parsed) return null;
         return (
           <div>
-            <Space style={{ marginBottom: 12 }}>
+            <Space style={{ marginBottom: spacing.md }}>
               {fileIcon}
               <Text strong>{fileName}</Text>
               <Tag color="green">已解析 {parsed.topics.length} 条</Tag>
@@ -251,7 +259,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                 message="解析警告"
                 type="warning"
                 showIcon
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: spacing.md }}
                 description={
                   <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 120, overflow: 'auto' }}>
                     {parsed.warnings.slice(0, 20).map((w, i) => (
@@ -312,7 +320,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
               </Space>
             }
             extra={[
-              <Button key="close" type="primary" onClick={handleClose}>
+              <Button key="close" size="middle" type="primary" onClick={handleClose}>
                 完成
               </Button>
             ]}
@@ -326,12 +334,21 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     if (step === 3) return null;
     return (
       <Space>
-        <Button onClick={handleClose}>取消</Button>
+        <Button size="middle" onClick={handleClose}>
+          取消
+        </Button>
         {step === 1 && !parsing && (
-          <Button onClick={() => setStep(0)}>重新选择</Button>
+          <Button size="middle" onClick={() => setStep(0)}>
+            重新选择
+          </Button>
         )}
         {step === 2 && parsed && parsed.topics.length > 0 && (
-          <Button type="primary" loading={importing} onClick={handleImport}>
+          <Button
+            size="middle"
+            type="primary"
+            loading={importing}
+            onClick={handleImport}
+          >
             确认导入 {parsed.topics.length} 条
           </Button>
         )}
@@ -354,7 +371,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         <Steps
           current={step}
           size="small"
-          style={{ marginBottom: 24 }}
+          style={{ marginBottom: spacing.xxl }}
           items={[
             { title: '选择文件' },
             { title: '解析预览' },
