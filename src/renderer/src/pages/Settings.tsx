@@ -20,6 +20,8 @@ import {
   Spin,
   Tag,
   Progress,
+  Modal,
+  Checkbox,
   theme
 } from 'antd';
 import {
@@ -34,7 +36,9 @@ import {
   FileExcelOutlined,
   FileTextOutlined,
   UndoOutlined,
-  TagsOutlined
+  TagsOutlined,
+  WarningOutlined,
+  RestOutlined
 } from '@ant-design/icons';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTopicStore } from '../stores/topicStore';
@@ -47,6 +51,7 @@ import {
 } from '../styles/shared';
 import { spacing } from '../styles/tokens';
 import type { ExportFormat } from '../../../shared/types';
+import type { ResetCategory } from '../../../shared/settings-defaults';
 
 const { Content } = Layout;
 const { Text, Paragraph, Title } = Typography;
@@ -94,6 +99,15 @@ export default function Settings() {
   const [dedupOpen, setDedupOpen] = useState(false);
   const [tagDisplayOpen, setTagDisplayOpen] = useState(false);
   const [exporting, setExporting] = useState<null | 'topics' | 'sessions'>(null);
+
+  // 危险操作：恢复初始设置
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetCategories, setResetCategories] = useState<ResetCategory[]>([
+    'dedup',
+    'tagDisplay',
+    'candidates'
+  ]);
+  const [resetting, setResetting] = useState(false);
 
   // 官方题库信息
   const [officialInfo, setOfficialInfo] = useState<{
@@ -238,6 +252,35 @@ export default function Settings() {
       setOfficialInfo((s) => ({ ...s, seeded: false }));
     } catch (e) {
       messageApi.error(e instanceof Error ? e.message : '操作失败');
+    }
+  };
+
+  // ====== 一键恢复初始设置 ======
+  const handleOpenResetModal = () => {
+    // 默认全选
+    setResetCategories(['dedup', 'tagDisplay', 'candidates']);
+    setResetModalOpen(true);
+  };
+
+  const handleConfirmReset = async () => {
+    if (resetCategories.length === 0) {
+      messageApi.warning('请至少选择一个要重置的类别');
+      return;
+    }
+    setResetting(true);
+    try {
+      const deleted = await settingsStore.resetByCategories(resetCategories);
+      // 关闭标签显示弹窗（若开着）避免显示陈旧配置
+      if (resetCategories.includes('tagDisplay') && tagDisplayOpen) {
+        setTagDisplayOpen(false);
+      }
+      // settingsStore.settings 变化会触发 useEffect 自动重置本地 dedup state
+      messageApi.success(`已恢复初始设置（清除 ${deleted} 项配置）`);
+      setResetModalOpen(false);
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : '恢复失败');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -770,8 +813,87 @@ export default function Settings() {
               />
             </Card>
           </Spin>
+
+          {/* 危险操作分区 */}
+          <Card
+            size="small"
+            style={{
+              marginTop: 16,
+              borderColor: token.colorError,
+              borderWidth: 1
+            }}
+            title={
+              <Space>
+                <WarningOutlined style={{ color: token.colorError }} />
+                <Text type="danger" strong>
+                  危险操作
+                </Text>
+              </Space>
+            }
+          >
+            <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              以下操作会清除对应的用户偏好配置并恢复到初始默认值，不会影响题库数据与赛事记录。
+            </Paragraph>
+            <Space>
+              <Button danger icon={<RestOutlined />} onClick={handleOpenResetModal}>
+                恢复初始设置
+              </Button>
+            </Space>
+          </Card>
         </Content>
       </Layout>
+
+      {/* 恢复初始设置确认弹窗 */}
+      <Modal
+        title="确认恢复初始设置"
+        open={resetModalOpen}
+        onCancel={() => setResetModalOpen(false)}
+        confirmLoading={resetting}
+        okText="确认恢复"
+        okButtonProps={{ danger: true, disabled: resetCategories.length === 0 }}
+        cancelText="取消"
+        onOk={handleConfirmReset}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          message="此操作会立即清除所选类别的配置并恢复默认值，不可撤销。"
+          style={{ marginBottom: 12 }}
+        />
+        <Paragraph strong style={{ marginBottom: 8 }}>
+          请选择要重置的类别：
+        </Paragraph>
+        <Checkbox.Group
+          value={resetCategories}
+          onChange={(vals) => setResetCategories(vals as ResetCategory[])}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          <Checkbox value="dedup">
+            <Text strong>去重设置</Text>
+            <Text type="secondary" style={{ marginLeft: 8 }}>
+              文本匹配阈值、AI 语义配置、API Key
+            </Text>
+          </Checkbox>
+          <Checkbox value="tagDisplay">
+            <Text strong>标签显示配置</Text>
+            <Text type="secondary" style={{ marginLeft: 8 }}>
+              5 个场景 × 4 个类别的标签显示开关与白名单
+            </Text>
+          </Checkbox>
+          <Checkbox value="candidates">
+            <Text strong>自定义候选值</Text>
+            <Text type="secondary" style={{ marginLeft: 8 }}>
+              通过「加入候选」扩展的题型/领域/难度/来源/来源类型值
+            </Text>
+          </Checkbox>
+        </Checkbox.Group>
+        <Alert
+          type="info"
+          showIcon
+          message="保留项：官方题库加载状态、题库数据、赛事数据、抽取记录均不受影响。"
+          style={{ marginTop: 12 }}
+        />
+      </Modal>
 
       {/* 导入弹窗 */}
       <ImportTopicsModal

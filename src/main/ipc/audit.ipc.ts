@@ -124,4 +124,23 @@ export function registerAuditIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SETTINGS_DELETE, (_e, key: string) =>
     wrap(() => auditRepo.deleteSetting(key))
   )
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_DELETE_BATCH,
+    async (_e, keys: string[]): Promise<ApiResponse<number>> => {
+      const deleted = auditRepo.deleteSettingsByKeys(keys);
+      // 写审计日志留痕
+      try {
+        auditRepo.addLog({
+          action: 'system',
+          target_type: 'settings',
+          target_id: 'reset',
+          operator: 'user',
+          detail: { action: 'reset_settings', keys, deletedCount: deleted }
+        });
+      } catch {
+        // 审计日志失败不影响主流程
+      }
+      return { success: true, data: deleted };
+    }
+  )
 }

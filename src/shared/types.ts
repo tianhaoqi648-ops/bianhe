@@ -396,6 +396,7 @@ export const IPC_CHANNELS = {
   SETTINGS_SET: 'settings:set',
   SETTINGS_GET_ALL: 'settings:getAll',
   SETTINGS_DELETE: 'settings:delete',
+  SETTINGS_DELETE_BATCH: 'settings:deleteBatch',
   // import
   IMPORT_PARSE_FILE: 'import:parseFile',
   IMPORT_EXECUTE: 'import:execute',
