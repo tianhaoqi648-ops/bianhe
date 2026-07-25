@@ -12,6 +12,7 @@
 
 import { SYSTEM_CANDIDATES, type CandidateField } from '../../shared/constants'
 import { auditRepo } from '../db/repository/audit.repo'
+import { topicRepo } from '../db/repository/topic.repo'
 
 const SETTING_KEY = 'system.candidates'
 
@@ -60,4 +61,33 @@ export function addCandidateValue(field: CandidateField, value: string): void {
 
   userExtra[field] = [...(userExtra[field] ?? []), value]
   auditRepo.setSetting(SETTING_KEY, userExtra)
+}
+
+/**
+ * 获取合并后的候选值（系统候选 + 用户扩展 + DB 实际值）。
+ * 用于 FilterPanel 等需要展示「所有可选值」的场景。
+ * DB 实际值追加在最后，去重。
+ *
+ * 实现说明：
+ *   - 系统+用户扩展候选来自 getMergedCandidates()
+ *   - DB 实际值来自 topicRepo.listDistinctValues(['type','domain','difficulty','source','source_type'])
+ *   - 三层合并去重，保留系统候选顺序，DB 实际值追加在后
+ */
+export function getMergedCandidatesWithDB(): Record<CandidateField, string[]> {
+  const system = getMergedCandidates()
+  const dbValues = topicRepo.listDistinctValues([
+    'type',
+    'domain',
+    'difficulty',
+    'source',
+    'source_type'
+  ])
+  const merged: Record<CandidateField, string[]> = { ...system }
+  for (const k of Object.keys(dbValues) as CandidateField[]) {
+    const set = new Set([...(system[k] ?? []), ...dbValues[k].map((r) => r.value)])
+    // 过滤空字符串（DB 中可能是空字符串）
+    set.delete('')
+    merged[k] = Array.from(set)
+  }
+  return merged
 }
