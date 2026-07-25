@@ -63,10 +63,10 @@ export default function DrawResultCard({ index, topic, item, teams }: DrawResult
           <Space size={4} wrap style={{ marginBottom: item.team_a_id ? 12 : 0 }}>
             {(() => {
               const cfg = loadTagDisplayConfig(settings);
-              const typeTag = filterTag(cfg, topic.type);
-              const diffTag = filterTag(cfg, topic.difficulty);
-              const sourceTag = filterTag(cfg, topic.source);
-              const customTags = filterTags(cfg, topic.tags);
+              const typeTag = filterTag(cfg, topic.type, 'type');
+              const diffTag = filterTag(cfg, topic.difficulty, 'difficulty');
+              const sourceTag = filterTag(cfg, topic.source_type, 'source_type');
+              const customTags = filterTags(cfg, topic.tags, 'custom');
               return (
                 <>
                   {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
