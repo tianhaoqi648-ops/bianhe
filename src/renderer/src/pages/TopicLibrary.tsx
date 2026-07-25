@@ -13,7 +13,9 @@ import {
   message,
   Modal,
   Typography,
-  theme
+  theme,
+  Affix,
+  Badge
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -23,13 +25,17 @@ import {
   ReloadOutlined,
   DeleteOutlined,
   TagOutlined,
+  GlobalOutlined,
+  FireOutlined,
+  DatabaseOutlined,
   FolderOutlined,
   SearchOutlined,
   CloseCircleOutlined,
   CheckCircleOutlined,
   FilterOutlined,
   UploadOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined,
+  DatabaseFilled
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useTopicStore } from '../stores/topicStore';
@@ -44,16 +50,18 @@ import FilterPanel, {
 import TopicEditModal from '../components/TopicEditModal';
 import ImportTopicsModal from '../components/ImportTopicsModal';
 import DedupResultModal from '../components/DedupResultModal';
+import { paginationStyle, floatActionBarStyle } from '../styles/shared';
+import { spacing } from '../styles/tokens';
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 
 // 分类维度元数据
 const DIMENSIONS = [
-  { key: 'type', label: '类型', options: TYPE_OPTIONS },
-  { key: 'domain', label: '领域', options: DOMAIN_OPTIONS },
-  { key: 'difficulty', label: '难度', options: DIFFICULTY_OPTIONS },
-  { key: 'source', label: '来源', options: SOURCE_OPTIONS }
+  { key: 'type', label: '类型', icon: <TagOutlined />, options: TYPE_OPTIONS },
+  { key: 'domain', label: '领域', icon: <GlobalOutlined />, options: DOMAIN_OPTIONS },
+  { key: 'difficulty', label: '难度', icon: <FireOutlined />, options: DIFFICULTY_OPTIONS },
+  { key: 'source', label: '来源', icon: <DatabaseOutlined />, options: SOURCE_OPTIONS }
 ] as const;
 
 type DimensionKey = (typeof DIMENSIONS)[number]['key'];
@@ -124,28 +132,56 @@ export default function TopicLibrary() {
     return [
       {
         key: '__all__',
-        title: (
-          <span>
-            <FolderOutlined /> <span style={{ fontWeight: 500 }}>全部</span>
-            <Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
-              {store.total}
-            </Text>
-          </span>
-        )
+        title: '__all__'
       },
       ...dim.options.map((opt) => ({
         key: opt,
-        title: (
-          <span>
-            {opt}
-            <Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
-              {counter.get(opt) ?? 0}
-            </Text>
-          </span>
-        )
+        title: opt
       }))
     ];
-  }, [dimension, store.items, store.total]);
+  }, [dimension]);
+
+  // 分类树节点渲染（图标 + 标题 + Badge 计数）
+  const renderTreeNode = (node: DataNode) => {
+    const dim = DIMENSIONS.find((d) => d.key === dimension)!;
+    const key = String(node.key);
+    if (key === '__all__') {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <FolderOutlined style={{ color: token.colorPrimary }} />
+          <span style={{ fontWeight: 500 }}>全部</span>
+          <Badge
+            count={store.total}
+            showZero
+            color={token.colorPrimary}
+            overflowCount={9999}
+            style={{ marginLeft: 4 }}
+          />
+        </span>
+      );
+    }
+    const count =
+      store.items.filter((t) => (t as any)[dimension] === key).length;
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>
+          {dim.icon}
+        </span>
+        <span>{key}</span>
+        <Badge
+          count={count}
+          showZero
+          overflowCount={9999}
+          style={{
+            marginLeft: 4,
+            backgroundColor: count > 0 ? token.colorPrimaryBg : '#f0f0f0',
+            color: count > 0 ? token.colorPrimary : token.colorTextSecondary,
+            boxShadow: 'none'
+          }}
+        />
+      </span>
+    );
+  };
 
   // 选中分类 → 自动同步到 filter
   useEffect(() => {
@@ -340,10 +376,18 @@ export default function TopicLibrary() {
           {/* 维度切换 */}
           <Segmented
             block
-            size="small"
+            size="middle"
             value={dimension}
             onChange={(v) => handleDimensionChange(v as DimensionKey)}
-            options={DIMENSIONS.map((d) => ({ label: d.label, value: d.key }))}
+            options={DIMENSIONS.map((d) => ({
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  {d.icon}
+                  <span>{d.label}</span>
+                </span>
+              ),
+              value: d.key
+            }))}
             style={{ marginBottom: 12 }}
           />
           <Tree
@@ -353,6 +397,7 @@ export default function TopicLibrary() {
               const k = keys[0] as string | undefined;
               setSelectedCategory(k ?? '__all__');
             }}
+            titleRender={renderTreeNode}
             showLine
             blockNode
           />
@@ -377,13 +422,13 @@ export default function TopicLibrary() {
               <Input
                 allowClear
                 size="middle"
-                placeholder="搜索辩题"
+                placeholder="搜索辩题标题关键词 (Ctrl+K)"
                 prefix={<SearchOutlined />}
                 value={store.filter.keyword ?? ''}
                 onChange={(e) =>
                   store.setFilter({ keyword: e.target.value || undefined })
                 }
-                style={{ width: 240 }}
+                style={{ width: 320 }}
               />
               <Button
                 icon={<FilterOutlined />}
@@ -491,9 +536,18 @@ export default function TopicLibrary() {
                 description={store.error ? `加载失败：${store.error}` : '暂无辩题'}
                 style={{ marginTop: 80 }}
               >
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                  新增第一道辩题
-                </Button>
+                <Space>
+                  <Button
+                    type="primary"
+                    icon={<DatabaseFilled />}
+                    onClick={() => setImportOpen(true)}
+                  >
+                    导入官方题库
+                  </Button>
+                  <Button icon={<PlusOutlined />} onClick={handleCreate}>
+                    新建第一道辩题
+                  </Button>
+                </Space>
               </Empty>
             ) : store.viewMode === 'grid' ? (
               <div
@@ -527,25 +581,43 @@ export default function TopicLibrary() {
                   overflow: 'hidden'
                 }}
               >
-                {store.items.map((t) => (
-                  <div
-                    key={t.id}
-                    style={{
-                      background: store.selectedIds.includes(t.id)
-                        ? token.colorPrimaryBg
-                        : 'transparent',
-                      cursor: 'pointer'
-                    }}
-                    onClick={() => store.toggleSelect(t.id)}
-                  >
-                    <TopicListItem
-                      topic={t}
-                      onEdit={handleEdit}
-                      onDelete={handleDelete}
-                      onToggleStatus={handleToggleStatus}
-                    />
-                  </div>
-                ))}
+                {store.items.map((t) => {
+                  const isSelected = store.selectedIds.includes(t.id);
+                  return (
+                    <div
+                      key={t.id}
+                      style={{
+                        position: 'relative',
+                        background: isSelected
+                          ? token.colorPrimaryBg
+                          : 'transparent',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s ease'
+                      }}
+                      onClick={() => store.toggleSelect(t.id)}
+                    >
+                      {isSelected && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: 3,
+                            background: token.colorPrimary,
+                            zIndex: 1
+                          }}
+                        />
+                      )}
+                      <TopicListItem
+                        topic={t}
+                        onEdit={handleEdit}
+                        onDelete={handleDelete}
+                        onToggleStatus={handleToggleStatus}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Spin>
@@ -554,14 +626,12 @@ export default function TopicLibrary() {
           {store.items.length > 0 && (
             <div
               style={{
+                ...paginationStyle,
                 marginTop: 16,
-                padding: 12,
-                background: token.colorBgContainer,
-                borderRadius: 8,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center'
+                borderTop: `1px solid ${token.colorBorderSecondary}`,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                background: 'rgba(255, 255, 255, 0.85)'
               }}
             >
               <Text type="secondary">共 {store.total} 条</Text>
@@ -578,6 +648,38 @@ export default function TopicLibrary() {
           )}
         </Content>
       </Layout>
+
+      {/* 选中态浮动操作栏 */}
+      {hasSelection && (
+        <Affix offsetBottom={spacing.xl}>
+          <div style={floatActionBarStyle}>
+            <Badge
+              count={store.selectedIds.length}
+              style={{ backgroundColor: token.colorPrimary }}
+            />
+            <Text strong>已选 {store.selectedIds.length} 项</Text>
+            <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
+              <Button icon={<TagOutlined />}>批量操作</Button>
+            </Dropdown>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleBatchDelete}
+            >
+              批量删除
+            </Button>
+            <Button
+              icon={<TagOutlined />}
+              onClick={() => setBatchTagInput(true)}
+            >
+              批量加标签
+            </Button>
+            <Button type="link" onClick={() => store.clearSelection()}>
+              取消选择
+            </Button>
+          </div>
+        </Affix>
+      )}
 
       {/* 新增/编辑弹窗 */}
       <TopicEditModal
