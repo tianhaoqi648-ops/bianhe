@@ -35,7 +35,9 @@ import {
   type DuplicateGroup,
   type Topic,
   type ResetDataRequest,
-  type ResetDataResponse
+  type ResetDataResponse,
+  type CustomField,
+  type CustomFieldType
 } from '../shared/types'
 
 /**
@@ -211,6 +213,20 @@ const systemAPI = {
 }
 
 // ============================================================
+// 自定义字段 API
+// ============================================================
+const customFieldAPI = {
+  list: () => invoke(IPC_CHANNELS.CUSTOM_FIELD_LIST),
+  create: (label: string, type: CustomFieldType) =>
+    invoke(IPC_CHANNELS.CUSTOM_FIELD_CREATE, label, type),
+  update: (
+    fieldKey: string,
+    patch: Partial<Pick<CustomField, 'field_label' | 'sort_order'>>
+  ) => invoke(IPC_CHANNELS.CUSTOM_FIELD_UPDATE, fieldKey, patch),
+  delete: (fieldKey: string) => invoke(IPC_CHANNELS.CUSTOM_FIELD_DELETE, fieldKey)
+}
+
+// ============================================================
 // 暴露到渲染进程
 // ============================================================
 if (process.contextIsolated) {
@@ -226,6 +242,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('dedupAPI', dedupAPI)
     contextBridge.exposeInMainWorld('fileAPI', fileAPI)
     contextBridge.exposeInMainWorld('systemAPI', systemAPI)
+    contextBridge.exposeInMainWorld('customFieldAPI', customFieldAPI)
   } catch (error) {
     console.error(error)
   }
@@ -246,6 +263,7 @@ if (process.contextIsolated) {
     dedupAPI: typeof dedupAPI
     fileAPI: typeof fileAPI
     systemAPI: typeof systemAPI
+    customFieldAPI: typeof customFieldAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = electronAPI
@@ -259,4 +277,5 @@ if (process.contextIsolated) {
   w.dedupAPI = dedupAPI
   w.fileAPI = fileAPI
   w.systemAPI = systemAPI
+  w.customFieldAPI = customFieldAPI
 }

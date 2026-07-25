@@ -12,6 +12,7 @@ import { registerImportIpc } from './import.ipc'
 import { registerExportIpc } from './export.ipc'
 import { registerDedupIpc } from './dedup.ipc'
 import { registerSystemIpc } from './system.ipc'
+import { registerCustomFieldIpc } from './custom-field.ipc'
 
 export function registerAllIpc(): void {
   registerSystemIpc()
@@ -22,5 +23,6 @@ export function registerAllIpc(): void {
   registerImportIpc()
   registerExportIpc()
   registerDedupIpc()
+  registerCustomFieldIpc()
   console.log('[main] All IPC handlers registered')
 }
