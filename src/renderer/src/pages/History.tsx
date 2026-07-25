@@ -97,6 +97,8 @@ export default function History() {
   const [eventNameMap, setEventNameMap] = useState<Map<string, string>>(new Map());
 
   // ====== 数据加载 ======
+  // zustand store 实例在组件生命周期内稳定，空依赖是正确写法
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     void eventStore.listEvents();
     if (topicStore.items.length === 0) {
