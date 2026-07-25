@@ -20,7 +20,7 @@
 // ============================================================
 
 import { ipcMain } from 'electron'
-import { parseFile } from '../services/import-engine'
+import { parseFile, applyFieldMapping } from '../services/import-engine'
 import type { FileType, ParsedResult } from '../services/import-engine'
 import { findDuplicates } from '../services/dedup-engine'
 import type { DedupOptions, DuplicateGroup } from '../services/dedup-engine'
@@ -35,7 +35,8 @@ import {
   type ApiResponse,
   type ImportBatch,
   type ImportExecuteRequest,
-  type ImportExecuteResult
+  type ImportExecuteResult,
+  type FieldMapping
 } from '../../shared/types'
 
 export function registerImportIpc(): void {
@@ -276,6 +277,19 @@ export function registerImportIpc(): void {
           remainingCount: importBatchRepo.countTopicsByBatch(b.id)
         }))
         return { success: true, data: withCounts }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+  )
+
+  // 应用字段映射：把未识别列根据用户选择应用到 ParsedResult
+  ipcMain.handle(
+    IPC_CHANNELS.IMPORT_APPLY_FIELD_MAPPING,
+    (_e, parsed: ParsedResult, fieldMapping: FieldMapping): ApiResponse<ParsedResult> => {
+      try {
+        const result = applyFieldMapping(parsed, fieldMapping)
+        return { success: true, data: result }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
       }

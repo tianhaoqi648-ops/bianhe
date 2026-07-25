@@ -470,6 +470,7 @@ export const IPC_CHANNELS = {
   IMPORT_FIND_DUPLICATES: 'import:findDuplicates',
   IMPORT_REVOKE_BATCH: 'import:revokeBatch',
   IMPORT_LIST_BATCHES: 'import:listBatches',
+  IMPORT_APPLY_FIELD_MAPPING: 'import:applyFieldMapping',
   // export
   EXPORT_TOPICS: 'export:topics',
   EXPORT_DRAW_SESSIONS: 'export:drawSessions',

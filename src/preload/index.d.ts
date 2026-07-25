@@ -36,6 +36,7 @@ import type {
   ImportExecuteResult,
   ImportBatch,
   ParsedResult,
+  FieldMapping,
   ExportLogsRequest,
   ExportLogsResult,
   ExportTopicsRequest,
@@ -156,6 +157,11 @@ export interface ImportAPI {
   ) => Promise<ApiResponse<DuplicateGroup[]>>
   revokeBatch: (batchId: string) => Promise<ApiResponse<{ deletedCount: number }>>
   listBatches: () => Promise<ApiResponse<ImportBatch[]>>
+  /** 应用字段映射到 ParsedResult（处理未识别列） */
+  applyFieldMapping: (
+    parsed: ParsedResult,
+    fieldMapping: FieldMapping
+  ) => Promise<ApiResponse<ParsedResult>>
 }
 
 export interface ExportAPI {

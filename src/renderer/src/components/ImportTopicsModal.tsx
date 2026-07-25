@@ -27,13 +27,18 @@ import type {
   ParsedResult,
   TopicCreateInput,
   ImportExecuteResult,
-  ValueMapping
+  ValueMapping,
+  FieldMapping,
+  CustomField,
+  CustomFieldType
 } from '../../../shared/types';
 import type { CandidateField } from '../../../shared/constants';
+import { SYSTEM_FIELD_DEFINITIONS } from '../../../shared/field-definitions';
 import { spacing } from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
 import ImportFormatGuide from './import/ImportFormatGuide';
 import ValueMappingPanel from './import/ValueMappingPanel';
+import FieldMappingPanel from './import/FieldMappingPanel';
 import { downloadImportTemplate } from '../utils/downloadImportTemplate';
 import { applyMappingToTopics, isMappingValid } from '../utils/valueMapping';
 
@@ -111,6 +116,11 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   const [importResult, setImportResult] = useState<ImportExecuteResult | null>(null);
   // 新值映射状态：用户在 Step 2 预览页配置，handleImport 时应用
   const [valueMapping, setValueMapping] = useState<ValueMapping>({});
+  // 字段映射状态：用户在 Step 2a 配置未识别列，handleApplyFieldMapping 时应用
+  const [fieldMapping, setFieldMapping] = useState<FieldMapping>({});
+  const [fieldMappingApplied, setFieldMappingApplied] = useState<boolean>(false);
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [applyingFieldMapping, setApplyingFieldMapping] = useState(false);
   // 合并后的系统候选值（系统候选 + 用户扩展），供 ValueMappingPanel 显示已有候选
   const [mergedCandidates, setMergedCandidates] = useState<
     Record<CandidateField, string[]> | null
@@ -131,6 +141,28 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       });
   }, [open]);
 
+  // 弹窗打开时拉取自定义字段列表，供 FieldMappingPanel 显示已有自定义字段
+  useEffect(() => {
+    if (!open) return;
+    window.customFieldAPI
+      .list()
+      .then((res) => {
+        if (res.success && res.data) {
+          setCustomFields(res.data);
+        }
+      })
+      .catch(() => {
+        // 拉取失败不阻断流程
+      });
+  }, [open]);
+
+  // 若 parsed 无未识别列，自动标记 fieldMappingApplied=true 以直接显示 2b
+  useEffect(() => {
+    if (parsed && parsed.unmatchedColumns && parsed.unmatchedColumns.length === 0) {
+      setFieldMappingApplied(true);
+    }
+  }, [parsed]);
+
   const reset = () => {
     setStep(0);
     setFilePath(null);
@@ -140,6 +172,39 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     setParsing(false);
     setImporting(false);
     setValueMapping({});
+    setFieldMapping({});
+    setFieldMappingApplied(false);
+    setApplyingFieldMapping(false);
+  };
+
+  const handleCreateCustomField = async (
+    label: string,
+    type: CustomFieldType
+  ): Promise<CustomField> => {
+    const res = await window.customFieldAPI.create(label, type);
+    if (!res.success || !res.data) {
+      throw new Error(res.error || '创建字段失败');
+    }
+    const created = res.data;
+    setCustomFields((prev) => [...prev, created]);
+    return created;
+  };
+
+  const handleApplyFieldMapping = async () => {
+    if (!parsed) return;
+    setApplyingFieldMapping(true);
+    try {
+      const res = await window.importAPI.applyFieldMapping(parsed, fieldMapping);
+      if (!res.success || !res.data) {
+        throw new Error(res.error || '应用字段映射失败');
+      }
+      setParsed(res.data);
+      setFieldMappingApplied(true);
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : '应用字段映射失败');
+    } finally {
+      setApplyingFieldMapping(false);
+    }
   };
 
   const handleClose = () => {
@@ -291,60 +356,77 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       <FileExcelOutlined style={{ color: '#52c41a' }} />
     );
 
-  const previewColumns: ColumnsType<TopicCreateInput> = [
-    {
-      title: '标题',
-      dataIndex: 'title',
-      key: 'title',
-      ellipsis: true
-    },
-    {
-      title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      width: 100,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '领域',
-      dataIndex: 'domain',
-      key: 'domain',
-      width: 100,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '难度',
-      dataIndex: 'difficulty',
-      key: 'difficulty',
-      width: 90,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '来源',
-      dataIndex: 'source',
-      key: 'source',
-      width: 130,
-      render: (v: string | null) => v ?? <Text type="secondary">-</Text>
-    },
-    {
-      title: '标签',
-      dataIndex: 'tags',
-      key: 'tags',
-      width: 150,
-      render: (tags: string[] | null) =>
-        tags && tags.length > 0 ? (
-          <Space size={4} wrap>
-            {tags.map((t) => (
-              <Tag key={t} color="blue">
-                {t}
-              </Tag>
-            ))}
-          </Space>
-        ) : (
-          <Text type="secondary">-</Text>
-        )
-    }
+  const SYSTEM_COLUMN_ORDER: Array<{ key: string; label: string; width: number }> = [
+    { key: 'title', label: '标题', width: 0 },
+    { key: 'type', label: '类型', width: 100 },
+    { key: 'domain', label: '领域', width: 100 },
+    { key: 'difficulty', label: '难度', width: 90 },
+    { key: 'source', label: '来源', width: 130 },
+    { key: 'source_type', label: '来源类型', width: 110 },
+    { key: 'tags', label: '标签', width: 150 }
   ];
+
+  function buildPreviewColumns(sample: TopicCreateInput): ColumnsType<TopicCreateInput> {
+    const cols: ColumnsType<TopicCreateInput> = [];
+    for (const { key, label, width } of SYSTEM_COLUMN_ORDER) {
+      if (key === 'title') {
+        cols.push({ title: label, dataIndex: key, key, ellipsis: true });
+      } else if (key === 'tags') {
+        cols.push({
+          title: label,
+          dataIndex: key,
+          key,
+          width,
+          render: (tags: string[] | null) =>
+            tags && tags.length > 0 ? (
+              <Space size={4} wrap>
+                {tags.map((t) => (
+                  <Tag key={t} color="blue">
+                    {t}
+                  </Tag>
+                ))}
+              </Space>
+            ) : (
+              <Text type="secondary">-</Text>
+            )
+        });
+      } else {
+        cols.push({
+          title: label,
+          dataIndex: key,
+          key,
+          width,
+          render: (v: string | null) => v ?? <Text type="secondary">-</Text>
+        });
+      }
+    }
+    // 自定义字段列（来自 custom_data）
+    const customKeys = Object.keys(sample.custom_data ?? {});
+    for (const ck of customKeys) {
+      cols.push({
+        title: ck,
+        key: `custom_${ck}`,
+        width: 120,
+        render: (_v, record) => {
+          const cv = record.custom_data?.[ck];
+          if (cv == null) return <Text type="secondary">-</Text>;
+          if (Array.isArray(cv)) {
+            return (
+              <Space size={4} wrap>
+                {cv.map((t) => (
+                  <Tag key={t} color="purple">
+                    {t}
+                  </Tag>
+                ))}
+              </Space>
+            );
+          }
+          return String(cv);
+        }
+      });
+    }
+    return cols;
+  }
 
   // ---------- 步骤渲染 ----------
   const renderStepContent = () => {
@@ -417,6 +499,40 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
 
       case 2:
         if (!parsed) return null;
+        // 2a：未识别列字段映射（仅当有未识别列且未应用映射时）
+        if (
+          parsed.unmatchedColumns &&
+          parsed.unmatchedColumns.length > 0 &&
+          !fieldMappingApplied
+        ) {
+          return (
+            <div>
+              <Space style={{ marginBottom: spacing.md }}>
+                {fileIcon}
+                <Text strong>{fileName}</Text>
+                <Tag color="orange">检测到 {parsed.unmatchedColumns.length} 个未识别列</Tag>
+              </Space>
+              <FieldMappingPanel
+                unmatchedColumns={parsed.unmatchedColumns}
+                systemFields={SYSTEM_FIELD_DEFINITIONS}
+                customFields={customFields}
+                onMappingChange={(m) => setFieldMapping(m)}
+                onCreateField={handleCreateCustomField}
+              />
+              <div style={{ marginTop: spacing.md, textAlign: 'right' }}>
+                <Button
+                  type="primary"
+                  loading={applyingFieldMapping}
+                  onClick={handleApplyFieldMapping}
+                  style={primaryButtonStyle}
+                >
+                  应用字段映射，继续
+                </Button>
+              </div>
+            </div>
+          );
+        }
+        // 2b：值映射 + 预览表
         return (
           <div>
             <Space style={{ marginBottom: spacing.md }}>
@@ -488,7 +604,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                     />
                   )}
                 <Table
-                  columns={previewColumns}
+                  columns={buildPreviewColumns(parsed.topics[0])}
                   dataSource={parsed.topics}
                   rowKey={(_, i) => String(i)}
                   size="small"
@@ -563,17 +679,20 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
             重新选择
           </Button>
         )}
-        {step === 2 && parsed && parsed.topics.length > 0 && (
-          <Button
-            size="middle"
-            type="primary"
-            loading={importing}
-            onClick={handleImport}
-            style={primaryButtonStyle}
-          >
-            确认导入 {parsed.topics.length} 条
-          </Button>
-        )}
+        {step === 2 &&
+          parsed &&
+          parsed.topics.length > 0 &&
+          fieldMappingApplied && (
+            <Button
+              size="middle"
+              type="primary"
+              loading={importing}
+              onClick={handleImport}
+              style={primaryButtonStyle}
+            >
+              确认导入 {parsed.topics.length} 条
+            </Button>
+          )}
       </Space>
     );
   };
