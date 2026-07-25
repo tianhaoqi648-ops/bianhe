@@ -24,6 +24,7 @@ export interface Topic {
   tags: string[] | null // 应用层用数组，DB 存 JSON 字符串
   weight: number
   status: string
+  batch_id: string | null // 导入批次 id（手动导入的题才有，seed 的为 null）
   created_at: string
   updated_at: string
 }
@@ -40,6 +41,7 @@ export interface TopicRow {
   tags: string | null // DB 存 JSON 字符串
   weight: number
   status: string
+  batch_id: string | null
   created_at: string
   updated_at: string
 }
@@ -55,6 +57,7 @@ export interface TopicFilter {
   keyword?: string // title LIKE 模糊搜索
   page?: number // 1-based
   pageSize?: number
+  batch_id?: string // 按批次筛选
   // 多选字段（与上面单值字段二选一使用，数组优先）
   types?: string[]
   domains?: string[]
@@ -63,10 +66,11 @@ export interface TopicFilter {
 
 export type TopicCreateInput = Omit<
   Topic,
-  'id' | 'created_at' | 'updated_at' | 'weight' | 'status'
+  'id' | 'created_at' | 'updated_at' | 'weight' | 'status' | 'batch_id'
 > & {
   weight?: number
   status?: string
+  batch_id?: string | null
 }
 
 export type TopicUpdateInput = Partial<Omit<Topic, 'id' | 'created_at' | 'updated_at'>>
@@ -85,7 +89,8 @@ function rowToTopic(row: TopicRow): Topic {
     ...row,
     tags: row.tags ? JSON.parse(row.tags) : null,
     weight: row.weight ?? 1.0,
-    status: row.status ?? 'active'
+    status: row.status ?? 'active',
+    batch_id: row.batch_id ?? null
   }
 }
 
@@ -127,7 +132,8 @@ function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] 
     { key: 'difficulty', column: 'difficulty' },
     { key: 'source', column: 'source' },
     { key: 'source_type', column: 'source_type' },
-    { key: 'status', column: 'status' }
+    { key: 'status', column: 'status' },
+    { key: 'batch_id', column: 'batch_id' }
   ]
   for (const { key, column } of scalarFields) {
     // type/domain/difficulty 单值仅在对应数组未设置时生效
@@ -182,8 +188,8 @@ function createTopic(data: TopicCreateInput): Topic {
   const stmt = db.prepare(`
     INSERT INTO topics (
       id, title, type, domain, difficulty, source, source_type,
-      tags, weight, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tags, weight, status, batch_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   stmt.run(
@@ -197,6 +203,7 @@ function createTopic(data: TopicCreateInput): Topic {
     tagsJson,
     weight,
     status,
+    data.batch_id ?? null,
     now,
     now
   )
@@ -206,6 +213,57 @@ function createTopic(data: TopicCreateInput): Topic {
     throw new Error(`[topicRepo] createTopic: insert succeeded but row not found, id=${id}`)
   }
   return created
+}
+
+/**
+ * 批量创建辩题，使用事务包装。
+ * - 单条失败整批回滚，不会部分入库
+ * - 所有题使用同一个 created_at/updated_at 时间戳
+ * - 返回成功插入的 Topic 列表（与入参顺序一致）
+ *
+ * 性能：相比逐条 createTopic，减少 N-1 次 prepare + 事务边界开销。
+ */
+function createMany(items: TopicCreateInput[]): Topic[] {
+  if (items.length === 0) return []
+  const db = getDb()
+  const now = new Date().toISOString()
+
+  const stmt = db.prepare(`
+    INSERT INTO topics (
+      id, title, type, domain, difficulty, source, source_type,
+      tags, weight, status, batch_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  const insertMany = db.transaction((its: TopicCreateInput[]): Topic[] => {
+    const results: Topic[] = []
+    for (const data of its) {
+      const id = uuidv4()
+      const weight = data.weight ?? 1.0
+      const status = data.status ?? 'active'
+      const tagsJson = data.tags ? JSON.stringify(data.tags) : null
+      stmt.run(
+        id,
+        data.title,
+        data.type ?? null,
+        data.domain ?? null,
+        data.difficulty ?? null,
+        data.source ?? null,
+        data.source_type ?? null,
+        tagsJson,
+        weight,
+        status,
+        data.batch_id ?? null,
+        now,
+        now
+      )
+      const created = getTopicById(id)
+      if (created) results.push(created)
+    }
+    return results
+  })
+
+  return insertMany(items)
 }
 
 /**
@@ -329,6 +387,20 @@ function batchDeleteTopics(ids: string[]): number {
 }
 
 /**
+ * 按批次删除辩题，使用事务包装。
+ * 用于「撤销整批导入」功能。
+ * 返回实际删除的条数。
+ */
+function deleteByBatch(batchId: string): number {
+  const db = getDb()
+  const stmt = db.prepare('DELETE FROM topics WHERE batch_id = ?')
+  const deleteMany = db.transaction((bid: string): number => {
+    return stmt.run(bid).changes
+  })
+  return deleteMany(batchId)
+}
+
+/**
  * 单字段更新 status，自动更新 updated_at。
  */
 function updateStatus(id: string, status: string): Topic | undefined {
@@ -361,18 +433,58 @@ function countByFilter(filter?: TopicFilter): number {
   return row ? Number(row.total) : 0
 }
 
+/**
+ * 支持的分类维度。
+ * - tags 维度不能用此方法（数组字段需拆 JSON），由调用方单独处理
+ */
+export type CountableDimension =
+  | 'type'
+  | 'domain'
+  | 'difficulty'
+  | 'source'
+  | 'source_type'
+  | 'status'
+  | 'batch_id'
+
+/**
+ * 按指定维度分组统计全库分布。
+ * 返回示例：[{ value: '价值辩', count: 234 }, { value: '政策辩', count: 156 }, ...]
+ * 仅统计 status='active' 的题（与默认筛选一致）。
+ * NULL 值聚合为 '(未设置)'。
+ */
+function countByDimension(
+  dimension: CountableDimension
+): Array<{ value: string; count: number }> {
+  const db = getDb()
+  // dimension 是受限联合类型，非用户输入，可安全拼接
+  const rows = db.prepare(`
+    SELECT ${dimension} AS value, COUNT(*) AS count
+    FROM topics
+    WHERE status = 'active'
+    GROUP BY ${dimension}
+    ORDER BY count DESC
+  `).all() as Array<{ value: string | null; count: number }>
+  return rows.map((r) => ({
+    value: r.value ?? '(未设置)',
+    count: Number(r.count)
+  }))
+}
+
 // ============================================================
 // 导出
 // ============================================================
 
 export const topicRepo = {
   createTopic,
+  createMany,
   getTopicById,
   listTopics,
   updateTopic,
   deleteTopic,
   batchDeleteTopics,
+  deleteByBatch,
   updateStatus,
   updateWeight,
-  countByFilter
+  countByFilter,
+  countByDimension
 }

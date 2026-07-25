@@ -10,6 +10,7 @@ import {
   Result,
   Spin,
   message,
+  notification,
   Tag
 } from 'antd';
 import {
@@ -17,7 +18,9 @@ import {
   FileExcelOutlined,
   FileTextOutlined,
   CheckCircleOutlined,
-  WarningOutlined
+  WarningOutlined,
+  DownloadOutlined,
+  UndoOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type {
@@ -26,6 +29,9 @@ import type {
   ImportExecuteResult
 } from '../../../shared/types';
 import { spacing } from '../styles/tokens';
+import { primaryButtonStyle } from '../styles/shared';
+import ImportFormatGuide from './import/ImportFormatGuide';
+import { downloadImportTemplate } from '../utils/downloadImportTemplate';
 
 const { Text } = Typography;
 
@@ -41,8 +47,57 @@ const FILE_FILTERS = [
   { name: 'Excel / CSV / Word', extensions: ['xlsx', 'csv', 'docx'] }
 ];
 
+// ============================================================
+// warnings 分类：按内容前缀判断严重级别，便于在 UI 上区分展示
+// ============================================================
+
+type WarningLevel = 'error' | 'warning' | 'info';
+
+/**
+ * 根据单条 warning 文本判断严重级别：
+ *   - error：阻断性错误（如「未识别到 title 列」「无法解析」「工作表为空」）
+ *   - info：信息性提示（如「当前导入的是第 N 张工作表」「不在系统候选值内」）
+ *   - warning：其他一般警告（如「第 N 行 title 为空」「表格无标准表头」）
+ */
+function classifyWarning(w: string): WarningLevel {
+  if (
+    w.includes('未识别到') ||
+    w.includes('无法解析') ||
+    w.includes('工作表为空') ||
+    w.includes('工作簿无任何工作表')
+  ) {
+    return 'error';
+  }
+  if (w.includes('不在系统候选值内') || w.includes('当前导入的是第')) {
+    return 'info';
+  }
+  return 'warning';
+}
+
+/** 取一组 warnings 的最严重级别（error > warning > info） */
+function getOverallLevel(warnings: string[]): WarningLevel {
+  if (warnings.some((w) => classifyWarning(w) === 'error')) return 'error';
+  if (warnings.some((w) => classifyWarning(w) === 'warning')) return 'warning';
+  return 'info';
+}
+
+/** WarningLevel → Antd Tag color 映射 */
+const LEVEL_COLOR: Record<WarningLevel, string> = {
+  error: 'red',
+  warning: 'orange',
+  info: 'blue'
+};
+
+/** WarningLevel → 中文标签 */
+const LEVEL_LABEL: Record<WarningLevel, string> = {
+  error: '错误',
+  warning: '警告',
+  info: '提示'
+};
+
 export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTopicsModalProps) {
   const [messageApi, contextHolder] = message.useMessage();
+  const [notificationApi, notificationHolder] = notification.useNotification();
   const [step, setStep] = useState<Step>(0);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fileType, setFileType] = useState<'xlsx' | 'csv' | 'docx' | null>(null);
@@ -109,22 +164,83 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     if (!parsed || parsed.topics.length === 0) return;
     setImporting(true);
     try {
+      const currentFileName = filePath ? filePath.split(/[\\/]/).pop() : '';
       const res = await window.importAPI.execute({
         topics: parsed.topics,
-        checkDuplicates: true
+        checkDuplicates: true,
+        fileName: currentFileName
       });
       if (!res.success || !res.data) {
         throw new Error(res.error || '导入失败');
       }
       setImportResult(res.data);
       setStep(3);
-      messageApi.success(`成功导入 ${res.data.imported} 条辩题`);
+      // 导入成功 notification 带「撤销导入」按钮（仅当有 batchId 时）
+      if (res.data.batchId) {
+        const batchId = res.data.batchId;
+        const notifKey = `import-undo-${Date.now()}`;
+        notificationApi.open({
+          key: notifKey,
+          type: 'success',
+          message: `成功导入 ${res.data.imported} 条辩题`,
+          duration: 8,
+          btn: (
+            <Button
+              size="small"
+              danger
+              onClick={async () => {
+                try {
+                  const revokeRes = await window.importAPI.revokeBatch(batchId);
+                  if (!revokeRes.success || !revokeRes.data) {
+                    throw new Error(revokeRes.error || '撤销失败');
+                  }
+                  notificationApi.destroy(notifKey);
+                  messageApi.success(
+                    `已撤销本次导入（删除 ${revokeRes.data.deletedCount} 条）`
+                  );
+                  onSuccess?.();
+                  onClose();
+                } catch (e) {
+                  messageApi.error(e instanceof Error ? e.message : '撤销失败');
+                }
+              }}
+            >
+              撤销导入
+            </Button>
+          )
+        });
+      } else {
+        messageApi.success(`成功导入 ${res.data.imported} 条辩题`);
+      }
       onSuccess?.();
     } catch (e) {
       messageApi.error(e instanceof Error ? e.message : '导入失败');
     } finally {
       setImporting(false);
     }
+  };
+
+  // ---------- Step 3 完成页撤销本次导入 ----------
+  const handleRevokeFromResult = () => {
+    if (!importResult?.batchId) return;
+    Modal.confirm({
+      title: '确认撤销本次导入？',
+      content: `将删除本次导入的 ${importResult.imported} 条辩题，不可恢复`,
+      okText: '撤销导入',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        if (!importResult.batchId) return;
+        const res = await window.importAPI.revokeBatch(importResult.batchId);
+        if (!res.success || !res.data) {
+          throw new Error(res.error || '撤销失败');
+        }
+        messageApi.success(`已撤销（删除 ${res.data!.deletedCount} 条）`);
+        onSuccess?.();
+        onClose();
+        reset();
+      }
+    });
   };
 
   // ---------- 渲染辅助 ----------
@@ -206,14 +322,26 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
             <Text type="secondary" style={{ display: 'block', marginBottom: spacing.lg }}>
               支持 .xlsx / .csv / .docx 格式
             </Text>
-            <Button
-              size="middle"
-              type="primary"
-              icon={<UploadOutlined />}
-              onClick={handlePickFile}
-            >
-              选择文件
-            </Button>
+            <Space direction="vertical" size={spacing.sm} style={{ marginBottom: spacing.lg }}>
+              <Button
+                size="middle"
+                type="primary"
+                icon={<UploadOutlined />}
+                onClick={handlePickFile}
+                style={primaryButtonStyle}
+              >
+                选择文件
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                icon={<DownloadOutlined />}
+                onClick={() => downloadImportTemplate()}
+              >
+                下载 Excel 模板
+              </Button>
+            </Space>
+            <ImportFormatGuide defaultCollapsed={false} />
           </div>
         );
 
@@ -229,17 +357,21 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                 <Spin tip="正在解析文件..." />
               </div>
             ) : (
-              <Alert
-                message="解析失败"
-                description="请检查文件格式后重试"
-                type="error"
-                showIcon
-                action={
-                  <Button size="middle" onClick={() => setStep(0)}>
-                    重新选择
-                  </Button>
-                }
-              />
+              <>
+                <Alert
+                  message="解析失败"
+                  description="请检查文件格式后重试，可参考下方格式要求自查"
+                  type="error"
+                  showIcon
+                  action={
+                    <Button size="middle" onClick={() => setStep(0)}>
+                      重新选择
+                    </Button>
+                  }
+                  style={{ marginBottom: spacing.md }}
+                />
+                <ImportFormatGuide defaultCollapsed={false} />
+              </>
             )}
           </div>
         );
@@ -256,47 +388,69 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
 
             {parsed.warnings.length > 0 && (
               <Alert
-                message="解析警告"
-                type="warning"
+                message={`解析提示（共 ${parsed.warnings.length} 条）`}
+                type={getOverallLevel(parsed.warnings)}
                 showIcon
                 style={{ marginBottom: spacing.md }}
                 description={
-                  <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 120, overflow: 'auto' }}>
-                    {parsed.warnings.slice(0, 20).map((w, i) => (
-                      <li key={i}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {w}
-                        </Text>
-                      </li>
-                    ))}
-                    {parsed.warnings.length > 20 && (
-                      <li>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          ... 还有 {parsed.warnings.length - 20} 条警告
-                        </Text>
-                      </li>
-                    )}
-                  </ul>
+                  <div>
+                    <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 150, overflow: 'auto' }}>
+                      {parsed.warnings.slice(0, 20).map((w, i) => {
+                        const level = classifyWarning(w);
+                        return (
+                          <li key={i} style={{ marginBottom: 4 }}>
+                            <Tag color={LEVEL_COLOR[level]} style={{ marginRight: 6, fontSize: 11 }}>
+                              {LEVEL_LABEL[level]}
+                            </Tag>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {w}
+                            </Text>
+                          </li>
+                        );
+                      })}
+                      {parsed.warnings.length > 20 && (
+                        <li>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            ... 还有 {parsed.warnings.length - 20} 条提示
+                          </Text>
+                        </li>
+                      )}
+                    </ul>
+                    <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+                      常见原因：表头别名不在映射表内（中英文均可，大小写不敏感，支持
+                      标题/title/题目/topic 等）、title 列缺失、标签分隔符不正确（应用 , ， 、
+                      ; ；）
+                    </Text>
+                  </div>
                 }
               />
             )}
 
             {parsed.topics.length === 0 ? (
-              <Alert
-                message="未解析到任何辩题"
-                description="请检查文件内容是否包含 title 列"
-                type="error"
-                showIcon
-              />
+              <>
+                <Alert
+                  message="未解析到任何辩题"
+                  description="请检查文件内容是否包含 title 列，参考下方格式要求自查"
+                  type="error"
+                  showIcon
+                  style={{ marginBottom: spacing.md }}
+                />
+                <ImportFormatGuide defaultCollapsed={false} />
+              </>
             ) : (
-              <Table
-                columns={previewColumns}
-                dataSource={parsed.topics}
-                rowKey={(_, i) => String(i)}
-                size="small"
-                pagination={{ pageSize: 8, showSizeChanger: false }}
-                scroll={{ x: 700 }}
-              />
+              <>
+                <Table
+                  columns={previewColumns}
+                  dataSource={parsed.topics}
+                  rowKey={(_, i) => String(i)}
+                  size="small"
+                  pagination={{ pageSize: 8, showSizeChanger: false }}
+                  scroll={{ x: 700 }}
+                />
+                <div style={{ marginTop: spacing.md }}>
+                  <ImportFormatGuide defaultCollapsed />
+                </div>
+              </>
             )}
           </div>
         );
@@ -320,7 +474,26 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
               </Space>
             }
             extra={[
-              <Button key="close" size="middle" type="primary" onClick={handleClose}>
+              ...(importResult.batchId
+                ? [
+                    <Button
+                      key="revoke"
+                      size="middle"
+                      danger
+                      icon={<UndoOutlined />}
+                      onClick={handleRevokeFromResult}
+                    >
+                      撤销本次导入
+                    </Button>
+                  ]
+                : []),
+              <Button
+                key="close"
+                size="middle"
+                type="primary"
+                onClick={handleClose}
+                style={primaryButtonStyle}
+              >
                 完成
               </Button>
             ]}
@@ -348,6 +521,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
             type="primary"
             loading={importing}
             onClick={handleImport}
+            style={primaryButtonStyle}
           >
             确认导入 {parsed.topics.length} 条
           </Button>
@@ -359,6 +533,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   return (
     <>
       {contextHolder}
+      {notificationHolder}
       <Modal
         title="导入辩题"
         open={open}

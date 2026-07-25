@@ -19,6 +19,7 @@ export interface Topic {
   tags: string[] | null
   weight: number
   status: string
+  batch_id: string | null
   created_at: string
   updated_at: string
 }
@@ -34,6 +35,7 @@ export interface TopicFilter {
   keyword?: string
   page?: number
   pageSize?: number
+  batch_id?: string
   // 多选字段（与上面单值字段二选一使用，数组优先）
   types?: string[]
   domains?: string[]
@@ -50,6 +52,7 @@ export interface TopicCreateInput {
   tags?: string[] | null
   weight?: number
   status?: string
+  batch_id?: string | null
 }
 
 export interface TopicUpdateInput {
@@ -293,15 +296,16 @@ export type ApiResult<T = unknown> = ApiResponse<T>
 /** 标签类别（受 tagDisplay 配置控制） */
 export type TagCategory = 'type' | 'difficulty' | 'source_type' | 'custom';
 
-/**
- * 标签显示配置（存储在 settings 表 key='ui.tagDisplay'）
- *
- * 行为：
- * - categoryEnabled[cat]=false：不显示该类别任何标签
- * - categoryEnabled[cat]=true + selectedValues[cat] 空：显示该类别全部
- * - categoryEnabled[cat]=true + selectedValues[cat] 非空：只显示选中的
- */
-export interface TagDisplayConfig {
+/** 标签显示场景 */
+export type TagDisplayScene =
+  | 'library'      // 题库浏览
+  | 'drawResult'   // 抽取结果
+  | 'bigScreen'    // 大屏投影
+  | 'filter'       // 筛选面板
+  | 'dedup';       // 去重检查
+
+/** 单场景配置：4 类别开关 + 每类白名单 */
+export interface SceneTagConfig {
   /** 各类别开关 */
   categoryEnabled: {
     type: boolean;
@@ -318,6 +322,19 @@ export interface TagDisplayConfig {
   };
 }
 
+/**
+ * 标签显示配置（存储在 settings 表 key='ui.tagDisplay'）
+ *
+ * 行为（每个场景独立）：
+ * - categoryEnabled[cat]=false：不显示该类别任何标签
+ * - categoryEnabled[cat]=true + selectedValues[cat] 空：显示该类别全部
+ * - categoryEnabled[cat]=true + selectedValues[cat] 非空：只显示选中的
+ */
+export interface TagDisplayConfig {
+  /** 5 个场景独立配置 */
+  scenes: Record<TagDisplayScene, SceneTagConfig>;
+}
+
 // ---------- 通道名常量 ----------
 // 命名规范：'<domain>:<action>'，例 'topic:list'、'draw:execute'
 
@@ -332,6 +349,7 @@ export const IPC_CHANNELS = {
   TOPIC_UPDATE_STATUS: 'topic:updateStatus',
   TOPIC_UPDATE_WEIGHT: 'topic:updateWeight',
   TOPIC_COUNT: 'topic:count',
+  TOPIC_COUNT_BY_DIMENSION: 'topic:countByDimension',
   // event
   EVENT_LIST: 'event:list',
   EVENT_GET: 'event:get',
@@ -377,6 +395,8 @@ export const IPC_CHANNELS = {
   IMPORT_PARSE_FILE: 'import:parseFile',
   IMPORT_EXECUTE: 'import:execute',
   IMPORT_FIND_DUPLICATES: 'import:findDuplicates',
+  IMPORT_REVOKE_BATCH: 'import:revokeBatch',
+  IMPORT_LIST_BATCHES: 'import:listBatches',
   // export
   EXPORT_TOPICS: 'export:topics',
   EXPORT_DRAW_SESSIONS: 'export:drawSessions',
@@ -396,6 +416,8 @@ export interface ImportExecuteRequest {
   topics: TopicCreateInput[]
   /** 是否在导入前对库内已有辩题做去重检查（默认 true） */
   checkDuplicates?: boolean
+  /** 导入文件名（用于批次记录） */
+  fileName?: string
 }
 
 export interface ImportExecuteResult {
@@ -406,6 +428,22 @@ export interface ImportExecuteResult {
     title: string
     existingIds: string[]
   }>
+  /** 本次导入的批次 id（用于撤销） */
+  batchId?: string
+}
+
+/** 导入批次记录 */
+export interface ImportBatch {
+  id: string
+  file_name: string
+  total_count: number
+  imported_count: number
+  duplicates_count: number
+  failed_count: number
+  imported_at: string
+  notes: string | null
+  /** 当前剩余题数（listBatches 时返回，用户可能已单独删除部分） */
+  remainingCount?: number
 }
 
 export interface ExportLogsRequest {
