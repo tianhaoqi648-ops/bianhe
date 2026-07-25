@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Modal,
   Steps,
@@ -26,12 +26,16 @@ import type { ColumnsType } from 'antd/es/table';
 import type {
   ParsedResult,
   TopicCreateInput,
-  ImportExecuteResult
+  ImportExecuteResult,
+  ValueMapping
 } from '../../../shared/types';
+import type { CandidateField } from '../../../shared/constants';
 import { spacing } from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
 import ImportFormatGuide from './import/ImportFormatGuide';
+import ValueMappingPanel from './import/ValueMappingPanel';
 import { downloadImportTemplate } from '../utils/downloadImportTemplate';
+import { applyMappingToTopics, isMappingValid } from '../utils/valueMapping';
 
 const { Text } = Typography;
 
@@ -105,6 +109,27 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   const [parsed, setParsed] = useState<ParsedResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportExecuteResult | null>(null);
+  // 新值映射状态：用户在 Step 2 预览页配置，handleImport 时应用
+  const [valueMapping, setValueMapping] = useState<ValueMapping>({});
+  // 合并后的系统候选值（系统候选 + 用户扩展），供 ValueMappingPanel 显示已有候选
+  const [mergedCandidates, setMergedCandidates] = useState<
+    Record<CandidateField, string[]> | null
+  >(null);
+
+  // 弹窗打开时拉取合并后的候选值（含用户扩展），供 ValueMappingPanel 显示
+  useEffect(() => {
+    if (!open) return;
+    window.settingsAPI
+      .getCandidates()
+      .then((res) => {
+        if (res.success && res.data) {
+          setMergedCandidates(res.data as Record<CandidateField, string[]>);
+        }
+      })
+      .catch(() => {
+        // 拉取失败不阻断流程，ValueMappingPanel 不显示（mergedCandidates 保持 null）
+      });
+  }, [open]);
 
   const reset = () => {
     setStep(0);
@@ -114,6 +139,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     setImportResult(null);
     setParsing(false);
     setImporting(false);
+    setValueMapping({});
   };
 
   const handleClose = () => {
@@ -162,13 +188,26 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   // ---------- 步骤 3：执行导入 ----------
   const handleImport = async () => {
     if (!parsed || parsed.topics.length === 0) return;
+    // 校验新值映射完整性：所有 action='map' 必须有非空 target
+    const { valid, invalidFields } = isMappingValid(valueMapping);
+    if (!valid) {
+      const desc = invalidFields
+        .map((f) => `${f.field}: "${f.value}" 未选择目标值`)
+        .join('；');
+      messageApi.error(`映射不完整：${desc}`);
+      return;
+    }
     setImporting(true);
     try {
       const currentFileName = filePath ? filePath.split(/[\\/]/).pop() : '';
+      // 应用映射：action='map' 改写 field 值；keep/add 不改写
+      // add 动作由主进程在 createMany 前持久化到 settings 表
+      const finalTopics = applyMappingToTopics(parsed.topics, valueMapping);
       const res = await window.importAPI.execute({
-        topics: parsed.topics,
+        topics: finalTopics,
         checkDuplicates: true,
-        fileName: currentFileName
+        fileName: currentFileName,
+        valueMapping
       });
       if (!res.success || !res.data) {
         throw new Error(res.error || '导入失败');
@@ -439,6 +478,15 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
               </>
             ) : (
               <>
+                {parsed.unknownValues &&
+                  parsed.unknownValues.length > 0 &&
+                  mergedCandidates && (
+                    <ValueMappingPanel
+                      unknownValues={parsed.unknownValues}
+                      candidateOptions={mergedCandidates}
+                      onMappingChange={(m) => setValueMapping(m)}
+                    />
+                  )}
                 <Table
                   columns={previewColumns}
                   dataSource={parsed.topics}

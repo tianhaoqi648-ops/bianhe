@@ -24,6 +24,7 @@ import Settings from './pages/Settings';
 import { lightTheme } from './styles/theme';
 import { spacing } from './styles/tokens';
 import { headerStyle, siderStyle, logoContainerStyle, contentBgStyle } from './styles/shared';
+import { useSettingsStore } from './stores/settingsStore';
 
 const { Header, Sider, Content } = Layout;
 
@@ -127,6 +128,12 @@ function AppHeader() {
 }
 
 function App() {
+  // 应用启动时加载 settings（确保标签显示配置等 UI 设置在任何页面渲染前就绪）
+  const fetchSettings = useSettingsStore((s) => s.fetchAll);
+  useEffect(() => {
+    void fetchSettings();
+  }, [fetchSettings]);
+
   return (
     <ConfigProvider locale={zhCN} theme={lightTheme}>
       <HashRouter>

@@ -213,3 +213,18 @@
 .shuffle-card {
   animation: shuffle 0.3s ease-in-out;
 }
+
+/* ===== 题库列表项 hover 效果 =====
+ * 仅在非选中态下加 hover 背景。
+ * 选中态由外层包装 div 控制 background，此处不覆盖。
+ */
+.topic-list-item:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* ===== History 页面：展开行高亮背景 =====
+ * 当用户点击展开 session 行时，给该父行加一层浅灰背景以示区分。
+ */
+.history-row-expanded > .ant-table-cell {
+  background: rgba(0, 0, 0, 0.02) !important;
+}

@@ -10,13 +10,21 @@ import {
   Spin,
   Select,
   Divider,
+  Tabs,
+  Tag,
   message
 } from 'antd';
 import { TagsOutlined } from '@ant-design/icons';
-import type { TagCategory, TagDisplayConfig } from '../../../shared/types';
+import type {
+  TagCategory,
+  TagDisplayConfig,
+  TagDisplayScene,
+  SceneTagConfig
+} from '../../../shared/types';
 import { useTopicStore } from '../stores/topicStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
+  DEFAULT_SCENE_CONFIG,
   DEFAULT_TAG_DISPLAY_CONFIG,
   loadTagDisplayConfig
 } from '../utils/tagDisplay';
@@ -32,11 +40,21 @@ const CATEGORY_DEFS: Array<{
   label: string;
   field: 'type' | 'difficulty' | 'source_type' | 'tags';
   prefix?: string;
+  color?: string;
 }> = [
-  { key: 'type', label: '题型', field: 'type' },
-  { key: 'difficulty', label: '难度', field: 'difficulty' },
-  { key: 'source_type', label: '来源类型', field: 'source_type' },
+  { key: 'type', label: '题型', field: 'type', color: 'geekblue' },
+  { key: 'difficulty', label: '难度', field: 'difficulty', color: 'orange' },
+  { key: 'source_type', label: '来源类型', field: 'source_type', color: 'purple' },
   { key: 'custom', label: '自定义标签', field: 'tags', prefix: '#' }
+];
+
+// 场景定义（顺序决定 Tab 顺序）
+const SCENE_DEFS: Array<{ key: TagDisplayScene; label: string; desc: string }> = [
+  { key: 'library', label: '题库浏览', desc: '题库列表/卡片中显示的标签' },
+  { key: 'drawResult', label: '抽取结果', desc: '抽题结果卡片中显示的标签' },
+  { key: 'bigScreen', label: '大屏投影', desc: '全屏投影模式显示的标签' },
+  { key: 'filter', label: '筛选面板', desc: '筛选面板中可选的维度/标签候选' },
+  { key: 'dedup', label: '去重检查', desc: '去重结果中显示的来源信息' }
 ];
 
 export interface TagDisplaySettingsModalProps {
@@ -52,6 +70,7 @@ export default function TagDisplaySettingsModal({
   const topicStore = useTopicStore();
   const settingsStore = useSettingsStore();
   const [config, setConfig] = useState<TagDisplayConfig>(DEFAULT_TAG_DISPLAY_CONFIG);
+  const [activeScene, setActiveScene] = useState<TagDisplayScene>('library');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -88,29 +107,64 @@ export default function TagDisplaySettingsModal({
     return sets;
   }, [topicStore.items]);
 
-  const handleToggleCategory = (cat: TagCategory, enabled: boolean) => {
+  // 更新某个场景的某个类别开关
+  const handleToggleCategory = (
+    scene: TagDisplayScene,
+    cat: TagCategory,
+    enabled: boolean
+  ) => {
     setConfig((prev) => ({
       ...prev,
-      categoryEnabled: {
-        ...prev.categoryEnabled,
-        [cat]: enabled
+      scenes: {
+        ...prev.scenes,
+        [scene]: {
+          ...prev.scenes[scene],
+          categoryEnabled: {
+            ...prev.scenes[scene].categoryEnabled,
+            [cat]: enabled
+          }
+        }
       }
     }));
   };
 
-  const handleSelectedValuesChange = (cat: TagCategory, values: string[]) => {
+  // 更新某个场景的某个类别白名单
+  const handleSelectedValuesChange = (
+    scene: TagDisplayScene,
+    cat: TagCategory,
+    values: string[]
+  ) => {
     setConfig((prev) => ({
       ...prev,
-      selectedValues: {
-        ...prev.selectedValues,
-        [cat]: values
+      scenes: {
+        ...prev.scenes,
+        [scene]: {
+          ...prev.scenes[scene],
+          selectedValues: {
+            ...prev.scenes[scene].selectedValues,
+            [cat]: values
+          }
+        }
       }
     }));
   };
 
-  const handleReset = () => {
+  // 重置当前场景为默认
+  const handleResetScene = () => {
+    setConfig((prev) => ({
+      ...prev,
+      scenes: {
+        ...prev.scenes,
+        [activeScene]: { ...DEFAULT_SCENE_CONFIG }
+      }
+    }));
+    messageApi.info(`已恢复「${SCENE_DEFS.find((s) => s.key === activeScene)?.label}」默认配置，需点击"保存"后生效`);
+  };
+
+  // 重置全部场景
+  const handleResetAll = () => {
     setConfig(DEFAULT_TAG_DISPLAY_CONFIG);
-    messageApi.info('已恢复默认配置（全部类别开启 + 显示全部），需点击"保存"后生效');
+    messageApi.info('已恢复全部场景默认配置，需点击"保存"后生效');
   };
 
   const handleSave = async () => {
@@ -126,12 +180,16 @@ export default function TagDisplaySettingsModal({
     }
   };
 
-  // 渲染单类别区块
-  const renderCategoryBlock = (def: (typeof CATEGORY_DEFS)[number]) => {
+  // 渲染单类别区块（场景内）
+  const renderCategoryBlock = (
+    scene: TagDisplayScene,
+    def: (typeof CATEGORY_DEFS)[number]
+  ) => {
     const cat = def.key;
-    const enabled = config.categoryEnabled[cat];
+    const sceneCfg: SceneTagConfig = config.scenes[scene];
+    const enabled = sceneCfg.categoryEnabled[cat];
     const values = Array.from(candidates[cat]).sort();
-    const selected = config.selectedValues[cat];
+    const selected = sceneCfg.selectedValues[cat];
 
     return (
       <div style={{ marginBottom: spacing.md }}>
@@ -152,7 +210,7 @@ export default function TagDisplaySettingsModal({
           <Switch
             size="small"
             checked={enabled}
-            onChange={(v) => handleToggleCategory(cat, v)}
+            onChange={(v) => handleToggleCategory(scene, cat, v)}
             checkedChildren="显示"
             unCheckedChildren="隐藏"
           />
@@ -171,7 +229,7 @@ export default function TagDisplaySettingsModal({
               placeholder="不选=显示全部"
               style={{ width: '100%' }}
               value={selected}
-              onChange={(vals) => handleSelectedValuesChange(cat, vals)}
+              onChange={(vals) => handleSelectedValuesChange(scene, cat, vals)}
               disabled={!enabled}
               maxTagCount="responsive"
               options={values.map((v) => ({
@@ -186,6 +244,55 @@ export default function TagDisplaySettingsModal({
     );
   };
 
+  // 渲染场景 Tab 内容
+  const renderScenePanel = (scene: TagDisplayScene) => {
+    const sceneCfg = config.scenes[scene];
+    const sceneDef = SCENE_DEFS.find((s) => s.key === scene)!;
+    const enabledCount = (Object.keys(sceneCfg.categoryEnabled) as TagCategory[]).filter(
+      (c) => sceneCfg.categoryEnabled[c]
+    ).length;
+
+    return (
+      <div>
+        <Alert
+          message={sceneDef.desc}
+          type="info"
+          showIcon
+          banner
+          style={{ marginBottom: spacing.md }}
+        />
+
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: spacing.sm
+          }}
+        >
+          <Space>
+            <Tag color={enabledCount === 4 ? 'green' : enabledCount === 0 ? 'red' : 'orange'}>
+              {enabledCount}/4 类别开启
+            </Tag>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              当前场景独立配置
+            </Text>
+          </Space>
+          <Button size="small" onClick={handleResetScene} disabled={saving}>
+            恢复此场景默认
+          </Button>
+        </div>
+
+        {CATEGORY_DEFS.map((def, idx) => (
+          <div key={def.key}>
+            {renderCategoryBlock(scene, def)}
+            {idx < CATEGORY_DEFS.length - 1 && <Divider style={{ margin: '8px 0' }} />}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <Modal
       title={
@@ -196,7 +303,7 @@ export default function TagDisplaySettingsModal({
       }
       open={open}
       onCancel={onClose}
-      width={620}
+      width={720}
       destroyOnClose
       maskClosable={!saving}
       okText="保存"
@@ -205,8 +312,8 @@ export default function TagDisplaySettingsModal({
       onOk={handleSave}
       footer={(_, { OkBtn, CancelBtn }) => (
         <Space>
-          <Button onClick={handleReset} disabled={saving}>
-            恢复默认
+          <Button onClick={handleResetAll} disabled={saving}>
+            恢复全部默认
           </Button>
           <CancelBtn />
           <OkBtn />
@@ -219,11 +326,11 @@ export default function TagDisplaySettingsModal({
           message="配置说明"
           description={
             <ul style={{ paddingLeft: 20, margin: 0 }}>
-              <li>每个类别独立控制：关闭=不显示该类别任何标签</li>
-              <li>类别开启 + 未选择标签：显示该类别全部</li>
-              <li>类别开启 + 选择了标签：只显示选中的</li>
+              <li>5 个场景独立配置：题库浏览 / 抽取结果 / 大屏投影 / 筛选面板 / 去重检查</li>
+              <li>每个场景内 4 个类别（题型/难度/来源类型/自定义标签）独立开关</li>
+              <li>类别开启 + 未选择标签=显示该类别全部；选择标签后只显示选中的</li>
               <li>隐藏标签仅影响 UI 展示，不影响数据与抽题范围</li>
-              <li>作用于：题库浏览 / 抽取结果 / 大屏投影 / 筛选面板（编辑弹窗不受影响）</li>
+              <li>编辑弹窗、导入预览等编辑场景不受此配置影响</li>
             </ul>
           }
           type="info"
@@ -232,12 +339,16 @@ export default function TagDisplaySettingsModal({
           style={{ marginBottom: spacing.md }}
         />
 
-        {CATEGORY_DEFS.map((def, idx) => (
-          <div key={def.key}>
-            {renderCategoryBlock(def)}
-            {idx < CATEGORY_DEFS.length - 1 && <Divider style={{ margin: '8px 0' }} />}
-          </div>
-        ))}
+        <Tabs
+          activeKey={activeScene}
+          onChange={(k) => setActiveScene(k as TagDisplayScene)}
+          type="card"
+          items={SCENE_DEFS.map((s) => ({
+            key: s.key,
+            label: s.label,
+            children: renderScenePanel(s.key)
+          }))}
+        />
       </Spin>
     </Modal>
   );

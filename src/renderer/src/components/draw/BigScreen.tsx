@@ -190,13 +190,13 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
               {currentTopic.title}
             </div>
 
-            {/* 标签显示区（统一使用全局配置，不再有独立大屏配置） */}
+            {/* 标签显示区（场景=大屏投影） */}
             {(() => {
               const cfg = loadTagDisplayConfig(settings);
-              const typeTag = filterTag(cfg, currentTopic.type, 'type');
-              const diffTag = filterTag(cfg, currentTopic.difficulty, 'difficulty');
-              const sourceTag = filterTag(cfg, currentTopic.source_type, 'source_type');
-              const customTags = filterTags(cfg, currentTopic.tags, 'custom');
+              const typeTag = filterTag(cfg, currentTopic.type, 'type', 'bigScreen');
+              const diffTag = filterTag(cfg, currentTopic.difficulty, 'difficulty', 'bigScreen');
+              const sourceTag = filterTag(cfg, currentTopic.source_type, 'source_type', 'bigScreen');
+              const customTags = filterTags(cfg, currentTopic.tags, 'custom', 'bigScreen');
               const visibleTags: Array<{ key: string; label: string; color?: string }> = [];
               if (typeTag) visibleTags.push({ key: 'type', label: typeTag, color: 'geekblue' });
               if (diffTag) visibleTags.push({ key: 'diff', label: diffTag, color: 'orange' });

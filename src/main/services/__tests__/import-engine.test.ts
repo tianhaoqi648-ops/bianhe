@@ -1,8 +1,47 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+// 模拟 Electron 主进程 ESM 加载 xlsx 时 readFile 命名导出丢失的情况
+// （cjs-module-lexer 无法识别 xlsx.js 中 `XLSX.readFile = readFileSync` 动态赋值）
+// 此 mock 确保所有测试都在 readFile 不可用的前提下运行，
+// 任何回退到 XLSX.readFile 的代码都会立即失败
+vi.mock('xlsx', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('xlsx')>()
+  return {
+    ...actual,
+    readFile: undefined as unknown as typeof actual.readFile
+  }
+})
+
 import path from 'path'
+import fs from 'fs'
+import os from 'os'
+import * as XLSX from 'xlsx'
 import { parseFile, HEADER_MAPPING } from '../import-engine'
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures')
+
+// ============================================================
+// 测试工具：动态构造临时 xlsx 文件
+// ============================================================
+
+/**
+ * 写一个临时 xlsx 文件，返回路径。可选多 sheet。
+ * 调用方负责用 try/finally 删除临时文件。
+ */
+function writeTmpXlsx(sheets: { name: string; rows: any[][] }[]): string {
+  const wb = XLSX.utils.book_new()
+  for (const s of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet(s.rows)
+    XLSX.utils.book_append_sheet(wb, ws, s.name)
+  }
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `test-import-${Date.now()}-${Math.random().toString(36).slice(2)}.xlsx`
+  )
+  fs.writeFileSync(tmpPath, buf)
+  return tmpPath
+}
 
 // ============================================================
 // HEADER_MAPPING
@@ -139,5 +178,203 @@ describe('parseFile DOCX 纯文本', () => {
     expect(titles.some((t) => t.includes('人工智能'))).toBe(true)
     expect(titles.some((t) => t.includes('环保政策'))).toBe(true)
     expect(titles.some((t) => t.includes('大学生'))).toBe(true)
+  })
+})
+
+// ============================================================
+// 表头识别（中英文 + 大小写不敏感 + 诊断提示 + 多 sheet + 字段值警告）
+// ============================================================
+
+describe('表头识别（中英文 + 大小写不敏感）', () => {
+  it('识别英文小写表头 title/type/domain/difficulty/source/tags', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['title', 'type', 'domain', 'difficulty', 'source', 'tags'],
+          ['测试辩题', '价值辩', '社会热点', '入门级', '新国辩', '伦理,成长']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(1)
+      expect(result.topics[0].title).toBe('测试辩题')
+      expect(result.topics[0].type).toBe('价值辩')
+      expect(result.topics[0].domain).toBe('社会热点')
+      expect(result.topics[0].difficulty).toBe('入门级')
+      expect(result.topics[0].source).toBe('新国辩')
+      expect(result.topics[0].tags).toEqual(['伦理', '成长'])
+      // mapping 的 key 保留原始表头（小写英文）
+      expect(result.mapping['title']).toBe('title')
+      expect(result.mapping['type']).toBe('type')
+      expect(result.mapping['tags']).toBe('tags')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('识别大小写混合表头 Title / TYPE / Domain', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['Title', 'TYPE', 'Domain', 'Difficulty', 'Source', 'Tags'],
+          ['混合大小写辩题', '政策辩', '科技伦理', '进阶级', '华语辩论世界杯', '科技']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(1)
+      expect(result.topics[0].title).toBe('混合大小写辩题')
+      expect(result.topics[0].type).toBe('政策辩')
+      expect(result.topics[0].domain).toBe('科技伦理')
+      // mapping 的 key 保留原始表头（混合大小写）
+      expect(result.mapping['Title']).toBe('title')
+      expect(result.mapping['TYPE']).toBe('type')
+      expect(result.mapping['Domain']).toBe('domain')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('title 列未识别的诊断提示', () => {
+  it('warnings 包含实际表头列表与别名提示', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['题目名称', '类别', '难度等级'], // 都不在映射表内
+          ['测试辩题1', 'A', 'B'],
+          ['测试辩题2', 'C', 'D']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(0)
+      expect(result.warnings.length).toBeGreaterThan(0)
+      const allWarnings = result.warnings.join('\n')
+      // 包含「未识别到 title 列」+ 别名提示
+      expect(allWarnings).toContain('未识别到 title 列')
+      expect(allWarnings).toContain('title')
+      expect(allWarnings).toContain('topic')
+      expect(allWarnings).toContain('大小写不敏感')
+      // 包含实际检测到的表头
+      expect(allWarnings).toContain('题目名称')
+      expect(allWarnings).toContain('类别')
+      expect(allWarnings).toContain('难度等级')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('字段值不匹配警告（非阻断）', () => {
+  it('difficulty 写 1-入门 仍入库，但 warnings 中提示不在系统候选值内', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['title', 'type', 'domain', 'difficulty', 'source', 'tags'],
+          ['测试辩题', '价值辩', '社会热点', '1-入门', '自定义', '伦理']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      // 不阻断导入：topics 仍正常返回
+      expect(result.topics).toHaveLength(1)
+      expect(result.topics[0].difficulty).toBe('1-入门')
+      // warnings 中包含字段值不匹配提示
+      const allWarnings = result.warnings.join('\n')
+      expect(allWarnings).toContain('1-入门')
+      expect(allWarnings).toContain('不在系统候选值内')
+      expect(allWarnings).toContain('难度')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('多 sheet 文件提示', () => {
+  it('含 2 张 sheet 时 warnings 提示当前导入的是第 1 张', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: '华语辩论辩题库',
+        rows: [
+          ['title', 'type', 'difficulty'],
+          ['辩题 A', '价值辩', '入门级']
+        ]
+      },
+      {
+        name: '赛事概况',
+        rows: [
+          ['赛事名称', '创办年份'],
+          ['新国辩', 2013]
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(1)
+      expect(result.topics[0].title).toBe('辩题 A')
+      // warnings 中包含多 sheet 提示
+      const allWarnings = result.warnings.join('\n')
+      expect(allWarnings).toContain('当前导入的是第 1 张工作表')
+      expect(allWarnings).toContain('华语辩论辩题库')
+      expect(allWarnings).toContain('赛事概况')
+      expect(allWarnings).toContain('共 2 张')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+// ============================================================
+// buffer 读取路径（修复 readFile 命名导出丢失）
+// ============================================================
+
+describe('parseFile XLSX buffer 读取路径（修复 readFile 缺失）', () => {
+  it('XLSX.readFile 不可用时（模拟 ESM 加载）仍能正确解析 xlsx', async () => {
+    // 由文件顶部 vi.mock 确保 XLSX.readFile === undefined
+    expect((XLSX as any).readFile).toBeUndefined()
+
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['title', 'type', 'difficulty'],
+          ['buffer 路径辩题', '价值辩', '入门级']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(1)
+      expect(result.topics[0].title).toBe('buffer 路径辩题')
+      expect(result.topics[0].type).toBe('价值辩')
+      expect(result.topics[0].difficulty).toBe('入门级')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('大文件 xlsx（1000 行）仍能正确解析', async () => {
+    const rows: any[][] = [['title', 'type']]
+    for (let i = 0; i < 1000; i++) {
+      rows.push([`测试辩题${i}-${'测试'.repeat(20)}`, '价值辩'])
+    }
+    const tmpPath = writeTmpXlsx([{ name: 'Sheet1', rows }])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(1000)
+      expect(result.topics[0].title).toContain('测试辩题0')
+      expect(result.topics[999].title).toContain('测试辩题999')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
   })
 })

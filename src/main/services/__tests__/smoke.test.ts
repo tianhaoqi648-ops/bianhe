@@ -45,6 +45,7 @@ function makeTopic(id: string, title: string): Topic {
     tags: null,
     weight: 1,
     status: 'active',
+    batch_id: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }

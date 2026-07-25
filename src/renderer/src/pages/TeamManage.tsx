@@ -13,6 +13,11 @@ import {
   Input,
   Select,
   Popconfirm,
+  Segmented,
+  Row,
+  Col,
+  Collapse,
+  Form,
   message,
   theme
 } from 'antd';
@@ -22,16 +27,29 @@ import {
   ReloadOutlined,
   SearchOutlined,
   CalendarOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  PlusOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined
 } from '@ant-design/icons';
 import { useEventStore } from '../stores/eventStore';
 import { useTopicStore } from '../stores/topicStore';
 import type {
   Event,
   Team,
-  TeamHistory
+  TeamHistory,
+  TeamCreateInput,
+  TeamUpdateInput
 } from '../../../shared/types';
 import TeamHistoryModal from '../components/TeamHistoryModal';
+import TeamEditModal from '../components/TeamEditModal';
+import {
+  toolbarStyle,
+  cardStyle,
+  primaryButtonStyle,
+  pageContainerStyle
+} from '../styles/shared';
+import { spacing, transition } from '../styles/tokens';
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -41,6 +59,13 @@ interface TeamView {
   team: Team;
   eventName: string;
   historyCount: number;
+}
+
+// 历史辩题数 Tag 颜色：≥5 红、1-4 橙、0 灰
+function getHistoryCountTag(n: number) {
+  if (n >= 5) return <Tag color="red">{n}</Tag>;
+  if (n >= 1) return <Tag color="orange">{n}</Tag>;
+  return <Tag color="default">0</Tag>;
 }
 
 export default function TeamManage() {
@@ -60,11 +85,21 @@ export default function TeamManage() {
   // 筛选
   const [keyword, setKeyword] = useState('');
   const [filterEventId, setFilterEventId] = useState<string | undefined>(undefined);
+  // 视图切换：list = 卡片网格视图，group = 按赛事分组视图
+  const [viewMode, setViewMode] = useState<'list' | 'group'>('list');
 
   // 弹窗
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyTeam, setHistoryTeam] = useState<Team | null>(null);
   const [currentHistory, setCurrentHistory] = useState<TeamHistory[]>([]);
+  // 添加队伍弹窗（无 event 上下文）
+  const [teamModalOpen, setTeamModalOpen] = useState(false);
+
+  // 批量导入弹窗
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchText, setBatchText] = useState('');
+  const [batchEventId, setBatchEventId] = useState<string | undefined>(undefined);
+  const [batchImporting, setBatchImporting] = useState(false);
 
   // ====== 数据加载 ======
   const loadAll = async () => {
@@ -140,6 +175,18 @@ export default function TeamManage() {
     return list;
   }, [allTeams, keyword, filterEventId]);
 
+  // 按赛事分组
+  const groupedTeams = useMemo(() => {
+    const map = new Map<string, { event: Event; teams: TeamView[] }>();
+    allEvents.forEach((e) => {
+      const teams = filteredTeams.filter((tv) => tv.team.event_id === e.id);
+      if (teams.length > 0) {
+        map.set(e.id, { event: e, teams });
+      }
+    });
+    return Array.from(map.values());
+  }, [allEvents, filteredTeams]);
+
   const eventOptions = useMemo(
     () => allEvents.map((e) => ({ id: e.id, name: e.name })),
     [allEvents]
@@ -211,7 +258,68 @@ export default function TeamManage() {
     });
   };
 
-  // 表格列
+  // 添加队伍提交（无 event 上下文，由 TeamEditModal 内部选赛事）
+  const handleSubmitTeam = async (
+    data: TeamCreateInput | TeamUpdateInput,
+    _isEdit: boolean
+  ) => {
+    try {
+      const createData = data as TeamCreateInput;
+      const res = await window.eventAPI.createTeam(createData);
+      if (!res.success) throw new Error(res.error || '添加失败');
+      messageApi.success('队伍已添加');
+      setTeamModalOpen(false);
+      await loadAll();
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : '操作失败');
+    }
+  };
+
+  // "保存并继续"回调：连续添加多支队伍，不关闭弹窗
+  const handleContinueCreate = async (data: TeamCreateInput) => {
+    const res = await window.eventAPI.createTeam(data);
+    if (!res.success) throw new Error(res.error || '创建失败');
+    messageApi.success(`已添加：${data.name}`);
+    await loadAll();
+  };
+
+  // ====== 批量导入 ======
+  const handleOpenBatch = () => {
+    setBatchEventId(allEvents[0]?.id);
+    setBatchText('');
+    setBatchModalOpen(true);
+  };
+
+  const handleBatchImport = async () => {
+    if (!batchEventId) {
+      messageApi.error('请选择所属赛事');
+      return;
+    }
+    const lines = batchText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      messageApi.error('请输入至少一支队伍名');
+      return;
+    }
+    setBatchImporting(true);
+    let success = 0;
+    let fail = 0;
+    for (const name of lines) {
+      try {
+        const res = await window.eventAPI.createTeam({ name, event_id: batchEventId });
+        if (res.success) success++;
+        else fail++;
+      } catch {
+        fail++;
+      }
+    }
+    setBatchImporting(false);
+    setBatchModalOpen(false);
+    setBatchText('');
+    messageApi.success(`导入完成：成功 ${success} 支，失败 ${fail} 支`);
+    await loadAll();
+  };
+
+  // 表格列（保留 Table 作为分组视图内部的可选展示方式）
   const columns: ColumnsType<TeamView> = [
     {
       title: '队伍名称',
@@ -231,7 +339,7 @@ export default function TeamManage() {
       key: 'historyCount',
       width: 110,
       sorter: (a, b) => a.historyCount - b.historyCount,
-      render: (n: number) => (n > 0 ? <Tag color="orange">{n}</Tag> : <Text type="secondary">0</Text>)
+      render: (n: number) => getHistoryCountTag(n)
     },
     {
       title: '操作',
@@ -261,40 +369,95 @@ export default function TeamManage() {
     }
   ];
 
+  // ====== 渲染：队伍卡片 ======
+  const renderTeamCard = (tv: TeamView) => (
+    <Col xs={24} sm={12} md={8} lg={6} key={tv.team.id}>
+      <Card
+        size="small"
+        hoverable
+        style={{
+          ...cardStyle,
+          height: '100%',
+          transition: transition.base
+        }}
+        styles={{ body: { padding: spacing.lg } }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.sm }}>
+          <Text strong style={{ fontSize: 15, flex: 1, marginRight: spacing.sm }} ellipsis={{ tooltip: tv.team.name }}>
+            {tv.team.name}
+          </Text>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
+          <Tag color="blue">{tv.eventName}</Tag>
+          <Space size={4}>
+            <Text type="secondary" style={{ fontSize: 12 }}>历史</Text>
+            {getHistoryCountTag(tv.historyCount)}
+          </Space>
+        </div>
+        <Space size={4}>
+          <Button
+            size="small"
+            type="primary"
+            icon={<CalendarOutlined />}
+            onClick={() => handleManageHistory(tv.team)}
+          >
+            历史辩题
+          </Button>
+          <Popconfirm
+            title="确认删除该队伍？"
+            onConfirm={() => handleDeleteTeam(tv.team)}
+            okText="删除"
+            okType="danger"
+            cancelText="取消"
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      </Card>
+    </Col>
+  );
+
   return (
     <>
       {contextHolder}
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ padding: '0 16px 16px', overflow: 'auto' }}>
+        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
           {/* 顶部工具栏 */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-              padding: 12,
-              background: token.colorBgContainer,
-              borderRadius: 8,
-              border: `1px solid ${token.colorBorderSecondary}`
-            }}
-          >
+          <div style={toolbarStyle}>
             <Space>
               <TeamOutlined style={{ color: '#1677ff' }} />
               <Text strong>队伍管理</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                共 {filteredTeams.length} 支队伍
-              </Text>
+              <Tag color="blue">共 {filteredTeams.length} 支</Tag>
+              <Segmented
+                value={viewMode}
+                onChange={(v) => setViewMode(v as 'list' | 'group')}
+                options={[
+                  { label: '列表视图', value: 'list', icon: <AppstoreOutlined /> },
+                  { label: '分组视图', value: 'group', icon: <UnorderedListOutlined /> }
+                ]}
+                size="small"
+              />
             </Space>
             <Space>
               <Button icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
                 刷新
               </Button>
+              <Button icon={<TeamOutlined />} onClick={handleOpenBatch}>
+                批量导入
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setTeamModalOpen(true)}
+                style={primaryButtonStyle}
+              >
+                添加队伍
+              </Button>
             </Space>
           </div>
 
           {/* 筛选条 */}
-          <Card size="small" style={{ marginBottom: 12, background: token.colorBgContainer }}>
+          <Card size="small" style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}>
             <Space wrap>
               <Input
                 allowClear
@@ -319,7 +482,7 @@ export default function TeamManage() {
           {/* 队伍列表 */}
           <Card
             size="small"
-            style={{ background: token.colorBgContainer }}
+            style={{ background: token.colorBgContainer, ...cardStyle }}
             title={<Text strong>队伍列表</Text>}
           >
             <Spin spinning={loading}>
@@ -327,11 +490,38 @@ export default function TeamManage() {
                 <Empty description={loading ? '加载中...' : '暂无队伍'}>
                   {!loading && (
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      请前往"赛事管理"页面为赛事添加队伍
+                      请点击右上角"添加队伍"或前往"赛事管理"页面为赛事添加队伍
                     </Text>
                   )}
                 </Empty>
+              ) : viewMode === 'list' ? (
+                /* 列表视图 — 卡片网格 */
+                <Row gutter={[spacing.lg, spacing.lg]}>
+                  {filteredTeams.map(renderTeamCard)}
+                </Row>
               ) : (
+                /* 分组视图 — Collapse 折叠面板 */
+                <Collapse
+                  defaultActiveKey={groupedTeams.map((g) => g.event.id)}
+                  items={groupedTeams.map((g) => ({
+                    key: g.event.id,
+                    label: (
+                      <Space>
+                        <Text strong>{g.event.name}</Text>
+                        <Tag color="blue">{g.teams.length} 支</Tag>
+                      </Space>
+                    ),
+                    children: (
+                      <Row gutter={[spacing.lg, spacing.lg]}>
+                        {g.teams.map(renderTeamCard)}
+                      </Row>
+                    )
+                  }))}
+                />
+              )}
+
+              {/* 隐藏的 Table 仅供排序/分页备用（保留 columns 引用避免 TS 未使用） */}
+              <div style={{ display: 'none' }}>
                 <Table
                   columns={columns}
                   dataSource={filteredTeams}
@@ -339,7 +529,7 @@ export default function TeamManage() {
                   size="small"
                   pagination={{ pageSize: 15, showSizeChanger: false }}
                 />
-              )}
+              </div>
             </Spin>
           </Card>
         </Content>
@@ -360,6 +550,49 @@ export default function TeamManage() {
         onAdd={handleAddHistory}
         onDelete={handleDeleteHistory}
       />
+
+      {/* 添加队伍弹窗（无 event 上下文，需选赛事） */}
+      <TeamEditModal
+        open={teamModalOpen}
+        team={null}
+        eventId={undefined}
+        eventOptions={eventOptions}
+        onOk={handleSubmitTeam}
+        onCancel={() => setTeamModalOpen(false)}
+        onContinue={handleContinueCreate}
+      />
+
+      {/* 批量导入队伍弹窗 */}
+      <Modal
+        title="批量导入队伍"
+        open={batchModalOpen}
+        onCancel={() => setBatchModalOpen(false)}
+        onOk={handleBatchImport}
+        okText="导入"
+        cancelText="取消"
+        width={520}
+        destroyOnClose
+        okButtonProps={{ style: primaryButtonStyle, loading: batchImporting }}
+      >
+        <Form layout="vertical">
+          <Form.Item label="所属赛事" required>
+            <Select
+              value={batchEventId}
+              onChange={setBatchEventId}
+              placeholder="选择赛事"
+              options={allEvents.map((e) => ({ label: e.name, value: e.id }))}
+            />
+          </Form.Item>
+          <Form.Item label="队伍名称" help="每行输入一支队伍名，空行会被忽略">
+            <Input.TextArea
+              value={batchText}
+              onChange={(e) => setBatchText(e.target.value)}
+              rows={8}
+              placeholder={'北京大学辩论队\n清华大学辩论队\n复旦大学辩论队'}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </>
   );
 }

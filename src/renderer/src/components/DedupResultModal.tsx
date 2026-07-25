@@ -31,6 +31,8 @@ import type {
   Topic
 } from '../../../shared/types';
 import { spacing } from '../styles/tokens';
+import { useSettingsStore } from '../stores/settingsStore';
+import { loadTagDisplayConfig } from '../utils/tagDisplay';
 
 const { Text, Paragraph } = Typography;
 
@@ -54,6 +56,7 @@ export default function DedupResultModal({
   onRerun
 }: DedupResultModalProps) {
   const { token } = theme.useToken();
+  const settings = useSettingsStore((s) => s.settings);
   const [messageApi, contextHolder] = message.useMessage();
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -61,6 +64,10 @@ export default function DedupResultModal({
   const [error, setError] = useState<string | null>(null);
   // 每组内勾选要删除的 topic id
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // dedup 场景配置：source_type 类别开关控制 source 文字显隐
+  const dedupCfg = loadTagDisplayConfig(settings).scenes.dedup;
+  const showSource = dedupCfg.categoryEnabled.source_type;
 
   const runCheck = async () => {
     setLoading(true);
@@ -219,7 +226,9 @@ export default function DedupResultModal({
                     {topic.title}
                   </Paragraph>
                   <Space size={spacing.sm} style={{ marginTop: 4, fontSize: 12 }}>
-                    <Text type="secondary">{topic.source ?? '未知来源'}</Text>
+                    {showSource && (
+                      <Text type="secondary">{topic.source ?? '未知来源'}</Text>
+                    )}
                     {topic.created_at && (
                       <Text type="secondary">
                         {new Date(topic.created_at).toLocaleString('zh-CN')}
