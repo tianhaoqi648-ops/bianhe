@@ -49,14 +49,14 @@ export default function FilterPanel({
   const { token } = theme.useToken();
   const settings = useSettingsStore((s) => s.settings);
 
-  // 根据标签显示配置过滤候选标签
-  // - 总开关关：不显示标签筛选区
-  // - selectedTags 空：显示全部候选
-  // - selectedTags 非空：只显示选中的候选
+  // 根据标签显示配置过滤自定义标签候选
+  // - custom 类别关闭：不显示标签筛选区
+  // - selectedValues.custom 空：显示全部候选
+  // - selectedValues.custom 非空：只显示选中的候选
   const cfg = loadTagDisplayConfig(settings);
-  const visibleTagOptions = cfg.enabled
-    ? (cfg.selectedTags.length > 0
-        ? tagOptions.filter((t) => cfg.selectedTags.includes(t))
+  const visibleTagOptions = cfg.categoryEnabled.custom
+    ? (cfg.selectedValues.custom.length > 0
+        ? tagOptions.filter((t) => cfg.selectedValues.custom.includes(t))
         : tagOptions)
     : [];
 
