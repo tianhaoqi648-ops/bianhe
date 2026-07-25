@@ -268,7 +268,7 @@ class UnionFind {
     const curSim = this.bestSim.get(ri) ?? 0
     const newSim = Math.max(curSim, sim)
     this.bestSim.set(ri, newSim)
-    this.bestReason.set(ri, curSim >= sim ? this.bestReason.get(ri)! : reason)
+    this.bestReason.set(ri, curSim >= sim ? this.bestReason.get(ri) ?? reason : reason)
   }
 
   getGroups(): Map<number, { similarity: number; reason: DuplicateReason }> {
