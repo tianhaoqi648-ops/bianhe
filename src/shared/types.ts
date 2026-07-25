@@ -412,7 +412,8 @@ export const IPC_CHANNELS = {
   DEDUP_DELETE_TOPICS: 'dedup:deleteTopics',
   // system
   SYSTEM_PICK_FILE: 'system:pickFile',
-  SYSTEM_GET_CANDIDATES: 'system:getCandidates'
+  SYSTEM_GET_CANDIDATES: 'system:getCandidates',
+  SYSTEM_RESET_DATA: 'system:resetData'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -527,4 +528,39 @@ export interface DedupRunResult {
 export interface DrawPageLocationState {
   eventId?: string
   roundId?: string
+}
+
+// ---------- 数据重置相关类型 ----------
+
+/** 数据重置请求（前端 → 主进程） */
+export interface ResetDataRequest {
+  /** 配置类要重置的 settings keys 并集（来自 dedup/tagDisplay/candidates） */
+  configKeys: string[]
+  /** 数据类重置选项 */
+  dataOptions: {
+    /** 题库：keepOfficial=true 保留官方题库，false 清空全部 */
+    topics?: { keepOfficial: boolean }
+    /** 赛事（级联删除 rounds/teams/team_history/draw_sessions/draw_session_items） */
+    events?: boolean
+    /** 抽取会话（级联删除 items） */
+    drawSessions?: boolean
+    /** 导入批次元数据记录 */
+    importBatches?: boolean
+    /** 审计日志 */
+    auditLogs?: boolean
+  }
+}
+
+/** 数据重置响应（主进程 → 前端） */
+export interface ResetDataResponse {
+  /** 配置类：删除的 settings key 数量 */
+  configDeleted: number
+  /** 数据类：各表删除行数 */
+  topicsDeleted: number
+  eventsDeleted: number
+  drawSessionsDeleted: number
+  importBatchesDeleted: number
+  auditLogsDeleted: number
+  /** 题库子选项是否保留了官方题库 */
+  officialKept: boolean
 }
