@@ -51,7 +51,14 @@ import {
 } from '../styles/shared';
 import { spacing } from '../styles/tokens';
 import type { ExportFormat } from '../../../shared/types';
-import type { ResetCategory } from '../../../shared/settings-defaults';
+import {
+  CONFIG_RESET_CATEGORIES,
+  DATA_RESET_CATEGORIES,
+  RESET_CATEGORY_LABELS,
+  RESET_CATEGORY_DESCRIPTIONS,
+  type ConfigResetCategory,
+  type DataResetCategory
+} from '../../../shared/settings-defaults';
 
 const { Content } = Layout;
 const { Text, Paragraph, Title } = Typography;
@@ -102,11 +109,16 @@ export default function Settings() {
 
   // 危险操作：恢复初始设置
   const [resetModalOpen, setResetModalOpen] = useState(false);
-  const [resetCategories, setResetCategories] = useState<ResetCategory[]>([
-    'dedup',
-    'tagDisplay',
-    'candidates'
-  ]);
+  // 配置类：默认全选
+  const [resetConfigCategories, setResetConfigCategories] = useState<ConfigResetCategory[]>(
+    ['dedup', 'tagDisplay', 'candidates']
+  );
+  // 数据类：默认不勾选
+  const [resetDataCategories, setResetDataCategories] = useState<DataResetCategory[]>([]);
+  // 题库子选项：保留官方题库（默认勾选）
+  const [keepOfficial, setKeepOfficial] = useState(true);
+  // 二次确认弹窗（仅勾选数据类时弹出）
+  const [secondaryConfirmOpen, setSecondaryConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   // 官方题库信息
@@ -257,25 +269,89 @@ export default function Settings() {
 
   // ====== 一键恢复初始设置 ======
   const handleOpenResetModal = () => {
-    // 默认全选
-    setResetCategories(['dedup', 'tagDisplay', 'candidates']);
+    // 默认配置类全选，数据类全不选
+    setResetConfigCategories(['dedup', 'tagDisplay', 'candidates']);
+    setResetDataCategories([]);
+    setKeepOfficial(true);
     setResetModalOpen(true);
   };
 
-  const handleConfirmReset = async () => {
-    if (resetCategories.length === 0) {
+  // 构造数据类重置选项
+  const buildDataOptions = () => {
+    const opts: {
+      topics?: { keepOfficial: boolean };
+      events?: boolean;
+      drawSessions?: boolean;
+      importBatches?: boolean;
+      auditLogs?: boolean;
+    } = {};
+    if (resetDataCategories.includes('topics')) {
+      opts.topics = { keepOfficial };
+    }
+    if (resetDataCategories.includes('events')) opts.events = true;
+    if (resetDataCategories.includes('drawSessions')) opts.drawSessions = true;
+    if (resetDataCategories.includes('importBatches')) opts.importBatches = true;
+    if (resetDataCategories.includes('auditLogs')) opts.auditLogs = true;
+    return opts;
+  };
+
+  // 主弹窗点击"确认恢复"
+  const handleConfirmReset = () => {
+    if (resetConfigCategories.length === 0 && resetDataCategories.length === 0) {
       messageApi.warning('请至少选择一个要重置的类别');
       return;
     }
+    // 仅勾选了配置类：直接执行
+    if (resetDataCategories.length === 0) {
+      void doReset();
+      return;
+    }
+    // 勾选了数据类：弹出二次确认
+    setSecondaryConfirmOpen(true);
+  };
+
+  // 二次确认弹窗点击"我已知晓，确认清除"
+  const handleSecondaryConfirm = () => {
+    setSecondaryConfirmOpen(false);
+    void doReset();
+  };
+
+  // 实际执行重置
+  const doReset = async () => {
     setResetting(true);
     try {
-      const deleted = await settingsStore.resetByCategories(resetCategories);
+      const dataOptions = buildDataOptions();
+      const res = await settingsStore.resetAll(resetConfigCategories, dataOptions);
+
       // 关闭标签显示弹窗（若开着）避免显示陈旧配置
-      if (resetCategories.includes('tagDisplay') && tagDisplayOpen) {
+      if (resetConfigCategories.includes('tagDisplay') && tagDisplayOpen) {
         setTagDisplayOpen(false);
       }
-      // settingsStore.settings 变化会触发 useEffect 自动重置本地 dedup state
-      messageApi.success(`已恢复初始设置（清除 ${deleted} 项配置）`);
+
+      // 拼接结果消息
+      const parts: string[] = [];
+      if (res.configDeleted > 0) parts.push(`配置 ${res.configDeleted} 项`);
+      if (res.topicsDeleted > 0) parts.push(`辩题 ${res.topicsDeleted} 条`);
+      if (res.eventsDeleted > 0) parts.push(`赛事 ${res.eventsDeleted} 条`);
+      if (res.drawSessionsDeleted > 0) parts.push(`抽取 ${res.drawSessionsDeleted} 条`);
+      if (res.importBatchesDeleted > 0) parts.push(`导入批次 ${res.importBatchesDeleted} 条`);
+      if (res.auditLogsDeleted > 0) parts.push(`审计日志 ${res.auditLogsDeleted} 条`);
+
+      // 刷新题库统计与官方信息
+      await loadTopicStats();
+      const s = settingsStore.settings;
+      setOfficialInfo({
+        seeded: s[KEYS.officialSeeded] === true,
+        version: String(s[KEYS.officialVersion] ?? '-'),
+        count: Number(s[KEYS.officialCount] ?? 0)
+      });
+
+      // 刷新题库列表（题库可能被清空）
+      if (resetDataCategories.includes('topics')) {
+        await topicStore.fetchList();
+      }
+
+      messageApi.success(`已恢复初始设置（${parts.join('，') || '无变更'}）`);
       setResetModalOpen(false);
     } catch (e) {
       messageApi.error(e instanceof Error ? e.message : '恢复失败');
@@ -832,7 +908,7 @@ export default function Settings() {
             }
           >
             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-              以下操作会清除对应的用户偏好配置并恢复到初始默认值，不会影响题库数据与赛事记录。
+              可重置用户偏好配置（去重设置、标签显示、自定义候选值）与业务数据（题库、赛事、抽取记录、导入批次、审计日志）。数据类默认不勾选且需二次确认。
             </Paragraph>
             <Space>
               <Button danger icon={<RestOutlined />} onClick={handleOpenResetModal}>
@@ -843,56 +919,140 @@ export default function Settings() {
         </Content>
       </Layout>
 
-      {/* 恢复初始设置确认弹窗 */}
+      {/* 恢复初始设置确认弹窗（主） */}
       <Modal
-        title="确认恢复初始设置"
+        title={
+          <Space>
+            <WarningOutlined style={{ color: token.colorError }} />
+            <span>确认恢复初始设置</span>
+          </Space>
+        }
         open={resetModalOpen}
         onCancel={() => setResetModalOpen(false)}
         confirmLoading={resetting}
         okText="确认恢复"
-        okButtonProps={{ danger: true, disabled: resetCategories.length === 0 }}
+        okButtonProps={{
+          danger: true,
+          disabled: resetConfigCategories.length === 0 && resetDataCategories.length === 0
+        }}
         cancelText="取消"
         onOk={handleConfirmReset}
+        width={560}
       >
         <Alert
           type="warning"
           showIcon
-          message="此操作会立即清除所选类别的配置并恢复默认值，不可撤销。"
+          message="此操作会立即清除所选类别的内容并恢复默认值，不可撤销。"
           style={{ marginBottom: 12 }}
         />
-        <Paragraph strong style={{ marginBottom: 8 }}>
-          请选择要重置的类别：
+
+        {/* 配置类分组 */}
+        <Paragraph strong style={{ marginBottom: 8, color: token.colorPrimary }}>
+          <SettingOutlined style={{ marginRight: 6 }} />
+          配置类（用户偏好，默认勾选）
         </Paragraph>
         <Checkbox.Group
-          value={resetCategories}
-          onChange={(vals) => setResetCategories(vals as ResetCategory[])}
-          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+          value={resetConfigCategories}
+          onChange={(vals) => setResetConfigCategories(vals as ConfigResetCategory[])}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16, paddingLeft: 8 }}
         >
-          <Checkbox value="dedup">
-            <Text strong>去重设置</Text>
-            <Text type="secondary" style={{ marginLeft: 8 }}>
-              文本匹配阈值、AI 语义配置、API Key
-            </Text>
-          </Checkbox>
-          <Checkbox value="tagDisplay">
-            <Text strong>标签显示配置</Text>
-            <Text type="secondary" style={{ marginLeft: 8 }}>
-              5 个场景 × 4 个类别的标签显示开关与白名单
-            </Text>
-          </Checkbox>
-          <Checkbox value="candidates">
-            <Text strong>自定义候选值</Text>
-            <Text type="secondary" style={{ marginLeft: 8 }}>
-              通过「加入候选」扩展的题型/领域/难度/来源/来源类型值
-            </Text>
-          </Checkbox>
+          {CONFIG_RESET_CATEGORIES.map((cat) => (
+            <Checkbox key={cat} value={cat}>
+              <Text strong>{RESET_CATEGORY_LABELS[cat]}</Text>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                {RESET_CATEGORY_DESCRIPTIONS[cat]}
+              </Text>
+            </Checkbox>
+          ))}
         </Checkbox.Group>
+
+        {/* 数据类分组 */}
+        <Paragraph strong style={{ marginBottom: 8, color: token.colorError }}>
+          <DatabaseOutlined style={{ marginRight: 6 }} />
+          数据类（业务数据，默认不勾选，需二次确认）
+        </Paragraph>
+        <Checkbox.Group
+          value={resetDataCategories}
+          onChange={(vals) => setResetDataCategories(vals as DataResetCategory[])}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 8 }}
+        >
+          {DATA_RESET_CATEGORIES.map((cat) => (
+            <div key={cat}>
+              <Checkbox value={cat}>
+                <Text strong>{RESET_CATEGORY_LABELS[cat]}</Text>
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  {RESET_CATEGORY_DESCRIPTIONS[cat]}
+                </Text>
+              </Checkbox>
+              {/* 题库子选项：仅当题库被勾选时显示 */}
+              {cat === 'topics' && resetDataCategories.includes('topics') && (
+                <div style={{ marginLeft: 24, marginTop: 4 }}>
+                  <Checkbox
+                    checked={keepOfficial}
+                    onChange={(e) => setKeepOfficial(e.target.checked)}
+                  >
+                    <Text type="secondary">保留官方题库（仅清空自定义辩题）</Text>
+                  </Checkbox>
+                </div>
+              )}
+            </div>
+          ))}
+        </Checkbox.Group>
+
         <Alert
           type="info"
           showIcon
-          message="保留项：官方题库加载状态、题库数据、赛事数据、抽取记录均不受影响。"
+          message="未勾选的类别不受影响；勾选数据类后点击确认将再次询问。"
           style={{ marginTop: 12 }}
         />
+      </Modal>
+
+      {/* 二次确认弹窗（仅勾选数据类时弹出） */}
+      <Modal
+        title={
+          <Space>
+            <WarningOutlined style={{ color: token.colorError }} />
+            <Text type="danger" strong>二次确认 — 数据将被永久删除</Text>
+          </Space>
+        }
+        open={secondaryConfirmOpen}
+        onCancel={() => setSecondaryConfirmOpen(false)}
+        confirmLoading={resetting}
+        okText="我已知晓，确认清除"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        onOk={handleSecondaryConfirm}
+        width={520}
+      >
+        <Alert
+          type="error"
+          showIcon
+          message="即将清除以下业务数据，此操作不可恢复！"
+          style={{ marginBottom: 12 }}
+        />
+        <ul style={{ margin: 0, paddingLeft: 20, marginBottom: 12 }}>
+          {resetDataCategories.includes('topics') && (
+            <li>
+              <Text strong>题库数据</Text>
+              {keepOfficial ? '（保留官方题库，仅清空自定义辩题）' : '（清空全部，含官方题库；重启后重新加载）'}
+            </li>
+          )}
+          {resetDataCategories.includes('events') && (
+            <li><Text strong>赛事数据</Text>（赛事、轮次、队伍、队伍历史，级联删除）</li>
+          )}
+          {resetDataCategories.includes('drawSessions') && (
+            <li><Text strong>抽取记录</Text>（抽取会话与抽取明细，级联删除）</li>
+          )}
+          {resetDataCategories.includes('importBatches') && (
+            <li><Text strong>导入批次记录</Text>（不含辩题数据本身）</li>
+          )}
+          {resetDataCategories.includes('auditLogs') && (
+            <li><Text strong>审计日志</Text>（系统操作审计日志，本次重置记录将保留）</li>
+          )}
+        </ul>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          如需备份，请先使用「数据导出」功能导出相关数据。点击下方按钮将立即执行清除。
+        </Paragraph>
       </Modal>
 
       {/* 导入弹窗 */}
