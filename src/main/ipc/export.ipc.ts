@@ -9,7 +9,7 @@
 // 使用 dialog.showSaveDialog 让用户选保存位置，主进程写文件。
 // ============================================================
 
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { writeFileSync } from 'fs'
 import * as XLSX from 'xlsx'
 import { topicRepo } from '../db/repository/topic.repo'
@@ -24,6 +24,7 @@ import {
   type ExportResult,
   type ExportFormat
 } from '../../shared/types'
+import { getActiveWindow } from './utils'
 
 function wrap<T>(fn: () => T): ApiResponse<T> {
   try {
@@ -148,9 +149,12 @@ export function registerExportIpc(): void {
           created_at: t.created_at,
           updated_at: t.updated_at
         }))
-        const win = BrowserWindow.getFocusedWindow()
+        const win = getActiveWindow()
+        if (!win) {
+          return { success: false, error: '无可用窗口' }
+        }
         const defaultName = `topics-${new Date().toISOString().slice(0, 10)}.${req.format}`
-        const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+        const { canceled, filePath } = await dialog.showSaveDialog(win, {
           title: '导出题库',
           defaultPath: defaultName,
           filters: getFilter(req.format)
@@ -217,9 +221,12 @@ export function registerExportIpc(): void {
             })
           }
         }
-        const win = BrowserWindow.getFocusedWindow()
+        const win = getActiveWindow()
+        if (!win) {
+          return { success: false, error: '无可用窗口' }
+        }
         const defaultName = `draw-sessions-${new Date().toISOString().slice(0, 10)}.${req.format}`
-        const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+        const { canceled, filePath } = await dialog.showSaveDialog(win, {
           title: '导出抽取记录',
           defaultPath: defaultName,
           filters: getFilter(req.format)
@@ -263,9 +270,12 @@ export function registerExportIpc(): void {
           drawSessions: sessions,
           exportedAt: new Date().toISOString()
         }
-        const win = BrowserWindow.getFocusedWindow()
+        const win = getActiveWindow()
+        if (!win) {
+          return { success: false, error: '无可用窗口' }
+        }
         const defaultName = `event-${event.name}-${new Date().toISOString().slice(0, 10)}.json`
-        const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+        const { canceled, filePath } = await dialog.showSaveDialog(win, {
           title: '导出赛事数据包',
           defaultPath: defaultName,
           filters: [{ name: 'JSON', extensions: ['json'] }]

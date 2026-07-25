@@ -8,7 +8,7 @@
 // 导出日志使用 dialog.showSaveDialog 让用户选保存位置，主进程写文件。
 // ============================================================
 
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { writeFileSync } from 'fs'
 import { auditRepo } from '../db/repository/audit.repo'
 import type { AuditLogFilter, AuditLogCreateInput } from '../db/repository/audit.repo'
@@ -18,6 +18,7 @@ import {
   type ExportLogsRequest,
   type ExportLogsResult
 } from '../../shared/types'
+import { getActiveWindow } from './utils'
 
 function wrap<T>(fn: () => T): ApiResponse<T> {
   try {
@@ -81,9 +82,12 @@ export function registerAuditIpc(): void {
       try {
         // 拉取全部匹配日志（pageSize=100000 避免分页）
         const { items } = auditRepo.listLogs({ ...req.filter, page: 1, pageSize: 100000 })
-        const win = BrowserWindow.getFocusedWindow()
+        const win = getActiveWindow()
+        if (!win) {
+          return { success: false, error: '无可用窗口' }
+        }
         const defaultName = `audit-logs-${new Date().toISOString().slice(0, 10)}.${req.format}`
-        const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+        const { canceled, filePath } = await dialog.showSaveDialog(win, {
           title: '导出审计日志',
           defaultPath: defaultName,
           filters:
