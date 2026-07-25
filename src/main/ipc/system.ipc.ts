@@ -9,10 +9,11 @@
 
 import { ipcMain, dialog } from 'electron'
 import { getActiveWindow } from './utils'
+import { IPC_CHANNELS } from '../../shared/types'
 
 export function registerSystemIpc(): void {
   ipcMain.handle(
-    'system:pickFile',
+    IPC_CHANNELS.SYSTEM_PICK_FILE,
     async (
       _e,
       filters?: Array<{ name: string; extensions: string[] }>
