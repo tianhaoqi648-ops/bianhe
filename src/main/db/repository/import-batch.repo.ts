@@ -154,11 +154,23 @@ function countTopicsByBatch(batchId: string): number {
   return Number(row?.n ?? 0)
 }
 
+/**
+ * 清空所有导入批次元数据记录。
+ * 注意：不会删除 topics 表中的辩题数据，仅清空 import_batch 表。
+ * @returns 删除的批次行数
+ */
+function clearAll(): number {
+  const db = getDb()
+  const r = db.prepare(`DELETE FROM import_batch`).run()
+  return r.changes
+}
+
 export const importBatchRepo = {
   createBatch,
   getBatchById,
   listBatches,
   updateBatchStats,
   deleteBatch,
-  countTopicsByBatch
+  countTopicsByBatch,
+  clearAll
 }

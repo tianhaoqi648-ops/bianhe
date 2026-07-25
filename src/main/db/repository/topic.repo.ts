@@ -508,6 +508,21 @@ function listAllTags(): Array<{ value: string; count: number }> {
     .sort((a, b) => b.count - a.count)
 }
 
+/**
+ * 清空题库表。
+ * @param options.keepOfficial true=仅删除 source_type != '官方' 的题；false=清空全部
+ * @returns 删除行数
+ */
+function clearAll(options: { keepOfficial: boolean }): number {
+  const db = getDb()
+  if (options.keepOfficial) {
+    const r = db.prepare(`DELETE FROM topics WHERE source_type != '官方'`).run()
+    return r.changes
+  }
+  const r = db.prepare(`DELETE FROM topics`).run()
+  return r.changes
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -525,5 +540,6 @@ export const topicRepo = {
   updateWeight,
   countByFilter,
   countByDimension,
-  listAllTags
+  listAllTags,
+  clearAll
 }
