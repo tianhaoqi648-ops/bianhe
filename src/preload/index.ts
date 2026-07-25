@@ -33,7 +33,9 @@ import {
   type ExportLogsRequest,
   type DedupOptions,
   type DuplicateGroup,
-  type Topic
+  type Topic,
+  type ResetDataRequest,
+  type ResetDataResponse
 } from '../shared/types'
 
 /**
@@ -184,6 +186,19 @@ const fileAPI = {
 }
 
 // ============================================================
+// 系统级 API（数据重置等）
+// ============================================================
+const systemAPI = {
+  /**
+   * 统一数据重置入口。
+   * 配置类：删除 settings keys；数据类：清空对应业务表。
+   * 返回各表删除行数。
+   */
+  resetData: (req: ResetDataRequest) =>
+    invoke<ResetDataResponse>(IPC_CHANNELS.SYSTEM_RESET_DATA, req)
+}
+
+// ============================================================
 // 暴露到渲染进程
 // ============================================================
 if (process.contextIsolated) {
@@ -198,6 +213,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('exportAPI', exportAPI)
     contextBridge.exposeInMainWorld('dedupAPI', dedupAPI)
     contextBridge.exposeInMainWorld('fileAPI', fileAPI)
+    contextBridge.exposeInMainWorld('systemAPI', systemAPI)
   } catch (error) {
     console.error(error)
   }
@@ -217,6 +233,7 @@ if (process.contextIsolated) {
     exportAPI: typeof exportAPI
     dedupAPI: typeof dedupAPI
     fileAPI: typeof fileAPI
+    systemAPI: typeof systemAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = electronAPI
@@ -229,4 +246,5 @@ if (process.contextIsolated) {
   w.exportAPI = exportAPI
   w.dedupAPI = dedupAPI
   w.fileAPI = fileAPI
+  w.systemAPI = systemAPI
 }
