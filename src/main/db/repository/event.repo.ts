@@ -14,6 +14,16 @@ export interface Event {
   created_at: string | null
 }
 
+/** DB events 表的原始行类型 */
+export interface EventRow {
+  id: string
+  name: string
+  start_date: string | null
+  end_date: string | null
+  status: string | null
+  created_at: string | null
+}
+
 export interface Round {
   id: string
   event_id: string
@@ -123,7 +133,7 @@ function listEvents(filter?: EventFilter): { items: Event[]; total: number } {
   const items = listStmt.all(...params, pageSize, offset) as Event[]
 
   const countStmt = db.prepare(`SELECT COUNT(*) AS total FROM events ${where}`)
-  const countRow = countStmt.get(...params) as any
+  const countRow = countStmt.get(...params) as { total: number } | undefined
   const total = countRow ? Number(countRow.total) : 0
 
   return { items, total }

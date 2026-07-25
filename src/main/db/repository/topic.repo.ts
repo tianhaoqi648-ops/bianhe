@@ -28,6 +28,22 @@ export interface Topic {
   updated_at: string
 }
 
+/** DB topics 表的原始行类型（tags 为 JSON 字符串，未反序列化） */
+export interface TopicRow {
+  id: string
+  title: string
+  type: string | null
+  domain: string | null
+  difficulty: string | null
+  source: string | null
+  source_type: string | null
+  tags: string | null // DB 存 JSON 字符串
+  weight: number
+  status: string
+  created_at: string
+  updated_at: string
+}
+
 export interface TopicFilter {
   type?: string
   domain?: string
@@ -64,7 +80,7 @@ export type TopicUpdateInput = Partial<Omit<Topic, 'id' | 'created_at' | 'update
  * - tags: JSON 字符串 -> 数组
  * - weight / status: 兜底默认值
  */
-function rowToTopic(row: any): Topic {
+function rowToTopic(row: TopicRow): Topic {
   return {
     ...row,
     tags: row.tags ? JSON.parse(row.tags) : null,
@@ -198,7 +214,7 @@ function createTopic(data: TopicCreateInput): Topic {
 function getTopicById(id: string): Topic | undefined {
   const db = getDb()
   const stmt = db.prepare('SELECT * FROM topics WHERE id = ?')
-  const row = stmt.get(id) as any
+  const row = stmt.get(id) as TopicRow | undefined
   return row ? rowToTopic(row) : undefined
 }
 
@@ -220,11 +236,11 @@ function listTopics(filter?: TopicFilter): { items: Topic[]; total: number } {
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
   `)
-  const rows = listStmt.all(...params, pageSize, offset) as any[]
+  const rows = listStmt.all(...params, pageSize, offset) as TopicRow[]
   const items = rows.map(rowToTopic)
 
   const countStmt = db.prepare(`SELECT COUNT(*) AS total FROM topics ${where}`)
-  const countRow = countStmt.get(...params) as any
+  const countRow = countStmt.get(...params) as { total: number } | undefined
   const total = countRow ? Number(countRow.total) : 0
 
   return { items, total }
@@ -341,7 +357,7 @@ function countByFilter(filter?: TopicFilter): number {
   const db = getDb()
   const { where, params } = buildWhereClause(filter)
   const stmt = db.prepare(`SELECT COUNT(*) AS total FROM topics ${where}`)
-  const row = stmt.get(...params) as any
+  const row = stmt.get(...params) as { total: number } | undefined
   return row ? Number(row.total) : 0
 }
 
