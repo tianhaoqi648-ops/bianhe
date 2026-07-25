@@ -7,7 +7,8 @@
 // 供渲染进程 fileAPI.pickFile 调用。
 // ============================================================
 
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog } from 'electron'
+import { getActiveWindow } from './utils'
 
 export function registerSystemIpc(): void {
   ipcMain.handle(
@@ -16,8 +17,11 @@ export function registerSystemIpc(): void {
       _e,
       filters?: Array<{ name: string; extensions: string[] }>
     ): Promise<string | null> => {
-      const win = BrowserWindow.getFocusedWindow()
-      const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      const win = getActiveWindow()
+      if (!win) {
+        return null
+      }
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
         title: '选择文件',
         properties: ['openFile'],
         filters: filters ?? [
