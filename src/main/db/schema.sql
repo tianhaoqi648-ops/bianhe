@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS topics (
   weight        REAL DEFAULT 1.0,
   status        TEXT DEFAULT 'active',
   created_at    TEXT,
-  updated_at    TEXT
+  updated_at    TEXT,
+  custom_data   TEXT              -- JSON：自定义字段值 { "competition": "新国辩", ... }
 );
 
 -- ------------------------------------------------------------
@@ -112,6 +113,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS settings (
   key           TEXT PRIMARY KEY,
   value         TEXT                                 -- JSON
+);
+
+-- ------------------------------------------------------------
+-- 10. topic_custom_fields: 自定义字段元数据
+-- ------------------------------------------------------------
+-- 用户在导入时通过 FieldMappingPanel 创建的自定义字段定义。
+-- topics 表通过 custom_data JSON 列存储实际值，本表仅存元数据。
+CREATE TABLE IF NOT EXISTS topic_custom_fields (
+  field_key   TEXT PRIMARY KEY,                       -- 字段唯一 key（snake_case 或中文）
+  field_label TEXT NOT NULL,                          -- 显示名
+  field_type  TEXT NOT NULL DEFAULT 'string',         -- 'string' | 'tags'
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL
 );
 
 -- ============================================================

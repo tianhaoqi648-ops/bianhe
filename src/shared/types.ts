@@ -8,6 +8,53 @@
 
 import type { CandidateField } from './constants'
 
+// ---------- 自定义字段相关类型 ----------
+
+/** 自定义字段值类型（字符串或字符串数组） */
+export type CustomFieldValue = string | string[]
+
+/** 自定义字段类型 */
+export type CustomFieldType = 'string' | 'tags'
+
+/** 自定义字段元数据（对应 topic_custom_fields 表行） */
+export interface CustomField {
+  /** 字段唯一 key（snake_case 或中文，用作 custom_data JSON 的键） */
+  field_key: string
+  /** 显示名 */
+  field_label: string
+  /** 字段类型 */
+  field_type: CustomFieldType
+  /** 排序序号 */
+  sort_order: number
+  /** 创建时间 ISO 字符串 */
+  created_at: string
+}
+
+/** 字段定义（系统字段 + 自定义字段统一结构，用于导入字段映射 UI） */
+export interface FieldDefinition {
+  /** 字段 key（系统字段如 'type'，自定义字段如 'competition'） */
+  key: string
+  /** 显示名 */
+  label: string
+  /** 字段类型 */
+  type: CustomFieldType
+  /** 表头别名（仅系统字段预填，自定义字段为空数组） */
+  aliases: string[]
+  /** 是否系统字段（true 不能删除） */
+  isSystem: boolean
+  /** 是否可按维度统计（tags 类型用 listAllTags 或 listCustomFieldTags） */
+  isCountable: boolean
+}
+
+/** 导入时未识别列 → 字段绑定动作 */
+export type FieldMappingAction =
+  | { kind: 'ignore' }                                                     // 忽略该列
+  | { kind: 'bind'; fieldKey: string }                                     // 绑定到已有字段（系统或自定义）
+  | { kind: 'create'; fieldLabel: string; fieldType: CustomFieldType }     // 创建新自定义字段
+
+/** 完整字段映射：原始列名 → 动作 */
+export type FieldMapping = Record<string, FieldMappingAction>
+
 // ---------- 业务实体（结构等价于 repository 中的类型） ----------
 
 export interface Topic {
@@ -24,6 +71,8 @@ export interface Topic {
   batch_id: string | null
   created_at: string
   updated_at: string
+  /** 自定义字段值（key → value），来自 topics.custom_data JSON 列 */
+  custom_data?: Record<string, CustomFieldValue> | null
 }
 
 export interface TopicFilter {
@@ -42,6 +91,8 @@ export interface TopicFilter {
   types?: string[]
   domains?: string[]
   difficulties?: string[]
+  /** 自定义字段筛选：fieldKey → 目标值（仅支持 string 类型字段，tags 类型用 tags 数组语义） */
+  custom_filters?: Record<string, string>
 }
 
 export interface TopicCreateInput {
@@ -55,6 +106,8 @@ export interface TopicCreateInput {
   weight?: number
   status?: string
   batch_id?: string | null
+  /** 自定义字段值 */
+  custom_data?: Record<string, CustomFieldValue> | null
 }
 
 export interface TopicUpdateInput {
@@ -67,6 +120,8 @@ export interface TopicUpdateInput {
   tags?: string[] | null
   weight?: number
   status?: string
+  /** 自定义字段值（整体覆盖） */
+  custom_data?: Record<string, CustomFieldValue> | null
 }
 
 export interface Event {
@@ -283,6 +338,16 @@ export interface ParsedResult {
   warnings: string[]
   /** 检测到的非系统候选值（按字段分组） */
   unknownValues?: UnknownValueItem[]
+  /** 未识别的原始表头列名（未在系统字段别名表中命中），由 FieldMappingPanel 让用户绑定 */
+  unmatchedColumns?: string[]
+  /** 原始表格数据（xlsx/csv/docx 表格分支填充），供 applyFieldMapping 重新解析使用 */
+  rawTable?: RawTableData
+}
+
+/** 原始表格数据：表头 + 数据行（rows[0] 通常为表头） */
+export interface RawTableData {
+  headers: string[]
+  rows: any[][]
 }
 
 // ---------- 统一响应封装 ----------
@@ -355,6 +420,8 @@ export const IPC_CHANNELS = {
   TOPIC_COUNT: 'topic:count',
   TOPIC_COUNT_BY_DIMENSION: 'topic:countByDimension',
   TOPIC_LIST_ALL_TAGS: 'topic:listAllTags',
+  TOPIC_LIST_VALUES: 'topic:listValues',
+  TOPIC_LIST_CUSTOM_FIELD_TAGS: 'topic:listCustomFieldTags',
   // event
   EVENT_LIST: 'event:list',
   EVENT_GET: 'event:get',
@@ -413,7 +480,12 @@ export const IPC_CHANNELS = {
   // system
   SYSTEM_PICK_FILE: 'system:pickFile',
   SYSTEM_GET_CANDIDATES: 'system:getCandidates',
-  SYSTEM_RESET_DATA: 'system:resetData'
+  SYSTEM_RESET_DATA: 'system:resetData',
+  // custom field
+  CUSTOM_FIELD_LIST: 'customField:list',
+  CUSTOM_FIELD_CREATE: 'customField:create',
+  CUSTOM_FIELD_UPDATE: 'customField:update',
+  CUSTOM_FIELD_DELETE: 'customField:delete'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

@@ -53,6 +53,32 @@ const MIGRATIONS: Migration[] = [
           ON import_batch(imported_at DESC);
       `)
     }
+  },
+  {
+    id: '20260726_add_custom_data_to_topics',
+    up: (db) => {
+      // 为 topics 表添加 custom_data JSON 列，存储自定义字段值
+      try {
+        db.exec('ALTER TABLE topics ADD COLUMN custom_data TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260726_create_topic_custom_fields_table',
+    up: (db) => {
+      // 自定义字段元数据表（schema.sql 中也有 IF NOT EXISTS 定义，此处兜底）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS topic_custom_fields (
+          field_key   TEXT PRIMARY KEY,
+          field_label TEXT NOT NULL,
+          field_type  TEXT NOT NULL DEFAULT 'string',
+          sort_order  INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL
+        )
+      `)
+    }
   }
 ]
 
