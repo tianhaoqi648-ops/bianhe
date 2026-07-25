@@ -56,39 +56,78 @@ export function registerImportIpc(): void {
         // 拉取全量已有辩题用于去重比对（pageSize=100000）
         const { items: existing } = topicRepo.listTopics({ page: 1, pageSize: 100000 })
 
-        // 跟踪本次已成功导入的项，用于后续条目的去重比对
-        const importedThisRun: Topic[] = []
+        // 一次性批量构造本次新题的临时 Topic 对象（唯一占位 id）
+        // 替代原 O(n²) 每条单独 findDuplicates 的实现
+        const newTopics: Topic[] = topics.map((t, i) => ({
+          id: `__new_${i}__`,
+          title: t.title,
+          type: t.type ?? null,
+          domain: t.domain ?? null,
+          difficulty: t.difficulty ?? null,
+          source: t.source ?? null,
+          source_type: t.source_type ?? null,
+          tags: t.tags ?? null,
+          weight: 1.0,
+          status: 'active',
+          created_at: '',
+          updated_at: ''
+        }))
 
-        for (const t of topics) {
+        // 批量去重：新题 + 库内已存在，单次 findDuplicates 调用
+        // 候选集包含所有新题，使新题之间的互相重复也能被检测
+        const allTopics: Topic[] = checkDuplicates
+          ? [...newTopics, ...existing]
+          : []
+        const dupGroups =
+          checkDuplicates && allTopics.length >= 2
+            ? await findDuplicates(allTopics)
+            : []
+
+        // 构建占位 id → 同组其他成员 id 列表 的映射
+        const groupMembersByTopicId = new Map<string, string[]>()
+        for (const g of dupGroups) {
+          const ids = g.topics.map((p) => p.id)
+          for (const id of ids) {
+            if (!groupMembersByTopicId.has(id)) {
+              groupMembersByTopicId.set(id, [])
+            }
+            for (const otherId of ids) {
+              if (otherId !== id) {
+                groupMembersByTopicId.get(id)!.push(otherId)
+              }
+            }
+          }
+        }
+
+        // 占位 id → 已导入新题的真实 id（用于检测新题之间的重复）
+        const importedPlaceholderToReal = new Map<string, string>()
+
+        // 按顺序处理每条新题：
+        //   若任一同组成员是已存在题或本次已导入的新题 → 重复，跳过
+        //   否则插入数据库，并记录占位 id → 真实 id 映射
+        // 这等价于原 incremental 循环的行为（首条导入，后续重复跳过）
+        for (let i = 0; i < topics.length; i++) {
+          const t = topics[i]
+          const placeholderId = `__new_${i}__`
           try {
             if (checkDuplicates) {
-              // 构造本次新题的临时 Topic 对象
-              const newTopic: Topic = {
-                id: '__new__',
-                title: t.title,
-                type: t.type ?? null,
-                domain: t.domain ?? null,
-                difficulty: t.difficulty ?? null,
-                source: t.source ?? null,
-                source_type: t.source_type ?? null,
-                tags: t.tags ?? null,
-                weight: 1.0,
-                status: 'active',
-                created_at: '',
-                updated_at: ''
+              const memberIds = groupMembersByTopicId.get(placeholderId) ?? []
+              const conflictIds: string[] = []
+              for (const mid of memberIds) {
+                if (mid.startsWith('__new_')) {
+                  // 仅当该占位 id 对应新题已被导入时算冲突
+                  const realId = importedPlaceholderToReal.get(mid)
+                  if (realId) conflictIds.push(realId)
+                } else {
+                  // 库内已存在题
+                  conflictIds.push(mid)
+                }
               }
-              // 候选集 = 库内已存在 + 本次已导入
-              const candidates: Topic[] = [...existing, ...importedThisRun]
-              const groups = await findDuplicates([newTopic, ...candidates])
-              // 若新题与任一已有题被归组，记为重复
-              const hit = groups.find((g) => g.topics.some((p) => p.id === '__new__'))
-              if (hit) {
+              if (conflictIds.length > 0) {
                 duplicates++
                 duplicateGroups.push({
                   title: t.title,
-                  existingIds: hit.topics
-                    .filter((p) => p.id !== '__new__')
-                    .map((p) => p.id)
+                  existingIds: conflictIds
                 })
                 continue
               }
@@ -102,7 +141,7 @@ export function registerImportIpc(): void {
               source_type: t.source_type ?? '自定义',
               tags: t.tags ?? null
             })
-            importedThisRun.push(created)
+            importedPlaceholderToReal.set(placeholderId, created.id)
             imported++
           } catch {
             failed++
