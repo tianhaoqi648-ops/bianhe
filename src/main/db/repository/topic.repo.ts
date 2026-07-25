@@ -1,6 +1,14 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
 
+/**
+ * 转义 SQL LIKE 模式中的特殊字符（%、_、\），使其作为字面量匹配。
+ * 配合 SQL 末尾的 `ESCAPE '\\'` 使用。
+ */
+function escapeLike(str: string): string {
+  return str.replace(/[%_\\]/g, '\\$&')
+}
+
 // ============================================================
 // 类型定义
 // ============================================================
@@ -118,16 +126,18 @@ function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] 
   }
 
   if (filter.tags && filter.tags.length > 0) {
-    const tagConditions = filter.tags.map(() => 'tags LIKE ?')
+    const tagConditions = filter.tags.map(() => "tags LIKE ? ESCAPE '\\'")
     conditions.push(`(${tagConditions.join(' OR ')})`)
     for (const tag of filter.tags) {
-      params.push(`%"${tag}"%`)
+      const escapedTag = escapeLike(tag)
+      params.push(`%"${escapedTag}"%`)
     }
   }
 
   if (filter.keyword !== undefined && filter.keyword !== '') {
-    conditions.push('title LIKE ?')
-    params.push(`%${filter.keyword}%`)
+    conditions.push("title LIKE ? ESCAPE '\\'")
+    const escapedKeyword = escapeLike(filter.keyword)
+    params.push(`%${escapedKeyword}%`)
   }
 
   const where = `WHERE 1=1${conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : ''}`
