@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
+import type { DrawSessionSettings } from '../../../shared/types'
 
 // ============================================================
 // 类型定义
@@ -11,10 +12,31 @@ export interface DrawSession {
   round_id: string | null
   draw_time: string | null
   operator: string | null
-  settings: Record<string, any> | null // 应用层用对象，DB 存 JSON 字符串
+  settings: DrawSessionSettings | null // 应用层用对象，DB 存 JSON 字符串
 }
 
 export interface DrawSessionItem {
+  id: string
+  session_id: string
+  topic_id: string
+  team_a_id: string | null
+  team_b_id: string | null
+  stance_a: string | null
+  stance_b: string | null
+}
+
+/** DB draw_sessions 表的原始行类型（settings 为 JSON 字符串，未反序列化） */
+export interface DrawRow {
+  id: string
+  event_id: string
+  round_id: string | null
+  draw_time: string | null
+  operator: string | null
+  settings: string | null // DB 存 JSON 字符串
+}
+
+/** DB draw_session_items 表的原始行类型 */
+export interface DrawItemRow {
   id: string
   session_id: string
   topic_id: string
@@ -61,7 +83,7 @@ export type SessionItemCreateInput = Omit<DrawSessionItem, 'id'>
  * 反序列化：DB row -> DrawSession
  * - settings: JSON 字符串 -> 对象
  */
-function rowToSession(row: any): DrawSession {
+function rowToSession(row: DrawRow): DrawSession {
   return {
     ...row,
     settings: row.settings ? JSON.parse(row.settings) : null
@@ -71,7 +93,7 @@ function rowToSession(row: any): DrawSession {
 /**
  * DB row -> DrawSessionItem（无转换需求，直接透传）
  */
-function rowToItem(row: any): DrawSessionItem {
+function rowToItem(row: DrawItemRow): DrawSessionItem {
   return { ...row }
 }
 
@@ -200,7 +222,7 @@ function getSessionById(id: string): DrawSessionDetail | undefined {
   const db = getDb()
 
   const sessionStmt = db.prepare('SELECT * FROM draw_sessions WHERE id = ?')
-  const sessionRow = sessionStmt.get(id) as any | undefined
+  const sessionRow = sessionStmt.get(id) as DrawRow | undefined
   if (!sessionRow) {
     return undefined
   }
@@ -208,7 +230,7 @@ function getSessionById(id: string): DrawSessionDetail | undefined {
   const itemsStmt = db.prepare(
     'SELECT * FROM draw_session_items WHERE session_id = ? ORDER BY id ASC'
   )
-  const itemRows = itemsStmt.all(id) as any[]
+  const itemRows = itemsStmt.all(id) as DrawItemRow[]
 
   return {
     ...rowToSession(sessionRow),
@@ -241,11 +263,11 @@ function listSessions(
 
   // 1. 查 sessions（分页）
   const listSql = `SELECT * FROM draw_sessions ${where} ORDER BY draw_time DESC LIMIT ? OFFSET ?`
-  const sessions = db.prepare(listSql).all(...params, pageSize, offset) as any[]
+  const sessions = db.prepare(listSql).all(...params, pageSize, offset) as DrawRow[]
 
   // 2. 查总数
   const countSql = `SELECT COUNT(*) AS total FROM draw_sessions ${where}`
-  const countRow = db.prepare(countSql).get(...params) as any
+  const countRow = db.prepare(countSql).get(...params) as { total: number } | undefined
   const total = countRow ? Number(countRow.total) : 0
 
   if (sessions.length === 0) {
@@ -256,7 +278,7 @@ function listSessions(
   const sessionIds = sessions.map((s) => s.id)
   const placeholders = sessionIds.map(() => '?').join(',')
   const itemsSql = `SELECT * FROM draw_session_items WHERE session_id IN (${placeholders}) ORDER BY id ASC`
-  const allItems = db.prepare(itemsSql).all(...sessionIds) as any[]
+  const allItems = db.prepare(itemsSql).all(...sessionIds) as DrawItemRow[]
 
   // 4. 内存中按 session_id 分组
   const itemsBySession = new Map<string, DrawSessionItem[]>()

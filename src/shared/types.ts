@@ -147,13 +147,21 @@ export interface TeamHistoryCreateInput {
   played_at?: string | null
 }
 
+export interface DrawSessionSettings {
+  source_mix_ratio?: number
+  difficulty_override?: Record<string, number>
+  include_stance?: boolean
+  team_pairs?: Array<{ team_a_id: string; team_b_id: string }>
+  filter?: TopicFilter
+}
+
 export interface DrawSession {
   id: string
   event_id: string
   round_id: string | null
   draw_time: string | null
   operator: string | null
-  settings: Record<string, any> | null
+  settings: DrawSessionSettings | null
 }
 
 export interface DrawSessionItem {
@@ -180,13 +188,21 @@ export interface SessionFilter {
   pageSize?: number
 }
 
+export interface AuditLogDetail {
+  action?: string
+  count?: number
+  ids?: string[]
+  reason?: string
+  [key: string]: unknown
+}
+
 export interface AuditLog {
   id: string
   action: string | null
   target_type: string | null
   target_id: string | null
   operator: string | null
-  detail: Record<string, any> | null
+  detail: AuditLogDetail | null
   created_at: string | null
 }
 

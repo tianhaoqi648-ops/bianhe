@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
+import type { AuditLogDetail } from '../../../shared/types'
 
 // ============================================================
 // 类型定义
@@ -11,7 +12,18 @@ export interface AuditLog {
   target_type: string | null
   target_id: string | null
   operator: string | null
-  detail: Record<string, any> | null // 应用层用对象，DB 存 JSON 字符串
+  detail: AuditLogDetail | null // 应用层用对象，DB 存 JSON 字符串
+  created_at: string | null
+}
+
+/** DB audit_log 表的原始行类型（detail 为 JSON 字符串，未反序列化） */
+export interface AuditLogRow {
+  id: string
+  action: string | null
+  target_type: string | null
+  target_id: string | null
+  operator: string | null
+  detail: string | null // DB 存 JSON 字符串
   created_at: string | null
 }
 
@@ -46,7 +58,7 @@ export type AuditLogCreateInput = {
  * 反序列化：DB row -> AuditLog
  * - detail: JSON 字符串 -> 对象
  */
-function rowToAuditLog(row: any): AuditLog {
+function rowToAuditLog(row: AuditLogRow): AuditLog {
   return {
     ...row,
     detail: row.detail ? JSON.parse(row.detail) : null
@@ -145,11 +157,11 @@ function listLogs(filter?: AuditLogFilter): { items: AuditLog[]; total: number }
 
   // 1. 查列表（分页）
   const listSql = `SELECT * FROM audit_log ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-  const rows = db.prepare(listSql).all(...params, pageSize, offset) as any[]
+  const rows = db.prepare(listSql).all(...params, pageSize, offset) as AuditLogRow[]
 
   // 2. 查总数
   const countSql = `SELECT COUNT(*) AS total FROM audit_log ${where}`
-  const countRow = db.prepare(countSql).get(...params) as any
+  const countRow = db.prepare(countSql).get(...params) as { total: number } | undefined
   const total = countRow ? Number(countRow.total) : 0
 
   return {
