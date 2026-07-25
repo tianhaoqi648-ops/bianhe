@@ -1,0 +1,13 @@
+node_modules
+dist
+out
+.electron-cache
+.electron-userdata
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.vscode/*
+!.vscode/extensions.json
+.idea
