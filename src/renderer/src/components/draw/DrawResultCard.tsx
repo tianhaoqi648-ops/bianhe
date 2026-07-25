@@ -1,5 +1,11 @@
 import { Card, Tag, Space, Typography, theme } from 'antd';
 import type { Topic, DrawSessionItem, Team } from '../../../../shared/types';
+import { useSettingsStore } from '../../stores/settingsStore';
+import {
+  loadTagDisplayConfig,
+  filterTag,
+  filterTags
+} from '../../utils/tagDisplay';
 
 const DIFFICULTY_COLOR: Record<string, string> = {
   入门级: 'green',
@@ -16,6 +22,7 @@ export interface DrawResultCardProps {
 
 export default function DrawResultCard({ index, topic, item, teams }: DrawResultCardProps) {
   const { token } = theme.useToken();
+  const settings = useSettingsStore((s) => s.settings);
   const teamA = teams.find((t) => t.id === item.team_a_id);
   const teamB = teams.find((t) => t.id === item.team_b_id);
 
@@ -54,11 +61,25 @@ export default function DrawResultCard({ index, topic, item, teams }: DrawResult
             {topic.title}
           </Typography.Title>
           <Space size={4} wrap style={{ marginBottom: item.team_a_id ? 12 : 0 }}>
-            {topic.type && <Tag color="geekblue">{topic.type}</Tag>}
-            {topic.difficulty && (
-              <Tag color={DIFFICULTY_COLOR[topic.difficulty] ?? 'default'}>{topic.difficulty}</Tag>
-            )}
-            {topic.source && <Tag>{topic.source}</Tag>}
+            {(() => {
+              const cfg = loadTagDisplayConfig(settings);
+              const typeTag = filterTag(cfg, topic.type);
+              const diffTag = filterTag(cfg, topic.difficulty);
+              const sourceTag = filterTag(cfg, topic.source);
+              const customTags = filterTags(cfg, topic.tags);
+              return (
+                <>
+                  {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
+                  {diffTag && (
+                    <Tag color={DIFFICULTY_COLOR[diffTag] ?? 'default'}>{diffTag}</Tag>
+                  )}
+                  {sourceTag && <Tag>{sourceTag}</Tag>}
+                  {customTags.map((t) => (
+                    <Tag key={t}>#{t}</Tag>
+                  ))}
+                </>
+              );
+            })()}
           </Space>
 
           {/* 持方对阵 */}
