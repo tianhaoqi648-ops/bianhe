@@ -34,6 +34,7 @@ import type {
   AuditLogCreateInput,
   ImportExecuteRequest,
   ImportExecuteResult,
+  ImportBatch,
   ParsedResult,
   ExportLogsRequest,
   ExportLogsResult,
@@ -76,6 +77,9 @@ export interface TopicAPI {
   updateStatus: (id: string, status: string) => Promise<ApiResponse<boolean>>
   updateWeight: (id: string, weight: number) => Promise<ApiResponse<boolean>>
   count: (filter?: TopicFilter) => Promise<ApiResponse<number>>
+  countByDimension: (
+    dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
+  ) => Promise<ApiResponse<Array<{ value: string; count: number }>>>
 }
 
 export interface EventAPI {
@@ -135,6 +139,8 @@ export interface ImportAPI {
     topics: Topic[],
     options?: DedupOptions
   ) => Promise<ApiResponse<DuplicateGroup[]>>
+  revokeBatch: (batchId: string) => Promise<ApiResponse<{ deletedCount: number }>>
+  listBatches: () => Promise<ApiResponse<ImportBatch[]>>
 }
 
 export interface ExportAPI {

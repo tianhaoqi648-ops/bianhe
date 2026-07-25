@@ -35,7 +35,8 @@ import {
   FilterOutlined,
   UploadOutlined,
   SafetyCertificateOutlined,
-  DatabaseFilled
+  DatabaseFilled,
+  HistoryOutlined
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useTopicStore } from '../stores/topicStore';
@@ -49,8 +50,15 @@ import FilterPanel, {
 } from '../components/FilterPanel';
 import TopicEditModal from '../components/TopicEditModal';
 import ImportTopicsModal from '../components/ImportTopicsModal';
+import ImportHistoryModal from '../components/ImportHistoryModal';
 import DedupResultModal from '../components/DedupResultModal';
-import { paginationStyle, floatActionBarStyle } from '../styles/shared';
+import {
+  paginationStyle,
+  floatActionBarStyle,
+  pageContainerStyle,
+  toolbarStyle,
+  emptyStateStyle
+} from '../styles/shared';
 import { spacing } from '../styles/tokens';
 
 const { Sider, Content } = Layout;
@@ -85,6 +93,7 @@ export default function TopicLibrary() {
   const [batchTagValue, setBatchTagValue] = useState('');
   // 导入弹窗 & 去重检查弹窗
   const [importOpen, setImportOpen] = useState(false);
+  const [importHistoryOpen, setImportHistoryOpen] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
 
   // 拉取所有 tag 候选（取自当前列表，简化处理）
@@ -373,6 +382,10 @@ export default function TopicLibrary() {
             overflow: 'auto'
           }}
         >
+          {/* 分类维度标题区 */}
+          <div style={{ marginBottom: 8, padding: '4px 4px 8px' }}>
+            <Text strong>分类维度</Text>
+          </div>
           {/* 维度切换 */}
           <Segmented
             block
@@ -404,18 +417,12 @@ export default function TopicLibrary() {
         </Sider>
 
         {/* 主区域 */}
-        <Content style={{ padding: '0 16px 16px', overflow: 'auto' }}>
+        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
           {/* 顶部工具栏 */}
           <div
             style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 12,
-              padding: 12,
-              background: token.colorBgContainer,
-              borderRadius: 8,
-              border: `1px solid ${token.colorBorderSecondary}`
+              ...toolbarStyle,
+              marginBottom: 12
             }}
           >
             <Space size={8}>
@@ -424,6 +431,11 @@ export default function TopicLibrary() {
                 size="middle"
                 placeholder="搜索辩题标题关键词 (Ctrl+K)"
                 prefix={<SearchOutlined />}
+                addonAfter={
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Ctrl+K
+                  </Text>
+                }
                 value={store.filter.keyword ?? ''}
                 onChange={(e) =>
                   store.setFilter({ keyword: e.target.value || undefined })
@@ -462,6 +474,12 @@ export default function TopicLibrary() {
               </Button>
               <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
                 导入
+              </Button>
+              <Button
+                icon={<HistoryOutlined />}
+                onClick={() => setImportHistoryOpen(true)}
+              >
+                导入历史
               </Button>
               <Segmented
                 size="small"
@@ -532,29 +550,30 @@ export default function TopicLibrary() {
           {/* 列表区域 */}
           <Spin spinning={store.loading}>
             {store.items.length === 0 ? (
-              <Empty
-                description={store.error ? `加载失败：${store.error}` : '暂无辩题'}
-                style={{ marginTop: 80 }}
-              >
-                <Space>
-                  <Button
-                    type="primary"
-                    icon={<DatabaseFilled />}
-                    onClick={() => setImportOpen(true)}
-                  >
-                    导入官方题库
-                  </Button>
-                  <Button icon={<PlusOutlined />} onClick={handleCreate}>
-                    新建第一道辩题
-                  </Button>
-                </Space>
-              </Empty>
+              <div style={emptyStateStyle}>
+                <Empty
+                  description={store.error ? `加载失败：${store.error}` : '暂无辩题'}
+                >
+                  <Space>
+                    <Button
+                      type="primary"
+                      icon={<DatabaseFilled />}
+                      onClick={() => setImportOpen(true)}
+                    >
+                      导入官方题库
+                    </Button>
+                    <Button icon={<PlusOutlined />} onClick={handleCreate}>
+                      新建第一道辩题
+                    </Button>
+                  </Space>
+                </Empty>
+              </div>
             ) : store.viewMode === 'grid' ? (
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                  gap: 12
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+                  gap: 16
                 }}
               >
                 {store.items.map((t) => (
@@ -697,6 +716,16 @@ export default function TopicLibrary() {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onSuccess={() => store.fetchList()}
+      />
+
+      {/* 导入历史弹窗 */}
+      <ImportHistoryModal
+        open={importHistoryOpen}
+        onClose={() => setImportHistoryOpen(false)}
+        onSuccess={() => store.fetchList()}
+        onViewBatch={(batchId) => {
+          store.setFilter({ batch_id: batchId, page: 1 });
+        }}
       />
 
       {/* 去重检查弹窗 */}

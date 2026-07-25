@@ -13,7 +13,8 @@ import {
   topicRepo,
   type TopicFilter,
   type TopicCreateInput,
-  type TopicUpdateInput
+  type TopicUpdateInput,
+  type CountableDimension
 } from '../db/repository/topic.repo'
 import { IPC_CHANNELS, type ApiResponse } from '../../shared/types'
 
@@ -65,5 +66,12 @@ export function registerTopicIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.TOPIC_COUNT, (_e, filter?: TopicFilter) =>
     wrap(() => topicRepo.countByFilter(filter))
+  )
+
+  // 按维度分组统计全库分布（用于分类树计数）
+  ipcMain.handle(
+    IPC_CHANNELS.TOPIC_COUNT_BY_DIMENSION,
+    (_e, dimension: CountableDimension) =>
+      wrap(() => topicRepo.countByDimension(dimension))
   )
 }

@@ -26,6 +26,7 @@ import {
   type AuditLogFilter,
   type AuditLogCreateInput,
   type ImportExecuteRequest,
+  type ImportBatch,
   type ExportTopicsRequest,
   type ExportDrawSessionsRequest,
   type ExportEventPackageRequest,
@@ -58,7 +59,10 @@ const topicAPI = {
     invoke(IPC_CHANNELS.TOPIC_UPDATE_STATUS, id, status),
   updateWeight: (id: string, weight: number) =>
     invoke(IPC_CHANNELS.TOPIC_UPDATE_WEIGHT, id, weight),
-  count: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter)
+  count: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter),
+  countByDimension: (
+    dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
+  ) => invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_COUNT_BY_DIMENSION, dimension)
 }
 
 // ============================================================
@@ -139,7 +143,10 @@ const importAPI = {
     invoke(IPC_CHANNELS.IMPORT_PARSE_FILE, filePath, fileType),
   execute: (req: ImportExecuteRequest) => invoke(IPC_CHANNELS.IMPORT_EXECUTE, req),
   findDuplicates: (topics: Topic[], options?: DedupOptions) =>
-    invoke<DuplicateGroup[]>(IPC_CHANNELS.IMPORT_FIND_DUPLICATES, topics, options)
+    invoke<DuplicateGroup[]>(IPC_CHANNELS.IMPORT_FIND_DUPLICATES, topics, options),
+  revokeBatch: (batchId: string) =>
+    invoke<{ deletedCount: number }>(IPC_CHANNELS.IMPORT_REVOKE_BATCH, batchId),
+  listBatches: () => invoke<ImportBatch[]>(IPC_CHANNELS.IMPORT_LIST_BATCHES)
 }
 
 // ============================================================
