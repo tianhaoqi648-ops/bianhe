@@ -1,5 +1,11 @@
-import { Modal, Form, Input, Select, InputNumber, Tag, Space, message } from 'antd';
-import type { Topic, TopicCreateInput, TopicUpdateInput } from '../../../shared/types';
+import { Modal, Form, Input, Select, InputNumber, Tag, Space, Divider, message } from 'antd';
+import type {
+  Topic,
+  TopicCreateInput,
+  TopicUpdateInput,
+  CustomField,
+  CustomFieldValue
+} from '../../../shared/types';
 import {
   TYPE_OPTIONS,
   DOMAIN_OPTIONS,
@@ -28,11 +34,30 @@ const DEFAULT_NEW_TOPIC_VALUES = {
 
 /**
  * 根据模式计算 Form 的 initialValues
- * - 编辑模式：预填 topic 原值
- * - 新增模式：预填 DEFAULT_NEW_TOPIC_VALUES
+ * - 编辑模式：预填 topic 原值（含 custom_data，string 类型字段转 [string] 适配 Select mode="tags"）
+ * - 新增模式：预填 DEFAULT_NEW_TOPIC_VALUES（custom_data 为空对象）
+ *
+ * 注意：customFields 参数用于将 string 类型存储值 "v" 转为表单期望的 ["v"]，
+ * tags 类型保持数组。这样 Form.Item 命名为 ['custom_data', key] 的字段才能正确显示。
  */
-function computeInitialValues(topic?: Topic | null) {
+function computeInitialValues(
+  topic?: Topic | null,
+  customFields: CustomField[] = []
+) {
   if (topic) {
+    // 转换 custom_data 适配表单：string → [string]，tags 保持数组
+    const formDataCustomData: Record<string, string[] | string> = {};
+    const stored = topic.custom_data ?? {};
+    for (const cf of customFields) {
+      const v = stored[cf.field_key];
+      if (v === undefined || v === null) continue;
+      if (cf.field_type === 'tags') {
+        formDataCustomData[cf.field_key] = Array.isArray(v) ? v : [v];
+      } else {
+        // string 类型：存为 [string] 适配 Select mode="tags" + maxCount=1
+        formDataCustomData[cf.field_key] = typeof v === 'string' ? [v] : v;
+      }
+    }
     return {
       title: topic.title,
       type: topic.type ?? undefined,
@@ -42,10 +67,11 @@ function computeInitialValues(topic?: Topic | null) {
       source_type: topic.source_type ?? undefined,
       tags: topic.tags ?? [],
       weight: topic.weight,
-      status: topic.status
+      status: topic.status,
+      custom_data: formDataCustomData
     };
   }
-  return { ...DEFAULT_NEW_TOPIC_VALUES };
+  return { ...DEFAULT_NEW_TOPIC_VALUES, custom_data: {} };
 }
 
 export interface TopicEditModalProps {
@@ -54,13 +80,19 @@ export interface TopicEditModalProps {
   topic?: Topic | null;
   onOk: (data: TopicCreateInput | TopicUpdateInput, isEdit: boolean) => Promise<void>;
   onCancel: () => void;
+  /** 自定义字段元数据（由 TopicLibrary 传入） */
+  customFields?: CustomField[];
+  /** 自定义字段候选值：fieldKey → 候选值数组 */
+  customFieldOptions?: Record<string, string[]>;
 }
 
 export default function TopicEditModal({
   open,
   topic,
   onOk,
-  onCancel
+  onCancel,
+  customFields = [],
+  customFieldOptions = {}
 }: TopicEditModalProps) {
   const [form] = Form.useForm();
   const isEdit = !!topic;
@@ -73,7 +105,44 @@ export default function TopicEditModal({
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
-      await onOk(values as TopicCreateInput, isEdit);
+      // 分离系统字段与自定义字段：custom_data 单独提取
+      const { custom_data, ...systemFields } = values;
+      // 转换 custom_data：string 类型字段从 ["v"] → "v"；tags 类型保持数组
+      // （Select mode="tags" 始终返回数组，但 string 类型字段需存储为字符串以与
+      //   countByDimension / custom_filters 的 json_extract 比较语义一致）
+      const transformedCustomData: Record<string, CustomFieldValue> = {};
+      if (custom_data && typeof custom_data === 'object') {
+        for (const cf of customFields) {
+          const raw = (custom_data as Record<string, unknown>)[cf.field_key];
+          if (raw === undefined || raw === null) continue;
+          if (cf.field_type === 'tags') {
+            // tags 类型：保持数组，过滤空值
+            if (Array.isArray(raw)) {
+              const arr = (raw as unknown[]).filter(
+                (v): v is string => typeof v === 'string' && v.length > 0
+              );
+              if (arr.length > 0) transformedCustomData[cf.field_key] = arr;
+            } else if (typeof raw === 'string' && raw.length > 0) {
+              transformedCustomData[cf.field_key] = [raw];
+            }
+          } else {
+            // string 类型：从 ["v"] 提取为 "v"
+            if (Array.isArray(raw)) {
+              const first = raw.find((v): v is string => typeof v === 'string' && v.length > 0);
+              if (first) transformedCustomData[cf.field_key] = first;
+            } else if (typeof raw === 'string' && raw.length > 0) {
+              transformedCustomData[cf.field_key] = raw;
+            }
+          }
+        }
+      }
+      // 构建 payload：系统字段 + custom_data
+      const payload: TopicCreateInput | TopicUpdateInput = {
+        ...systemFields,
+        custom_data:
+          Object.keys(transformedCustomData).length > 0 ? transformedCustomData : null
+      };
+      await onOk(payload, isEdit);
     } catch (e: any) {
       if (e?.errorFields) {
         messageApi.error('请完善必填字段');
@@ -102,7 +171,7 @@ export default function TopicEditModal({
           key={topic?.id ?? 'new-topic'}
           form={form}
           layout="vertical"
-          initialValues={computeInitialValues(topic)}
+          initialValues={computeInitialValues(topic, customFields)}
         >
           <Form.Item
             name="title"
@@ -180,6 +249,51 @@ export default function TopicEditModal({
               ]}
             />
           </Form.Item>
+
+          {/* 自定义字段区块 */}
+          {customFields.length > 0 && (
+            <>
+              <Divider orientation="left" plain style={{ margin: `${spacing.md} 0` }}>
+                自定义字段
+              </Divider>
+              {customFields.map((cf) => (
+                <Form.Item
+                  key={cf.field_key}
+                  name={['custom_data', cf.field_key]}
+                  label={cf.field_label}
+                >
+                  {cf.field_type === 'tags' ? (
+                    <Select
+                      mode="tags"
+                      placeholder={`输入${cf.field_label}后按回车`}
+                      tokenSeparators={[',', ' ']}
+                      tagRender={(props) => (
+                        <Tag closable onClose={props.onClose} style={{ margin: 2 }}>
+                          {props.label}
+                        </Tag>
+                      )}
+                    />
+                  ) : (
+                    <Select
+                      mode="tags"
+                      maxCount={1}
+                      allowClear
+                      placeholder={`选择或输入${cf.field_label}`}
+                      options={(customFieldOptions[cf.field_key] ?? []).map((v) => ({
+                        label: v,
+                        value: v
+                      }))}
+                      tagRender={(props) => (
+                        <Tag closable onClose={props.onClose} style={{ margin: 2 }}>
+                          {props.label}
+                        </Tag>
+                      )}
+                    />
+                  )}
+                </Form.Item>
+              ))}
+            </>
+          )}
         </Form>
       </Modal>
     </>
