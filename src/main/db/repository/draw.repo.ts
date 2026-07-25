@@ -396,6 +396,17 @@ function listDrawnTopicIdsByEvent(eventId: string): string[] {
   return rows.map((r) => r.topic_id)
 }
 
+/**
+ * 清空所有抽取会话。
+ * 依赖外键 ON DELETE CASCADE 自动级联删除 draw_session_items。
+ * @returns 删除的会话行数
+ */
+function clearAllSessions(): number {
+  const db = getDb()
+  const r = db.prepare(`DELETE FROM draw_sessions`).run()
+  return r.changes
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -411,5 +422,7 @@ export const drawRepo = {
   listItemsBySession,
   deleteItem,
   // 已抽取辩题查询
-  listDrawnTopicIdsByEvent
+  listDrawnTopicIdsByEvent,
+  // 清空
+  clearAllSessions
 }

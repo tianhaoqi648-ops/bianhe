@@ -431,6 +431,17 @@ function deleteTeamHistory(id: string): boolean {
   return result.changes > 0
 }
 
+/**
+ * 清空所有赛事。
+ * 依赖外键 ON DELETE CASCADE 自动级联删除 rounds/teams/team_history/draw_sessions/draw_session_items。
+ * @returns 删除的赛事行数
+ */
+function clearAllEvents(): number {
+  const db = getDb()
+  const r = db.prepare(`DELETE FROM events`).run()
+  return r.changes
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -458,5 +469,7 @@ export const eventRepo = {
   addTeamHistory,
   listTeamHistory,
   listTeamHistoryByEvent,
-  deleteTeamHistory
+  deleteTeamHistory,
+  // 清空
+  clearAllEvents
 }
