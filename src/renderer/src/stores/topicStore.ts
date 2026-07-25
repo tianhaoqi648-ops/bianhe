@@ -23,6 +23,9 @@ interface TopicState {
   viewMode: 'list' | 'grid';
   // 选中项（批量操作）
   selectedIds: string[];
+  // 跨页全选模式：篮选项下全部选中，exceptIds 黑名单排除
+  allSelectedInFilter: boolean;
+  exceptIds: string[];
   // 错误信息
   error: string | null;
 
@@ -35,6 +38,12 @@ interface TopicState {
   select: (id: string) => void;
   deselect: (id: string) => void;
   clearSelection: () => void;
+  selectAllInFilter: () => void;
+  unselectInAllMode: (id: string) => void;
+  removeFromExcept: (id: string) => void;
+  isSelected: (id: string) => boolean;
+  getSelectedIdsForBatchOp: () => Promise<string[]>;
+  selectPage: (ids: string[]) => void;
 
   fetchList: (overrideFilter?: Partial<TopicFilter>) => Promise<void>;
   fetchCount: () => Promise<number>;
@@ -64,6 +73,8 @@ export const useTopicStore = create<TopicState>((set, get) => ({
   filter: { ...DEFAULT_FILTER },
   viewMode: 'grid',
   selectedIds: [],
+  allSelectedInFilter: false,
+  exceptIds: [],
   error: null,
 
   setFilter: (partial) =>
@@ -74,20 +85,58 @@ export const useTopicStore = create<TopicState>((set, get) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
   setSelectedIds: (ids) => set({ selectedIds: ids }),
   toggleSelect: (id) =>
-    set((s) => ({
-      selectedIds: s.selectedIds.includes(id)
-        ? s.selectedIds.filter((x) => x !== id)
-        : [...s.selectedIds, id]
-    })),
+    set((s) => {
+      if (s.allSelectedInFilter) {
+        // 全选模式下：toggle 即在 exceptIds 中加/减
+        if (s.exceptIds.includes(id)) {
+          return { exceptIds: s.exceptIds.filter((x) => x !== id) };
+        }
+        return { exceptIds: [...s.exceptIds, id] };
+      }
+      return {
+        selectedIds: s.selectedIds.includes(id)
+          ? s.selectedIds.filter((x) => x !== id)
+          : [...s.selectedIds, id]
+      };
+    }),
   select: (id: string) =>
-    set((s) => ({
-      selectedIds: s.selectedIds.includes(id) ? s.selectedIds : [...s.selectedIds, id]
-    })),
+    set((s) => {
+      if (s.allSelectedInFilter) {
+        // 全选模式下：select 即从 exceptIds 移除
+        return { exceptIds: s.exceptIds.filter((x) => x !== id) };
+      }
+      return {
+        selectedIds: s.selectedIds.includes(id) ? s.selectedIds : [...s.selectedIds, id]
+      };
+    }),
   deselect: (id: string) =>
+    set((s) => {
+      if (s.allSelectedInFilter) {
+        // 全选模式下：deselect 即加入 exceptIds
+        return s.exceptIds.includes(id) ? s : { exceptIds: [...s.exceptIds, id] };
+      }
+      return { selectedIds: s.selectedIds.filter((x) => x !== id) };
+    }),
+  clearSelection: () =>
+    set({ selectedIds: [], allSelectedInFilter: false, exceptIds: [] }),
+  selectAllInFilter: () =>
+    set({ allSelectedInFilter: true, exceptIds: [], selectedIds: [] }),
+  unselectInAllMode: (id: string) =>
     set((s) => ({
-      selectedIds: s.selectedIds.filter((x) => x !== id)
+      exceptIds: s.exceptIds.includes(id) ? s.exceptIds : [...s.exceptIds, id]
     })),
-  clearSelection: () => set({ selectedIds: [] }),
+  removeFromExcept: (id: string) =>
+    set((s) => ({
+      exceptIds: s.exceptIds.filter((x) => x !== id)
+    })),
+  isSelected: (id: string) => {
+    const s = get();
+    if (s.allSelectedInFilter) return !s.exceptIds.includes(id);
+    return s.selectedIds.includes(id);
+  },
+  // 选中当前页：退出跨页全选模式，重置为显式 selectedIds
+  selectPage: (ids: string[]) =>
+    set({ allSelectedInFilter: false, exceptIds: [], selectedIds: ids }),
 
   fetchList: async (overrideFilter?: Partial<TopicFilter>) => {
     if (overrideFilter) {
@@ -142,5 +191,21 @@ export const useTopicStore = create<TopicState>((set, get) => ({
     const res = await window.topicAPI.updateWeight(id, weight);
     extractError(res);
     return true;
+  },
+
+  getSelectedIdsForBatchOp: async () => {
+    const s = get();
+    if (s.allSelectedInFilter) {
+      // 拉取篮选项下全部 id，过滤 exceptIds
+      const res = await window.topicAPI.list({
+        ...s.filter,
+        page: 1,
+        pageSize: 100000
+      });
+      if (!res.success || !res.data) return [];
+      const exceptSet = new Set(s.exceptIds);
+      return res.data.items.map((t) => t.id).filter((id) => !exceptSet.has(id));
+    }
+    return s.selectedIds;
   }
 }));

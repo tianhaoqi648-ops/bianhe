@@ -74,4 +74,9 @@ export function registerTopicIpc(): void {
     (_e, dimension: CountableDimension) =>
       wrap(() => topicRepo.countByDimension(dimension))
   )
+
+  // 聚合所有 active 题的 tags，返回每个标签的出现次数（用于「标签」维度分类树）
+  ipcMain.handle(IPC_CHANNELS.TOPIC_LIST_ALL_TAGS, () =>
+    wrap(() => topicRepo.listAllTags())
+  )
 }

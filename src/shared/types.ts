@@ -354,6 +354,7 @@ export const IPC_CHANNELS = {
   TOPIC_UPDATE_WEIGHT: 'topic:updateWeight',
   TOPIC_COUNT: 'topic:count',
   TOPIC_COUNT_BY_DIMENSION: 'topic:countByDimension',
+  TOPIC_LIST_ALL_TAGS: 'topic:listAllTags',
   // event
   EVENT_LIST: 'event:list',
   EVENT_GET: 'event:get',
