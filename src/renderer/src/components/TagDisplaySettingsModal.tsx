@@ -9,10 +9,11 @@ import {
   Button,
   Spin,
   Select,
+  Divider,
   message
 } from 'antd';
 import { TagsOutlined } from '@ant-design/icons';
-import type { TagDisplayConfig } from '../../../shared/types';
+import type { TagCategory, TagDisplayConfig } from '../../../shared/types';
 import { useTopicStore } from '../stores/topicStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
@@ -25,9 +26,9 @@ const { Text } = Typography;
 
 const SETTING_KEY = 'ui.tagDisplay';
 
-// 候选值分组定义
-const GROUP_DEFS: Array<{
-  key: string;
+// 类别定义（顺序决定 UI 显示顺序）
+const CATEGORY_DEFS: Array<{
+  key: TagCategory;
   label: string;
   field: 'type' | 'difficulty' | 'source_type' | 'tags';
   prefix?: string;
@@ -35,7 +36,7 @@ const GROUP_DEFS: Array<{
   { key: 'type', label: '题型', field: 'type' },
   { key: 'difficulty', label: '难度', field: 'difficulty' },
   { key: 'source_type', label: '来源类型', field: 'source_type' },
-  { key: 'tags', label: '自定义标签', field: 'tags', prefix: '#' }
+  { key: 'custom', label: '自定义标签', field: 'tags', prefix: '#' }
 ];
 
 export interface TagDisplaySettingsModalProps {
@@ -70,46 +71,46 @@ export default function TagDisplaySettingsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 从题库汇总所有候选值，按类别分组
-  const groupedOptions = useMemo(() => {
-    const groups: Record<string, Set<string>> = {
+  // 从题库汇总各类别候选值
+  const candidates = useMemo(() => {
+    const sets: Record<TagCategory, Set<string>> = {
       type: new Set<string>(),
       difficulty: new Set<string>(),
       source_type: new Set<string>(),
-      tags: new Set<string>()
+      custom: new Set<string>()
     };
     topicStore.items.forEach((t) => {
-      if (t.type) groups.type.add(t.type);
-      if (t.difficulty) groups.difficulty.add(t.difficulty);
-      if (t.source_type) groups.source_type.add(t.source_type);
-      (t.tags ?? []).forEach((tag) => groups.tags.add(tag));
+      if (t.type) sets.type.add(t.type);
+      if (t.difficulty) sets.difficulty.add(t.difficulty);
+      if (t.source_type) sets.source_type.add(t.source_type);
+      (t.tags ?? []).forEach((tag) => sets.custom.add(tag));
     });
-    return GROUP_DEFS.map((g) => ({
-      label: g.label,
-      prefix: g.prefix,
-      options: Array.from(groups[g.field]).sort().map((v) => ({
-        label: g.prefix ? `${g.prefix}${v}` : v,
-        value: v
-      }))
-    }));
+    return sets;
   }, [topicStore.items]);
 
-  const totalCandidates = useMemo(
-    () => groupedOptions.reduce((sum, g) => sum + g.options.length, 0),
-    [groupedOptions]
-  );
-
-  const handleToggleEnabled = (enabled: boolean) => {
-    setConfig((prev) => ({ ...prev, enabled }));
+  const handleToggleCategory = (cat: TagCategory, enabled: boolean) => {
+    setConfig((prev) => ({
+      ...prev,
+      categoryEnabled: {
+        ...prev.categoryEnabled,
+        [cat]: enabled
+      }
+    }));
   };
 
-  const handleSelectedTagsChange = (values: string[]) => {
-    setConfig((prev) => ({ ...prev, selectedTags: values }));
+  const handleSelectedValuesChange = (cat: TagCategory, values: string[]) => {
+    setConfig((prev) => ({
+      ...prev,
+      selectedValues: {
+        ...prev.selectedValues,
+        [cat]: values
+      }
+    }));
   };
 
   const handleReset = () => {
     setConfig(DEFAULT_TAG_DISPLAY_CONFIG);
-    messageApi.info('已恢复默认配置（显示全部标签），需点击"保存"后生效');
+    messageApi.info('已恢复默认配置（全部类别开启 + 显示全部），需点击"保存"后生效');
   };
 
   const handleSave = async () => {
@@ -123,6 +124,66 @@ export default function TagDisplaySettingsModal({
     } finally {
       setSaving(false);
     }
+  };
+
+  // 渲染单类别区块
+  const renderCategoryBlock = (def: (typeof CATEGORY_DEFS)[number]) => {
+    const cat = def.key;
+    const enabled = config.categoryEnabled[cat];
+    const values = Array.from(candidates[cat]).sort();
+    const selected = config.selectedValues[cat];
+
+    return (
+      <div style={{ marginBottom: spacing.md }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: spacing.xs
+          }}
+        >
+          <Space>
+            <Text strong>{def.label}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              共 {values.length} 个候选值
+            </Text>
+          </Space>
+          <Switch
+            size="small"
+            checked={enabled}
+            onChange={(v) => handleToggleCategory(cat, v)}
+            checkedChildren="显示"
+            unCheckedChildren="隐藏"
+          />
+        </div>
+
+        <div style={{ opacity: enabled ? 1 : 0.5 }}>
+          <Text type="secondary" style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
+            不选=显示全部；选中后只显示选中的
+          </Text>
+          {values.length === 0 ? (
+            <Empty description="暂无候选值" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="不选=显示全部"
+              style={{ width: '100%' }}
+              value={selected}
+              onChange={(vals) => handleSelectedValuesChange(cat, vals)}
+              disabled={!enabled}
+              maxTagCount="responsive"
+              options={values.map((v) => ({
+                label: def.prefix ? `${def.prefix}${v}` : v,
+                value: v
+              }))}
+              optionFilterProp="label"
+            />
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -158,10 +219,11 @@ export default function TagDisplaySettingsModal({
           message="配置说明"
           description={
             <ul style={{ paddingLeft: 20, margin: 0 }}>
-              <li>总开关关闭：所有位置不显示任何标签</li>
-              <li>总开关开启 + 未选择标签：显示全部标签</li>
-              <li>总开关开启 + 选择了标签：只显示选中的标签</li>
+              <li>每个类别独立控制：关闭=不显示该类别任何标签</li>
+              <li>类别开启 + 未选择标签：显示该类别全部</li>
+              <li>类别开启 + 选择了标签：只显示选中的</li>
               <li>隐藏标签仅影响 UI 展示，不影响数据与抽题范围</li>
+              <li>作用于：题库浏览 / 抽取结果 / 大屏投影 / 筛选面板（编辑弹窗不受影响）</li>
             </ul>
           }
           type="info"
@@ -170,87 +232,12 @@ export default function TagDisplaySettingsModal({
           style={{ marginBottom: spacing.md }}
         />
 
-        {/* 总开关 */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: `${spacing.sm} 0`,
-            marginBottom: spacing.md,
-            borderBottom: '1px solid #f0f0f0'
-          }}
-        >
-          <Space>
-            <Text strong>显示标签</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              总开关
-            </Text>
-          </Space>
-          <Switch
-            checked={config.enabled}
-            onChange={handleToggleEnabled}
-            checkedChildren="开"
-            unCheckedChildren="关"
-          />
-        </div>
-
-        {/* 多选标签值 */}
-        <div style={{ opacity: config.enabled ? 1 : 0.5 }}>
-          <Space direction="vertical" size={spacing.xs} style={{ width: '100%', marginBottom: spacing.sm }}>
-            <Text strong>显示哪些标签</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              不选=显示全部；选中后只显示选中的（共 {totalCandidates} 个候选值）
-            </Text>
-          </Space>
-          {totalCandidates === 0 ? (
-            <Empty description="题库中暂无标签数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-          ) : (
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="不选=显示全部标签"
-              style={{ width: '100%' }}
-              value={config.selectedTags}
-              onChange={handleSelectedTagsChange}
-              disabled={!config.enabled}
-              maxTagCount="responsive"
-              options={groupedOptions}
-              optionFilterProp="label"
-            />
-          )}
-        </div>
-
-        {/* 当前选中预览 */}
-        {config.enabled && config.selectedTags.length > 0 && (
-          <Alert
-            style={{ marginTop: spacing.md }}
-            type="success"
-            showIcon
-            message={`已选择 ${config.selectedTags.length} 个标签，将只显示这些标签`}
-            description={
-              <Text style={{ fontSize: 12 }}>
-                {config.selectedTags.map((t) => `#${t}`).join(' ')}
-              </Text>
-            }
-          />
-        )}
-        {config.enabled && config.selectedTags.length === 0 && (
-          <Alert
-            style={{ marginTop: spacing.md }}
-            type="info"
-            showIcon
-            message="将显示全部标签"
-          />
-        )}
-        {!config.enabled && (
-          <Alert
-            style={{ marginTop: spacing.md }}
-            type="warning"
-            showIcon
-            message="已关闭标签显示，所有位置将不显示任何标签"
-          />
-        )}
+        {CATEGORY_DEFS.map((def, idx) => (
+          <div key={def.key}>
+            {renderCategoryBlock(def)}
+            {idx < CATEGORY_DEFS.length - 1 && <Divider style={{ margin: '8px 0' }} />}
+          </div>
+        ))}
       </Spin>
     </Modal>
   );
