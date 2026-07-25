@@ -15,7 +15,10 @@ import {
   Typography,
   theme,
   Affix,
-  Badge
+  Badge,
+  Breadcrumb,
+  Alert,
+  Checkbox
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -36,17 +39,17 @@ import {
   UploadOutlined,
   SafetyCertificateOutlined,
   DatabaseFilled,
-  HistoryOutlined
+  HistoryOutlined,
+  FileOutlined,
+  StarOutlined
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useTopicStore } from '../stores/topicStore';
-import type { Topic, TopicCreateInput, TopicUpdateInput } from '../../../shared/types';
+import type { Topic, TopicCreateInput, TopicUpdateInput, ImportBatch } from '../../../shared/types';
 import TopicCard, { TopicListItem } from '../components/TopicCard';
 import FilterPanel, {
   TYPE_OPTIONS,
-  DOMAIN_OPTIONS,
-  DIFFICULTY_OPTIONS,
-  SOURCE_OPTIONS
+  DIFFICULTY_OPTIONS
 } from '../components/FilterPanel';
 import TopicEditModal from '../components/TopicEditModal';
 import ImportTopicsModal from '../components/ImportTopicsModal';
@@ -64,15 +67,44 @@ import { spacing } from '../styles/tokens';
 const { Sider, Content } = Layout;
 const { Text } = Typography;
 
-// 分类维度元数据
-const DIMENSIONS = [
-  { key: 'type', label: '类型', icon: <TagOutlined />, options: TYPE_OPTIONS },
-  { key: 'domain', label: '领域', icon: <GlobalOutlined />, options: DOMAIN_OPTIONS },
-  { key: 'difficulty', label: '难度', icon: <FireOutlined />, options: DIFFICULTY_OPTIONS },
-  { key: 'source', label: '来源', icon: <DatabaseOutlined />, options: SOURCE_OPTIONS }
-] as const;
+// ============================================================
+// 8 维分类维度定义
+// ============================================================
 
-type DimensionKey = (typeof DIMENSIONS)[number]['key'];
+type DimensionKey =
+  | 'type'
+  | 'domain'
+  | 'difficulty'
+  | 'source'
+  | 'source_type'
+  | 'status'
+  | 'tags'
+  | 'batch_id';
+
+type DimensionSource = 'ipc_count' | 'ipc_tags' | 'ipc_batches';
+
+interface DimensionMeta {
+  key: DimensionKey;
+  label: string;
+  icon: React.ReactNode;
+  source: DimensionSource;
+}
+
+const DIMENSIONS: DimensionMeta[] = [
+  { key: 'type', label: '类型', icon: <TagOutlined />, source: 'ipc_count' },
+  { key: 'domain', label: '领域', icon: <GlobalOutlined />, source: 'ipc_count' },
+  { key: 'difficulty', label: '难度', icon: <FireOutlined />, source: 'ipc_count' },
+  { key: 'source', label: '来源', icon: <DatabaseOutlined />, source: 'ipc_count' },
+  { key: 'source_type', label: '来源类型', icon: <AppstoreOutlined />, source: 'ipc_count' },
+  { key: 'status', label: '状态', icon: <StarOutlined />, source: 'ipc_count' },
+  { key: 'tags', label: '标签', icon: <TagOutlined />, source: 'ipc_tags' },
+  { key: 'batch_id', label: '导入批次', icon: <FileOutlined />, source: 'ipc_batches' }
+];
+
+interface DimensionItem {
+  value: string;
+  count: number;
+}
 
 export default function TopicLibrary() {
   const { token } = theme.useToken();
@@ -95,6 +127,9 @@ export default function TopicLibrary() {
   const [importOpen, setImportOpen] = useState(false);
   const [importHistoryOpen, setImportHistoryOpen] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
+  // 8 维分类树数据（全库分布，不随分页变化）
+  const [dimensionData, setDimensionData] = useState<DimensionItem[]>([]);
+  const [dimensionLoading, setDimensionLoading] = useState(false);
 
   // 拉取所有 tag 候选（取自当前列表，简化处理）
   const tagOptions = useMemo(() => {
@@ -129,26 +164,87 @@ export default function TopicLibrary() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.filter.keyword]);
 
-  // ====== 分类树 ======
-  const treeData: DataNode[] = useMemo(() => {
+  // ====== 分类树数据加载（8 维全库分布） ======
+  // 维度切换或刷新触发：按 source 类型调用不同 IPC
+  useEffect(() => {
+    let cancelled = false;
     const dim = DIMENSIONS.find((d) => d.key === dimension)!;
-    // 按该维度统计 items 数（仅当前页，可作为粗略指示）
-    const counter = new Map<string, number>();
-    store.items.forEach((t) => {
-      const v = (t as any)[dimension] as string | null;
-      if (v) counter.set(v, (counter.get(v) ?? 0) + 1);
-    });
+    setDimensionLoading(true);
+    (async () => {
+      try {
+        let items: DimensionItem[] = [];
+        if (dim.source === 'ipc_count') {
+          // countByDimension 返回 NULL → '(未设置)'，需翻译为 '__unset__'
+          const res = await window.topicAPI.countByDimension(dim.key as any);
+          if (res.success && res.data) {
+            items = res.data.map((r) => ({
+              value: r.value === '(未设置)' ? '__unset__' : r.value,
+              count: r.count
+            }));
+          }
+        } else if (dim.source === 'ipc_tags') {
+          // listAllTags 聚合所有 active 题的 tags
+          const res = await window.topicAPI.listAllTags();
+          if (res.success && res.data) {
+            items = res.data.map((r) => ({ value: r.value, count: r.count }));
+          }
+        } else if (dim.source === 'ipc_batches') {
+          // listBatches 拉取批次，按 file_name 显示，同名加后缀
+          const res = await window.importAPI.listBatches();
+          if (res.success && res.data) {
+            const nameCount = new Map<string, number>();
+            items = res.data
+              .filter((b) => (b as ImportBatch).remainingCount !== 0)
+              .map((b) => {
+                const baseName = b.file_name || '(未命名)';
+                const seen = nameCount.get(baseName) ?? 0;
+                nameCount.set(baseName, seen + 1);
+                return {
+                  value: b.id, // batch_id 维度节点 key 用批次 id
+                  count: (b as ImportBatch).remainingCount ?? 0
+                };
+              });
+            // 节点显示名通过 dimensionBatchNames 提供给 renderTreeNode
+            setDimensionBatchNames(
+              res.data.reduce<Record<string, string>>((acc, b) => {
+                const baseName = b.file_name || '(未命名)';
+                acc[b.id] = baseName;
+                return acc;
+              }, {})
+            );
+          }
+        }
+        if (!cancelled) {
+          setDimensionData(items);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setDimensionData([]);
+          console.error('[TopicLibrary] load dimension data failed:', e);
+        }
+      } finally {
+        if (!cancelled) setDimensionLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimension, store.total]);
+
+  // 批次维度：id → 显示名映射（处理同名加后缀）
+  const [dimensionBatchNames, setDimensionBatchNames] = useState<Record<string, string>>({});
+
+  // ====== 分类树渲染 ======
+  const treeData: DataNode[] = useMemo(() => {
     return [
-      {
-        key: '__all__',
-        title: '__all__'
-      },
-      ...dim.options.map((opt) => ({
-        key: opt,
-        title: opt
+      { key: '__all__', title: '__all__' },
+      ...dimensionData.map((item) => ({
+        key: item.value,
+        title: item.value
       }))
     ];
-  }, [dimension]);
+  }, [dimensionData]);
 
   // 分类树节点渲染（图标 + 标题 + Badge 计数）
   const renderTreeNode = (node: DataNode) => {
@@ -169,14 +265,40 @@ export default function TopicLibrary() {
         </span>
       );
     }
-    const count =
-      store.items.filter((t) => (t as any)[dimension] === key).length;
+    // 查找该节点对应的 count
+    const item = dimensionData.find((d) => d.value === key);
+    const count = item?.count ?? 0;
+    // 显示名：批次维度用 dimensionBatchNames 处理同名后缀
+    let displayLabel = key;
+    if (dim.key === 'batch_id') {
+      // 同名加后缀逻辑：在 dimensionData 加载时已处理，此处从 dimensionData 中读
+      // 这里 key 已经是批次 id，需用 id → name 映射显示
+      const baseName = dimensionBatchNames[key] ?? '(未命名)';
+      // 计算同名后缀
+      const sameNameItems = dimensionData.filter(
+        (d) => dimensionBatchNames[d.value] === baseName
+      );
+      const idx = sameNameItems.findIndex((d) => d.value === key);
+      displayLabel = idx === 0 ? baseName : `${baseName} (${idx + 1})`;
+    } else if (key === '__unset__') {
+      displayLabel = '(未设置)';
+    }
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>
-          {dim.icon}
+      <span
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        title={dim.key === 'batch_id' ? dimensionBatchNames[key] : displayLabel}
+      >
+        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{dim.icon}</span>
+        <span
+          style={{
+            maxWidth: 140,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {displayLabel}
         </span>
-        <span>{key}</span>
         <Badge
           count={count}
           showZero
@@ -196,6 +318,12 @@ export default function TopicLibrary() {
   useEffect(() => {
     if (selectedCategory === '__all__') {
       store.setFilter({ [dimension]: undefined } as any);
+    } else if (selectedCategory === '__unset__') {
+      // __unset__ 在 repo.buildWhereClause 中翻译为 IS NULL
+      store.setFilter({ [dimension]: '__unset__' } as any);
+    } else if (dimension === 'tags') {
+      // tags 维度特殊：筛选为单值数组
+      store.setFilter({ tags: [selectedCategory] } as any);
     } else {
       store.setFilter({ [dimension]: selectedCategory } as any);
     }
@@ -206,6 +334,90 @@ export default function TopicLibrary() {
   const handleDimensionChange = (dim: DimensionKey) => {
     setDimension(dim);
     setSelectedCategory('__all__');
+  };
+
+  // ====== 面包屑导航 ======
+  const breadcrumbItems = useMemo(() => {
+    const dim = DIMENSIONS.find((d) => d.key === dimension)!;
+    const items = [
+      {
+        title: (
+          <a onClick={() => handleResetToAll()}>全部</a>
+        )
+      }
+    ];
+    if (selectedCategory !== '__all__') {
+      let label = selectedCategory;
+      if (selectedCategory === '__unset__') {
+        label = '(未设置)';
+      } else if (dimension === 'batch_id') {
+        label = dimensionBatchNames[selectedCategory] ?? selectedCategory;
+      }
+      items.push({
+        title: (
+          <span>
+            {dim.label} / {label}
+          </span>
+        )
+      });
+    }
+    return items;
+  }, [dimension, selectedCategory, dimensionBatchNames]);
+
+  // 面包屑「全部」点击：清除当前维度筛选
+  const handleResetToAll = () => {
+    setSelectedCategory('__all__');
+  };
+
+  // ====== FilterPanel 重置筛选按钮 ======
+  // 判断 FilterPanel 是否有激活字段（排除 page/pageSize/dimension/空值/空数组）
+  const hasFilterPanelActive = useMemo(() => {
+    const f = store.filter;
+    for (const key of Object.keys(f) as (keyof typeof f)[]) {
+      if (key === 'page' || key === 'pageSize') continue;
+      const v = f[key];
+      if (v === undefined || v === null || v === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      // dimension 字段由分类树管理，不计入 FilterPanel 激活判定
+      if (key === dimension) continue;
+      return true;
+    }
+    return false;
+  }, [store.filter, dimension]);
+
+  // 重置 FilterPanel 字段但保留当前 dimension 筛选
+  const handleResetFilterPanel = () => {
+    const dimValue = store.filter[dimension as keyof typeof store.filter];
+    store.resetFilter();
+    // 恢复当前 dimension 的筛选
+    if (dimValue !== undefined) {
+      store.setFilter({ [dimension]: dimValue } as any);
+    }
+  };
+
+  // ====== 跨页全选状态计算 ======
+  // 当前页是否全选
+  const currentPageAllSelected = useMemo(() => {
+    if (store.items.length === 0) return false;
+    if (store.allSelectedInFilter) return true; // 已全选
+    return store.items.every((t) => store.isSelected(t.id));
+  }, [store.items, store.allSelectedInFilter, store.selectedIds, store.exceptIds]);
+
+  // 当前页全选（进入显式 selectedIds 模式，不进跨页模式）
+  const handleSelectAllOnPage = () => {
+    const pageIds = store.items.map((t) => t.id);
+    store.selectPage(pageIds);
+  };
+
+  // 切换当前页全选
+  const handleToggleSelectAllOnPage = () => {
+    if (currentPageAllSelected) {
+      // 取消当前页全选
+      const pageIdSet = new Set(store.items.map((t) => t.id));
+      store.setSelectedIds(store.selectedIds.filter((id) => !pageIdSet.has(id)));
+    } else {
+      handleSelectAllOnPage();
+    }
   };
 
   // ====== 新增/编辑 ======
@@ -259,19 +471,33 @@ export default function TopicLibrary() {
   };
 
   // ====== 批量操作 ======
-  const hasSelection = store.selectedIds.length > 0;
+  const hasSelection = store.allSelectedInFilter || store.selectedIds.length > 0;
 
   const handleBatchDelete = () => {
     if (!hasSelection) return;
+    const isCrossPage = store.allSelectedInFilter;
+    const selectedCount = isCrossPage
+      ? store.total - store.exceptIds.length
+      : store.selectedIds.length;
+
     Modal.confirm({
-      title: `确认批量删除 ${store.selectedIds.length} 条辩题？`,
-      content: '删除后不可恢复',
+      title: isCrossPage
+        ? `确认跨页批量删除 ${selectedCount} 条辩题？`
+        : `确认批量删除 ${store.selectedIds.length} 条辩题？`,
+      content: isCrossPage
+        ? `跨页全选模式：将删除除已取消 ${store.exceptIds.length} 条外的全部 ${store.total} 条中的 ${selectedCount} 条，不可恢复`
+        : '删除后不可恢复',
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
-        await store.batchRemove(store.selectedIds);
-        messageApi.success(`已删除 ${store.selectedIds.length} 条`);
+        const ids = await store.getSelectedIdsForBatchOp();
+        if (ids.length === 0) {
+          messageApi.warning('没有可删除的项');
+          return;
+        }
+        await store.batchRemove(ids);
+        messageApi.success(`已删除 ${ids.length} 条`);
         store.clearSelection();
         store.fetchList();
       }
@@ -280,16 +506,32 @@ export default function TopicLibrary() {
 
   const handleBatchAddTag = async () => {
     if (!batchTagValue.trim() || !hasSelection) return;
-    // 对每条选中项逐个 update（保留原 tags）
     messageApi.loading({ content: '处理中...', key: 'batchTag', duration: 0 });
     try {
-      for (const id of store.selectedIds) {
-        const t = store.items.find((x) => x.id === id);
-        if (!t) continue;
-        const newTags = Array.from(new Set([...(t.tags ?? []), batchTagValue.trim()]));
-        await store.update(id, { tags: newTags });
+      const ids = await store.getSelectedIdsForBatchOp();
+      // 拉取选中项完整 topic 数据（跨页模式下 store.items 仅有当前页）
+      const idSet = new Set(ids);
+      let toUpdate: Topic[] = [];
+      if (store.allSelectedInFilter || ids.length > store.items.length) {
+        const res = await window.topicAPI.list({
+          ...store.filter,
+          page: 1,
+          pageSize: 100000
+        });
+        if (res.success && res.data) {
+          toUpdate = res.data.items.filter((t) => idSet.has(t.id));
+        }
+      } else {
+        toUpdate = store.items.filter((t) => idSet.has(t.id));
       }
-      messageApi.success({ content: '已批量打标签', key: 'batchTag' });
+      for (const t of toUpdate) {
+        const newTags = Array.from(new Set([...(t.tags ?? []), batchTagValue.trim()]));
+        await store.update(t.id, { tags: newTags });
+      }
+      messageApi.success({
+        content: `已批量打标签（${toUpdate.length} 条）`,
+        key: 'batchTag'
+      });
       setBatchTagInput(false);
       setBatchTagValue('');
       store.clearSelection();
@@ -303,14 +545,21 @@ export default function TopicLibrary() {
     if (!hasSelection) return;
     messageApi.loading({ content: '处理中...', key: 'batchType', duration: 0 });
     try {
-      for (const id of store.selectedIds) {
+      const ids = await store.getSelectedIdsForBatchOp();
+      for (const id of ids) {
         await store.update(id, { type: newType });
       }
-      messageApi.success({ content: '已批量修改类型', key: 'batchType' });
+      messageApi.success({
+        content: `已批量修改类型（${ids.length} 条）`,
+        key: 'batchType'
+      });
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      messageApi.error({ content: e instanceof Error ? e.message : '失败', key: 'batchType' });
+      messageApi.error({
+        content: e instanceof Error ? e.message : '失败',
+        key: 'batchType'
+      });
     }
   };
 
@@ -318,14 +567,21 @@ export default function TopicLibrary() {
     if (!hasSelection) return;
     messageApi.loading({ content: '处理中...', key: 'batchDiff', duration: 0 });
     try {
-      for (const id of store.selectedIds) {
+      const ids = await store.getSelectedIdsForBatchOp();
+      for (const id of ids) {
         await store.update(id, { difficulty: newDiff });
       }
-      messageApi.success({ content: '已批量修改难度', key: 'batchDiff' });
+      messageApi.success({
+        content: `已批量修改难度（${ids.length} 条）`,
+        key: 'batchDiff'
+      });
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      messageApi.error({ content: e instanceof Error ? e.message : '失败', key: 'batchDiff' });
+      messageApi.error({
+        content: e instanceof Error ? e.message : '失败',
+        key: 'batchDiff'
+      });
     }
   };
 
@@ -403,17 +659,21 @@ export default function TopicLibrary() {
             }))}
             style={{ marginBottom: 12 }}
           />
-          <Tree
-            treeData={treeData}
-            selectedKeys={[selectedCategory]}
-            onSelect={(keys) => {
-              const k = keys[0] as string | undefined;
-              setSelectedCategory(k ?? '__all__');
-            }}
-            titleRender={renderTreeNode}
-            showLine
-            blockNode
-          />
+          {/* 面包屑导航 */}
+          <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 8, fontSize: 12 }} />
+          <Spin spinning={dimensionLoading} size="small">
+            <Tree
+              treeData={treeData}
+              selectedKeys={[selectedCategory]}
+              onSelect={(keys) => {
+                const k = keys[0] as string | undefined;
+                setSelectedCategory(k ?? '__all__');
+              }}
+              titleRender={renderTreeNode}
+              showLine
+              blockNode
+            />
+          </Spin>
         </Sider>
 
         {/* 主区域 */}
@@ -449,15 +709,39 @@ export default function TopicLibrary() {
               >
                 筛选
               </Button>
+              {hasFilterPanelActive && (
+                <Button
+                  icon={<CloseCircleOutlined />}
+                  onClick={handleResetFilterPanel}
+                >
+                  重置筛选
+                </Button>
+              )}
               <Button icon={<ReloadOutlined />} onClick={() => store.fetchList()}>
                 刷新
               </Button>
+              {store.items.length > 0 && (
+                <Checkbox
+                  checked={currentPageAllSelected}
+                  indeterminate={
+                    !currentPageAllSelected &&
+                    store.items.some((t) => store.isSelected(t.id))
+                  }
+                  onChange={handleToggleSelectAllOnPage}
+                >
+                  全选当前页
+                </Checkbox>
+              )}
             </Space>
 
             <Space size={8}>
               {hasSelection && (
                 <>
-                  <Text type="secondary">已选 {store.selectedIds.length} 项</Text>
+                  <Text type="secondary">
+                    {store.allSelectedInFilter
+                      ? `已选全部 ${store.total} 条（取消 ${store.exceptIds.length} 条）`
+                      : `已选 ${store.selectedIds.length} 项`}
+                  </Text>
                   <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
                     <Button>批量操作</Button>
                   </Dropdown>
@@ -496,6 +780,43 @@ export default function TopicLibrary() {
             </Space>
           </div>
 
+          {/* 跨页全选提示 Alert */}
+          {currentPageAllSelected &&
+            !store.allSelectedInFilter &&
+            store.total > store.items.length && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={`已选当前页 ${store.items.length} 条，还有 ${
+                  store.total - store.items.length
+                } 条未选中`}
+                action={
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => store.selectAllInFilter()}
+                  >
+                    选中全部 {store.total} 条
+                  </Button>
+                }
+              />
+            )}
+
+          {store.allSelectedInFilter && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`已选中全部 ${store.total} 条（已取消 ${store.exceptIds.length} 条）`}
+              action={
+                <Button size="small" onClick={() => store.clearSelection()}>
+                  清除选择
+                </Button>
+              }
+            />
+          )}
+
           {/* 抽屉式筛选面板（折叠展开） */}
           {filterOpen && (
             <div style={{ marginBottom: 12 }}>
@@ -522,7 +843,13 @@ export default function TopicLibrary() {
                 gap: 8
               }}
             >
-              <Text>为选中的 {store.selectedIds.length} 条辩题添加标签：</Text>
+              <Text>
+                为选中的{' '}
+                {store.allSelectedInFilter
+                  ? store.total - store.exceptIds.length
+                  : store.selectedIds.length}{' '}
+                条辩题添加标签：
+              </Text>
               <Input
                 size="small"
                 style={{ width: 200 }}
@@ -580,7 +907,7 @@ export default function TopicLibrary() {
                   <TopicCard
                     key={t.id}
                     topic={t}
-                    selected={store.selectedIds.includes(t.id)}
+                    selected={store.isSelected(t.id)}
                     onSelect={(id, sel) =>
                       sel ? store.select(id) : store.deselect(id)
                     }
@@ -601,7 +928,7 @@ export default function TopicLibrary() {
                 }}
               >
                 {store.items.map((t) => {
-                  const isSelected = store.selectedIds.includes(t.id);
+                  const isSelected = store.isSelected(t.id);
                   return (
                     <div
                       key={t.id}
@@ -673,10 +1000,18 @@ export default function TopicLibrary() {
         <Affix offsetBottom={spacing.xl}>
           <div style={floatActionBarStyle}>
             <Badge
-              count={store.selectedIds.length}
+              count={
+                store.allSelectedInFilter
+                  ? store.total - store.exceptIds.length
+                  : store.selectedIds.length
+              }
               style={{ backgroundColor: token.colorPrimary }}
             />
-            <Text strong>已选 {store.selectedIds.length} 项</Text>
+            <Text strong>
+              {store.allSelectedInFilter
+                ? `已选全部 ${store.total} 条`
+                : `已选 ${store.selectedIds.length} 项`}
+            </Text>
             <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
               <Button icon={<TagOutlined />}>批量操作</Button>
             </Dropdown>

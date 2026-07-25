@@ -62,7 +62,9 @@ const topicAPI = {
   count: (filter?: TopicFilter) => invoke(IPC_CHANNELS.TOPIC_COUNT, filter),
   countByDimension: (
     dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
-  ) => invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_COUNT_BY_DIMENSION, dimension)
+  ) => invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_COUNT_BY_DIMENSION, dimension),
+  listAllTags: () =>
+    invoke<Array<{ value: string; count: number }>>(IPC_CHANNELS.TOPIC_LIST_ALL_TAGS)
 }
 
 // ============================================================

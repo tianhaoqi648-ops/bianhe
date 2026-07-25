@@ -80,6 +80,7 @@ export interface TopicAPI {
   countByDimension: (
     dimension: 'type' | 'domain' | 'difficulty' | 'source' | 'source_type' | 'status' | 'batch_id'
   ) => Promise<ApiResponse<Array<{ value: string; count: number }>>>
+  listAllTags: () => Promise<ApiResponse<Array<{ value: string; count: number }>>>
 }
 
 export interface EventAPI {

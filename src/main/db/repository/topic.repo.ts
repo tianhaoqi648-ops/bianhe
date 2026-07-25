@@ -142,8 +142,13 @@ function buildWhereClause(filter?: TopicFilter): { where: string; params: any[] 
     if (column === 'difficulty' && filter.difficulties?.length) continue
     const value = filter[key]
     if (value !== undefined) {
-      conditions.push(`${column} = ?`)
-      params.push(value)
+      // '__unset__' 翻译为 IS NULL，用于「(未设置)」节点筛选
+      if (value === '__unset__') {
+        conditions.push(`${column} IS NULL`)
+      } else {
+        conditions.push(`${column} = ?`)
+        params.push(value)
+      }
     }
   }
 
@@ -470,6 +475,39 @@ function countByDimension(
   }))
 }
 
+/**
+ * 聚合所有 active 题的 tags，返回每个标签的出现次数（降序）。
+ * 仅统计 status='active' 且 tags IS NOT NULL 的行。
+ * JS 层 JSON.parse 聚合，损坏的 JSON 行跳过（不影响其他行）。
+ *
+ * 返回示例：[{ value: '经典', count: 120 }, { value: '哲学', count: 45 }, ...]
+ */
+function listAllTags(): Array<{ value: string; count: number }> {
+  const db = getDb()
+  const rows = db
+    .prepare(`SELECT tags FROM topics WHERE status = 'active' AND tags IS NOT NULL`)
+    .all() as Array<{ tags: string | null }>
+
+  const counter = new Map<string, number>()
+  for (const row of rows) {
+    if (!row.tags) continue
+    try {
+      const parsed = JSON.parse(row.tags) as unknown
+      if (!Array.isArray(parsed)) continue
+      for (const tag of parsed) {
+        if (typeof tag !== 'string' || tag.length === 0) continue
+        counter.set(tag, (counter.get(tag) ?? 0) + 1)
+      }
+    } catch {
+      // 损坏 JSON 跳过，不影响其他行
+    }
+  }
+
+  return Array.from(counter.entries())
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
 // ============================================================
 // 导出
 // ============================================================
@@ -486,5 +524,6 @@ export const topicRepo = {
   updateStatus,
   updateWeight,
   countByFilter,
-  countByDimension
+  countByDimension,
+  listAllTags
 }
