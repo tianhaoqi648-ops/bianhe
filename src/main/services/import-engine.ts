@@ -342,7 +342,8 @@ export function applyFieldMapping(parsed: ParsedResult, fieldMapping: FieldMappi
     ...parsed,
     topics,
     warnings: [...warnings, ...collectValueMismatchWarnings(topics)],
-    unmatchedColumns: []
+    unmatchedColumns: [],
+    unknownValues: collectUnknownValues(topics)
   }
 }
 
@@ -462,14 +463,14 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
   }
   const firstSheetName = workbook.SheetNames[0]
   if (!firstSheetName) {
-    return { topics: [], mapping: {}, warnings: ['工作簿无任何工作表'] }
+    return { topics: [], mapping: {}, warnings: ['工作簿无任何工作表'], unknownValues: [] }
   }
 
   const sheet = workbook.Sheets[firstSheetName]
   // header:1 → 返回 [[h1,h2,...],[v1,v2,...],...]，便于按表头对齐
   const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' })
   if (rows.length === 0) {
-    return { topics: [], mapping: {}, warnings: ['工作表为空'] }
+    return { topics: [], mapping: {}, warnings: ['工作表为空'], unknownValues: [] }
   }
 
   const headers = (rows[0] as any[]).map((h) => String(h ?? '').trim())
@@ -496,7 +497,8 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
         `请检查表头第一行是否包含上述任一别名，或修改您的表头后重试`
       ],
       unmatchedColumns,
-      rawTable: { headers, rows }
+      rawTable: { headers, rows },
+      unknownValues: []
     }
   }
 
@@ -516,7 +518,8 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
     mapping,
     warnings: [...sheetNote, ...warnings, ...collectValueMismatchWarnings(topics)],
     unmatchedColumns,
-    rawTable: { headers, rows }
+    rawTable: { headers, rows },
+    unknownValues: collectUnknownValues(topics)
   }
 }
 
@@ -590,7 +593,8 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
       return {
         topics,
         mapping,
-        warnings: [...warnings, ...collectValueMismatchWarnings(topics)]
+        warnings: [...warnings, ...collectValueMismatchWarnings(topics)],
+        unknownValues: collectUnknownValues(topics)
       }
     }
 
@@ -613,7 +617,8 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
       return {
         topics,
         mapping: { [headers[0]]: 'title' },
-        warnings: topics.length === 0 ? [] : ['表格无标准表头，按第一列作为 title 解析']
+        warnings: topics.length === 0 ? [] : ['表格无标准表头，按第一列作为 title 解析'],
+        unknownValues: []
       }
     }
   }
@@ -659,7 +664,8 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
     return {
       topics,
       mapping: {},
-      warnings: topics.length === 0 ? ['未识别到编号列表项'] : []
+      warnings: topics.length === 0 ? ['未识别到编号列表项'] : [],
+      unknownValues: []
     }
   }
 
@@ -681,7 +687,8 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
   return {
     topics,
     mapping: {},
-    warnings: topics.length === 0 ? ['未解析到任何辩题'] : []
+    warnings: topics.length === 0 ? ['未解析到任何辩题'] : [],
+    unknownValues: []
   }
 }
 
