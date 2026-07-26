@@ -17,6 +17,7 @@ import fs from 'fs'
 import os from 'os'
 import * as XLSX from 'xlsx'
 import { parseFile, HEADER_MAPPING, applyFieldMapping } from '../import-engine'
+import type { FieldMapping } from '../../../shared/types'
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures')
 
@@ -516,6 +517,87 @@ describe('applyFieldMapping', () => {
       }
       const result = applyFieldMapping(parsed, fieldMapping)
       expect(result.topics[0].custom_data?.['主题词']).toEqual(['AI', '伦理', '科技'])
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+// ============================================================
+// unknownValues 收集：解析后 ParsedResult.unknownValues 应正确填充
+// 用于驱动前端 ValueMappingPanel 显示（如「高阶级→进阶级」映射）
+// ============================================================
+describe('unknownValues 收集', () => {
+  it('difficulty 含「高阶级」→ unknownValues 中 difficulty 字段含「高阶级」及计数', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '难度'],
+          ['测试辩题1', '高阶级'],
+          ['测试辩题2', '入门级'],
+          ['测试辩题3', '高阶级']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.unknownValues).toBeDefined()
+      const diff = result.unknownValues?.find((u) => u.field === 'difficulty')
+      expect(diff).toBeDefined()
+      expect(diff!.values.find((v) => v.value === '高阶级')).toEqual({
+        value: '高阶级',
+        count: 2
+      })
+      // 入门级 在系统候选内，不应被收集
+      expect(diff!.values.find((v) => v.value === '入门级')).toBeUndefined()
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('所有字段值都在系统候选内 → unknownValues 为空数组', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '类型', '难度'],
+          ['测试辩题1', '价值辩', '入门级'],
+          ['测试辩题2', '政策辩', '专业级']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.unknownValues).toEqual([])
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('applyFieldMapping 后 unknownValues 重新计算', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '赛事'],
+          ['测试辩题1', '新国辩A'],
+          ['测试辩题2', '华语辩论世界杯B']
+        ]
+      }
+    ])
+    try {
+      const parsed = await parseFile(tmpPath, 'xlsx')
+      // 「赛事」列未识别，绑定到 source 系统字段
+      const fieldMapping: FieldMapping = {
+        赛事: { kind: 'bind', fieldKey: 'source' }
+      }
+      const result = applyFieldMapping(parsed, fieldMapping)
+      // 绑定后 source 字段值=新国辩A / 华语辩论世界杯B，都不在系统候选内
+      expect(result.unknownValues).toBeDefined()
+      const src = result.unknownValues?.find((u) => u.field === 'source')
+      expect(src).toBeDefined()
+      expect(src!.values.length).toBe(2)
     } finally {
       fs.unlinkSync(tmpPath)
     }
