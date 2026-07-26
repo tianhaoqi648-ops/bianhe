@@ -116,11 +116,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   const [importResult, setImportResult] = useState<ImportExecuteResult | null>(null);
   // 新值映射状态：用户在 Step 2 预览页配置，handleImport 时应用
   const [valueMapping, setValueMapping] = useState<ValueMapping>({});
-  // 字段映射状态：用户在 Step 2a 配置未识别列，handleApplyFieldMapping 时应用
-  const [fieldMapping, setFieldMapping] = useState<FieldMapping>({});
-  const [fieldMappingApplied, setFieldMappingApplied] = useState<boolean>(false);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
-  const [applyingFieldMapping, setApplyingFieldMapping] = useState(false);
   // 合并后的系统候选值（系统候选 + 用户扩展），供 ValueMappingPanel 显示已有候选
   const [mergedCandidates, setMergedCandidates] = useState<
     Record<CandidateField, string[]> | null
@@ -156,13 +152,6 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       });
   }, [open]);
 
-  // 若 parsed 无未识别列，自动标记 fieldMappingApplied=true 以直接显示 2b
-  useEffect(() => {
-    if (parsed && parsed.unmatchedColumns && parsed.unmatchedColumns.length === 0) {
-      setFieldMappingApplied(true);
-    }
-  }, [parsed]);
-
   const reset = () => {
     setStep(0);
     setFilePath(null);
@@ -172,9 +161,6 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     setParsing(false);
     setImporting(false);
     setValueMapping({});
-    setFieldMapping({});
-    setFieldMappingApplied(false);
-    setApplyingFieldMapping(false);
   };
 
   const handleCreateCustomField = async (
@@ -190,20 +176,18 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     return created;
   };
 
-  const handleApplyFieldMapping = async () => {
-    if (!parsed) return;
-    setApplyingFieldMapping(true);
+  // 字段映射实时变更触发重新解析
+  // 用户在 FieldMappingPanel 修改未识别列绑定或已识别列重新绑定后，
+  // 调用 IPC 重新解析 rawTable 得到新 ParsedResult（含新 topics/unknownValues）
+  const handleFieldMappingChange = async (m: FieldMapping) => {
+    if (!parsed || !parsed.rawTable) return;
     try {
-      const res = await window.importAPI.applyFieldMapping(parsed, fieldMapping);
-      if (!res.success || !res.data) {
-        throw new Error(res.error || '应用字段映射失败');
+      const res = await window.importAPI.applyFieldMapping(parsed, m);
+      if (res.success && res.data) {
+        setParsed(res.data);
       }
-      setParsed(res.data);
-      setFieldMappingApplied(true);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '应用字段映射失败');
-    } finally {
-      setApplyingFieldMapping(false);
+      // 静默失败，用户继续编辑时再重试
     }
   };
 
@@ -499,40 +483,6 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
 
       case 2:
         if (!parsed) return null;
-        // 2a：未识别列字段映射（仅当有未识别列且未应用映射时）
-        if (
-          parsed.unmatchedColumns &&
-          parsed.unmatchedColumns.length > 0 &&
-          !fieldMappingApplied
-        ) {
-          return (
-            <div>
-              <Space style={{ marginBottom: spacing.md }}>
-                {fileIcon}
-                <Text strong>{fileName}</Text>
-                <Tag color="orange">检测到 {parsed.unmatchedColumns.length} 个未识别列</Tag>
-              </Space>
-              <FieldMappingPanel
-                unmatchedColumns={parsed.unmatchedColumns}
-                systemFields={SYSTEM_FIELD_DEFINITIONS}
-                customFields={customFields}
-                onMappingChange={(m) => setFieldMapping(m)}
-                onCreateField={handleCreateCustomField}
-              />
-              <div style={{ marginTop: spacing.md, textAlign: 'right' }}>
-                <Button
-                  type="primary"
-                  loading={applyingFieldMapping}
-                  onClick={handleApplyFieldMapping}
-                  style={primaryButtonStyle}
-                >
-                  应用字段映射，继续
-                </Button>
-              </div>
-            </div>
-          );
-        }
-        // 2b：值映射 + 预览表
         return (
           <div>
             <Space style={{ marginBottom: spacing.md }}>
@@ -594,6 +544,17 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
               </>
             ) : (
               <>
+                {/* 字段映射区：始终显示，含已识别列只读行 + 未识别列可编辑行 */}
+                <FieldMappingPanel
+                  unmatchedColumns={parsed.unmatchedColumns ?? []}
+                  matchedMappings={parsed.mapping}
+                  systemFields={SYSTEM_FIELD_DEFINITIONS}
+                  customFields={customFields}
+                  onMappingChange={handleFieldMappingChange}
+                  onCreateField={handleCreateCustomField}
+                />
+
+                {/* 值映射区：仅当有 unknownValues 且合并候选已加载时显示 */}
                 {parsed.unknownValues &&
                   parsed.unknownValues.length > 0 &&
                   mergedCandidates && (
@@ -603,6 +564,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                       onMappingChange={(m) => setValueMapping(m)}
                     />
                   )}
+
                 <Table
                   columns={buildPreviewColumns(parsed.topics[0])}
                   dataSource={parsed.topics}
@@ -681,8 +643,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         )}
         {step === 2 &&
           parsed &&
-          parsed.topics.length > 0 &&
-          fieldMappingApplied && (
+          parsed.topics.length > 0 && (
             <Button
               size="middle"
               type="primary"
