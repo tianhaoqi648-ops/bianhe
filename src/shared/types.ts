@@ -7,6 +7,7 @@
 // ============================================================
 
 import type { CandidateField } from './constants'
+import type { DebateFormatData, StageSide, TimerTheme } from './debate-formats/types'
 
 // ---------- 自定义字段相关类型 ----------
 
@@ -14,7 +15,7 @@ import type { CandidateField } from './constants'
 export type CustomFieldValue = string | string[]
 
 /** 自定义字段类型 */
-export type CustomFieldType = 'string' | 'tags'
+export type CustomFieldType = 'string' | 'tags' | 'number'
 
 /** 自定义字段元数据（对应 topic_custom_fields 表行） */
 export interface CustomField {
@@ -44,6 +45,8 @@ export interface FieldDefinition {
   isSystem: boolean
   /** 是否可按维度统计（tags 类型用 listAllTags 或 listCustomFieldTags） */
   isCountable: boolean
+  /** 字段描述（可选，用于 UI 提示） */
+  description?: string
 }
 
 /** 导入时未识别列 → 字段绑定动作 */
@@ -486,7 +489,43 @@ export const IPC_CHANNELS = {
   CUSTOM_FIELD_LIST: 'customField:list',
   CUSTOM_FIELD_CREATE: 'customField:create',
   CUSTOM_FIELD_UPDATE: 'customField:update',
-  CUSTOM_FIELD_DELETE: 'customField:delete'
+  CUSTOM_FIELD_DELETE: 'customField:delete',
+  // batch edit
+  BATCH_EDIT_EXECUTE: 'batchEdit:execute',
+  BATCH_EDIT_REVERT: 'batchEdit:revert',
+  BATCH_EDIT_LIST_HISTORY: 'batchEdit:listHistory',
+  // undo/redo
+  SYSTEM_UNDO: 'system:undo',
+  SYSTEM_REDO: 'system:redo',
+  SYSTEM_LIST_UNDO_LOG: 'system:listUndoLog',
+  SYSTEM_CLEAR_UNDO_LOG: 'system:clearUndoLog',
+  // format
+  FORMAT_LIST: 'format:list',
+  FORMAT_GET: 'format:get',
+  FORMAT_CREATE: 'format:create',
+  FORMAT_UPDATE: 'format:update',
+  FORMAT_DELETE: 'format:delete',
+  FORMAT_SEED_PRESETS: 'format:seedPresets',
+  // timer
+  TIMER_CREATE_SESSION: 'timer:createSession',
+  TIMER_GET_SESSION: 'timer:getSession',
+  TIMER_LIST_SESSIONS: 'timer:listSessions',
+  TIMER_UPDATE_SESSION: 'timer:updateSession',
+  TIMER_DELETE_SESSION: 'timer:deleteSession',
+  TIMER_LIST_RECORDS: 'timer:listRecords',
+  TIMER_FINISH_SESSION: 'timer:finishSession',
+  TIMER_ADD_RECORD: 'timer:addRecord',
+  TIMER_FINISH_RECORD: 'timer:finishRecord',
+  TIMER_EXPORT_RECORDS: 'timer:exportRecords',
+  BELL_ASSET_LIST: 'bell:list',
+  BELL_ASSET_UPLOAD: 'bell:upload',
+  BELL_ASSET_DELETE: 'bell:delete',
+  BELL_ASSET_GET_DATA_URL: 'bell:getDataUrl',
+  FORMAT_IMPORT: 'format:import',
+  FORMAT_EXPORT: 'format:export',
+  SHARE_START: 'share:start',
+  SHARE_STOP: 'share:stop',
+  SHARE_STATUS: 'share:status'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -621,6 +660,10 @@ export interface ResetDataRequest {
     importBatches?: boolean
     /** 审计日志 */
     auditLogs?: boolean
+    /** 批量编辑历史（含明细，级联删除） */
+    batchEditHistory?: boolean
+    /** 撤销历史（undo_log 表） */
+    undoLog?: boolean
   }
 }
 
@@ -634,6 +677,201 @@ export interface ResetDataResponse {
   drawSessionsDeleted: number
   importBatchesDeleted: number
   auditLogsDeleted: number
+  /** 批量编辑历史删除行数（主表行数；明细由 CASCADE 删除） */
+  batchEditHistoryDeleted: number
+  /** 撤销历史删除行数（undo_log 表） */
+  undoLogDeleted: number
   /** 题库子选项是否保留了官方题库 */
   officialKept: boolean
+}
+
+// ---------- 批量编辑相关类型 ----------
+
+/**
+ * 单字段编辑动作。
+ * - field：系统字段名（type/domain/difficulty/source/source_type/status/weight/tags）
+ *          或自定义字段 key
+ * - mode：
+ *   - replace：替换字段值
+ *   - append：仅 tags 类型字段追加（去重）
+ *   - clear：清空字段值（设为 null）
+ * - value：目标值（mode='clear' 时忽略）
+ *   - tags 类型：string[]
+ *   - weight 类型：number
+ *   - 其他：string
+ */
+export interface BatchEditFieldAction {
+  /** 目标字段 key */
+  field: string
+  /** 编辑模式 */
+  mode: 'replace' | 'append' | 'clear'
+  /** 目标值（mode='clear' 时忽略） */
+  value?: string | string[] | number
+}
+
+/** 批量编辑执行请求 */
+export interface BatchEditExecuteRequest {
+  /** 目标 topic id 列表（已由 store.getSelectedIdsForBatchOp 解析） */
+  topicIds: string[]
+  /** 字段编辑动作列表 */
+  actions: BatchEditFieldAction[]
+}
+
+/** 批量编辑执行结果 */
+export interface BatchEditExecuteResult {
+  /** 历史记录 id（用于撤销） */
+  historyId: string
+  /** 实际更新的 topic 数量 */
+  affectedCount: number
+  /** 实际应用变更的字段数 */
+  fieldCount: number
+}
+
+/** 批量编辑历史记录（主表） */
+export interface BatchEditHistory {
+  id: string
+  executed_at: string
+  topic_count: number
+  field_count: number
+  summary: string | null
+  reverted: boolean
+  reverted_at: string | null
+}
+
+/** 批量编辑历史明细项 */
+export interface BatchEditHistoryItem {
+  id: string
+  history_id: string
+  topic_id: string
+  before_values: Record<string, unknown> | null
+  after_values: Record<string, unknown> | null
+}
+
+/** 批量编辑撤销结果 */
+export interface BatchEditRevertResult {
+  /** 实际恢复的 topic 数量（可能因 topic 已删除而少于原 topic_count） */
+  restoredCount: number
+}
+
+// ---------- 撤销/重做相关类型 ----------
+
+/** undo_log 表行（主进程内部使用） */
+export interface UndoLogEntry {
+  id: string
+  created_at: string
+  store_name: 'topic' | 'event' | 'draw' | 'customField' | 'settings'
+  action: string
+  target_type: string
+  target_id: string | null
+  before_data: unknown | null
+  after_data: unknown | null
+  payload_size: number
+  label: string | null
+}
+
+/** 渲染进程入栈的简化条目（不含 id/created_at，由主进程生成） */
+export interface UndoStackEntry {
+  storeName: UndoLogEntry['store_name']
+  action: string
+  targetType: string
+  targetId: string | null
+  /** 用户可读摘要，用于 UndoToast 显示 */
+  label: string
+  /** 主进程 undo_log 表的 id，撤销时回传 */
+  logId?: string
+}
+
+/** system:undo 请求 */
+export interface UndoRequest {
+  /** 指定撤销某条 log；为空时撤销最新一条 */
+  logId?: string
+}
+
+/** system:undo 响应 */
+export interface UndoResult {
+  /** 被撤销的 log id */
+  logId: string
+  /** 反向操作影响的行数 */
+  affectedCount: number
+  /** 撤销的 store 名（用于渲染进程触发对应 store 刷新） */
+  storeName: UndoLogEntry['store_name']
+  /** 摘要 */
+  label: string
+}
+
+/** system:redo 请求 */
+export interface RedoRequest {
+  /** 指定重做某条 log；为空时重做最近一次被撤销的操作 */
+  logId?: string
+}
+
+/** system:redo 响应（结构同 UndoResult） */
+export type RedoResult = UndoResult
+
+// ---------- 赛制与计时器相关类型 ----------
+
+export type {
+  DebateFormatData,
+  StageDef,
+  StageSide,
+  BellDef,
+  BellSound,
+  BellAsset,
+  TimerTheme
+} from './debate-formats/types'
+
+export interface DebateFormat {
+  id: string
+  name: string
+  description?: string | null
+  isPreset: boolean
+  formatData: DebateFormatData
+  createdAt: string
+  updatedAt: string
+}
+
+export type TimerSessionStatus = 'idle' | 'running' | 'paused' | 'finished'
+
+export interface TimerSession {
+  id: string
+  eventId?: string | null
+  roundId?: string | null
+  teamAffId?: string | null
+  teamNegId?: string | null
+  topicId?: string | null
+  formatId: string
+  formatSnapshot: DebateFormatData
+  status: TimerSessionStatus
+  startedAt?: string | null
+  endedAt?: string | null
+  currentStageIndex: number
+  currentSide: StageSide | null
+  remainingMs?: number | null
+  themeSnapshot?: TimerTheme | null
+  label?: string | null
+  createdAt: string
+}
+
+export interface TimerRecord {
+  id: string
+  sessionId: string
+  stageIndex: number
+  stageName: string
+  side: StageSide
+  durationMs: number
+  actualMs?: number | null
+  startedAt: string
+  endedAt?: string | null
+  pauseCount: number
+}
+
+export interface TimerState {
+  sessionId: string
+  status: TimerSessionStatus
+  currentStageIndex: number
+  currentSide: StageSide
+  remainingMs: number
+  elapsedMs: number
+  pausedAt?: string | null
+  lastBellIndex: number
 }
