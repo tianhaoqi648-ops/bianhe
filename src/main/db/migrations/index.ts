@@ -79,6 +79,129 @@ const MIGRATIONS: Migration[] = [
         )
       `)
     }
+  },
+  {
+    id: '20260727_create_batch_edit_history',
+    up: (db) => {
+      // 批量编辑历史主表：一次批量编辑操作
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS batch_edit_history (
+          id              TEXT PRIMARY KEY,
+          executed_at     TEXT NOT NULL,
+          topic_count     INTEGER NOT NULL,
+          field_count     INTEGER NOT NULL,
+          summary         TEXT,
+          reverted        INTEGER NOT NULL DEFAULT 0,
+          reverted_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_batch_edit_history_executed_at
+          ON batch_edit_history(executed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS batch_edit_history_item (
+          id              TEXT PRIMARY KEY,
+          history_id      TEXT NOT NULL REFERENCES batch_edit_history(id) ON DELETE CASCADE ON UPDATE CASCADE,
+          topic_id        TEXT NOT NULL,
+          before_values   TEXT,
+          after_values    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_batch_edit_history_item_history_id
+          ON batch_edit_history_item(history_id);
+      `)
+    }
+  },
+  {
+    id: '20260727_create_undo_log',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS undo_log (
+          id            TEXT PRIMARY KEY,
+          created_at    TEXT NOT NULL,
+          store_name    TEXT NOT NULL,
+          action        TEXT NOT NULL,
+          target_type   TEXT NOT NULL,
+          target_id     TEXT,
+          before_data   TEXT,
+          after_data    TEXT,
+          payload_size  INTEGER NOT NULL DEFAULT 0,
+          label         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_undo_log_created_at ON undo_log(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_undo_log_store_name ON undo_log(store_name);
+      `)
+    }
+  },
+  {
+    id: '20260728_create_timer_tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS debate_formats (
+          id          TEXT PRIMARY KEY,
+          name        TEXT NOT NULL,
+          description TEXT,
+          is_preset   INTEGER NOT NULL DEFAULT 0,
+          format_data TEXT NOT NULL,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS timer_sessions (
+          id                  TEXT PRIMARY KEY,
+          event_id            TEXT,
+          round_id            TEXT,
+          team_aff_id         TEXT,
+          team_neg_id         TEXT,
+          topic_id            TEXT,
+          format_id           TEXT NOT NULL,
+          format_snapshot     TEXT NOT NULL,
+          status              TEXT NOT NULL DEFAULT 'idle',
+          started_at          TEXT,
+          ended_at            TEXT,
+          current_stage_index INTEGER NOT NULL DEFAULT 0,
+          current_side        TEXT,
+          remaining_ms        INTEGER,
+          theme_snapshot      TEXT,
+          label               TEXT,
+          created_at          TEXT NOT NULL,
+          FOREIGN KEY (format_id) REFERENCES debate_formats(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS timer_records (
+          id           TEXT PRIMARY KEY,
+          session_id   TEXT NOT NULL,
+          stage_index  INTEGER NOT NULL,
+          stage_name   TEXT NOT NULL,
+          side         TEXT NOT NULL,
+          duration_ms  INTEGER NOT NULL,
+          actual_ms    INTEGER,
+          started_at   TEXT NOT NULL,
+          ended_at     TEXT,
+          pause_count  INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY (session_id) REFERENCES timer_sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_timer_records_session ON timer_records(session_id);
+        CREATE INDEX IF NOT EXISTS idx_timer_sessions_event ON timer_sessions(event_id);
+        CREATE INDEX IF NOT EXISTS idx_timer_sessions_created ON timer_sessions(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_debate_formats_preset ON debate_formats(is_preset);
+      `)
+    }
+  },
+  {
+    id: '20260729_create_bell_assets',
+    up: (db) => {
+      db.exec(`
+      CREATE TABLE IF NOT EXISTS bell_assets (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        file_path   TEXT NOT NULL,
+        file_size   INTEGER NOT NULL,
+        mime_type   TEXT NOT NULL,
+        duration_ms INTEGER,
+        created_at  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_bell_assets_created ON bell_assets(created_at DESC);
+    `)
+    }
   }
 ]
 
