@@ -56,7 +56,7 @@ deb:
   artifactName: bianhe-${version}.${ext}
 appImage:
   artifactName: bianhe-${version}.${ext}
-npmRebuild: false
+npmRebuild: true
 publish:
   provider: github
   owner: tianhaoqi648-ops
