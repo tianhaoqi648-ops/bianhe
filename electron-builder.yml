@@ -26,7 +26,7 @@ win:
     - nsis
   compression: maximum
 nsis:
-  artifactName: 辩盒-${version}-setup.${ext}
+  artifactName: bianhe-${version}-setup.${ext}
   shortcutName: 辩盒
   uninstallDisplayName: 辩盒
   createDesktopShortcut: always
@@ -44,7 +44,7 @@ mac:
     - dmg
   notarize: false
 dmg:
-  artifactName: 辩盒-${version}.${ext}
+  artifactName: bianhe-${version}.${ext}
 linux:
   icon: build/icon.png
   target:
@@ -52,8 +52,10 @@ linux:
     - deb
   maintainer: bianhe.app
   category: Utility
+deb:
+  artifactName: bianhe-${version}.${ext}
 appImage:
-  artifactName: 辩盒-${version}.${ext}
+  artifactName: bianhe-${version}.${ext}
 npmRebuild: false
 publish:
   provider: github
