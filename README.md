@@ -14,6 +14,23 @@
 - **自定义字段**：支持为辩题添加自定义字段
 - **主题切换**：亮色/暗色/跟随系统
 
+## 下载安装
+
+普通用户无需自行编译，直接从 GitHub Releases 下载对应平台的安装包即可：
+
+👉 **[前往下载页面](https://github.com/tianhaoqi648-ops/bianhe/releases)**
+
+### Windows
+下载 `辩盒-x.y.z-setup.exe`，双击运行按提示安装。
+
+### macOS
+下载 `辩盒-x.y.z.dmg`，打开后将「辩盒」拖入「应用程序」文件夹。
+> ⚠️ 首次打开若提示"无法验证开发者"：右键点击应用图标 → 选择「打开」→ 确认即可。
+
+### Linux
+- AppImage：下载 `辩盒-x.y.z.AppImage`，`chmod +x` 后直接运行
+- deb：下载 `辩盒-x.y.z.deb`，`sudo dpkg -i` 安装
+
 ## 安装与运行
 
 ### 环境要求
