@@ -56,5 +56,7 @@ appImage:
   artifactName: 辩盒-${version}.${ext}
 npmRebuild: false
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: tianhaoqi648-ops
+  repo: bianhe
+  releaseType: release
