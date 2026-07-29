@@ -171,40 +171,11 @@
 - 复现步骤
 - 截图或错误日志（如有）
 
-## 安装与运行（开发者）
-
-### 环境要求
-
-- Node.js >= 18
-- npm >= 9
-
-### 开发模式
+## 开发
 
 ```bash
 npm install
 npm run dev
-```
-
-### 打包
-
-```bash
-# Windows（NSIS 安装包）
-npm run build:win
-
-# macOS（DMG）
-npm run build:mac
-
-# Linux（AppImage + deb）
-npm run build:linux
-```
-
-### 自动发布到 GitHub Releases
-
-推送 `v*.*.*` 格式的 tag 即可触发 GitHub Actions 自动构建三端并发布：
-
-```bash
-git tag v1.2.0
-git push origin v1.2.0
 ```
 
 ## 技术栈
