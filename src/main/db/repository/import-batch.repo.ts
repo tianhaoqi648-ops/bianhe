@@ -8,7 +8,8 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
-import type { ImportBatch } from '../../../shared/types'
+import type { ImportBatch, BackupImportStrategy } from '../../../shared/types'
+import { bulkInsert } from './utils'
 
 /** DB import_batch 表的原始行类型 */
 export interface ImportBatchRow {
@@ -95,13 +96,21 @@ function getBatchById(id: string): ImportBatch | undefined {
 }
 
 /**
- * 列出所有批次，按导入时间倒序。默认上限 500 条。
+ * 列出所有批次，按导入时间倒序。
+ * Bug 4.24: 支持 page 参数，limit <= 0 表示不限制。
  */
-function listBatches(limit = 500): ImportBatch[] {
+function listBatches(page: number = 1, limit: number = 500): ImportBatch[] {
   const db = getDb()
+  if (limit <= 0) {
+    const rows = db
+      .prepare('SELECT * FROM import_batch ORDER BY imported_at DESC')
+      .all() as ImportBatchRow[]
+    return rows.map(rowToBatch)
+  }
+  const offset = (page - 1) * limit
   const rows = db
-    .prepare('SELECT * FROM import_batch ORDER BY imported_at DESC LIMIT ?')
-    .all(limit) as ImportBatchRow[]
+    .prepare('SELECT * FROM import_batch ORDER BY imported_at DESC LIMIT ? OFFSET ?')
+    .all(limit, offset) as ImportBatchRow[]
   return rows.map(rowToBatch)
 }
 
@@ -155,6 +164,43 @@ function countTopicsByBatch(batchId: string): number {
 }
 
 /**
+ * Bug 5.23: 批量统计多个批次的剩余题数，避免 N+1 查询。
+ * 用 GROUP BY batch_id 一次查询所有批次的题数。
+ */
+function countTopicsByBatches(batchIds: string[]): Record<string, number> {
+  if (batchIds.length === 0) return {}
+  const db = getDb()
+  const placeholders = batchIds.map(() => '?').join(',')
+  const rows = db
+    .prepare(
+      `SELECT batch_id, COUNT(*) AS n FROM topics WHERE batch_id IN (${placeholders}) GROUP BY batch_id`
+    )
+    .all(...batchIds) as Array<{ batch_id: string; n: number }>
+  const result: Record<string, number> = {}
+  for (const row of rows) {
+    result[row.batch_id] = Number(row.n)
+  }
+  return result
+}
+
+/**
+ * Bug 2.3: 撤销整批导入的事务方法。
+ * 用单个 SQLite 事务同时删除 topics 和 batch 记录，确保原子性。
+ * 返回删除的 topics 行数。
+ */
+function revokeBatchTransaction(batchId: string): number {
+  const db = getDb()
+  const fn = db.transaction(() => {
+    // 先删 topics，返回删除数
+    const info = db.prepare('DELETE FROM topics WHERE batch_id = ?').run(batchId)
+    // 再删 batch 记录
+    db.prepare('DELETE FROM import_batch WHERE id = ?').run(batchId)
+    return info.changes
+  })
+  return fn()
+}
+
+/**
  * 清空所有导入批次元数据记录。
  * 注意：不会删除 topics 表中的辩题数据，仅清空 import_batch 表。
  * @returns 删除的批次行数
@@ -165,6 +211,27 @@ function clearAll(): number {
   return r.changes
 }
 
+// ============================================================
+// 备份与恢复（全量数据导入导出）
+// ============================================================
+
+/**
+ * 备份用：返回 import_batch 全部行（DB 原始格式）。
+ */
+function findAllForBackup(): Record<string, unknown>[] {
+  return getDb().prepare('SELECT * FROM import_batch').all() as Record<string, unknown>[]
+}
+
+/**
+ * 批量恢复 import_batch 表。调用方需在外层事务内执行。
+ */
+function bulkRestore(
+  rows: Array<Record<string, unknown>>,
+  strategy: BackupImportStrategy
+): number {
+  return bulkInsert('import_batch', rows, strategy)
+}
+
 export const importBatchRepo = {
   createBatch,
   getBatchById,
@@ -172,5 +239,10 @@ export const importBatchRepo = {
   updateBatchStats,
   deleteBatch,
   countTopicsByBatch,
-  clearAll
+  countTopicsByBatches,
+  revokeBatchTransaction,
+  clearAll,
+  // 备份与恢复
+  findAllForBackup,
+  bulkRestore
 }

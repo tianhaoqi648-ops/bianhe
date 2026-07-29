@@ -23,29 +23,48 @@ export function registerSystemIpc(): void {
     async (
       _e,
       filters?: Array<{ name: string; extensions: string[] }>
-    ): Promise<string | null> => {
-      const win = getActiveWindow()
-      if (!win) {
-        return null
+    ): Promise<ApiResponse<string | null>> => {
+      try {
+        const win = getActiveWindow()
+        if (!win) {
+          // P3-9: 统一无窗口处理策略，返回 success:false + 明确错误信息
+          return { success: false, error: 'No window available' }
+        }
+        const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+          title: '选择文件',
+          properties: ['openFile'],
+          filters: filters ?? [
+            { name: 'Excel/CSV/Word', extensions: ['xlsx', 'xls', 'csv', 'docx'] }
+          ]
+        })
+        if (canceled || filePaths.length === 0) {
+          return { success: true, data: null }
+        }
+        return { success: true, data: filePaths[0] }
+      } catch (e) {
+        return {
+          success: false,
+          error: e instanceof Error ? e.message : String(e)
+        }
       }
-      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-        title: '选择文件',
-        properties: ['openFile'],
-        filters: filters ?? [
-          { name: '所有文件', extensions: ['*'] }
-        ]
-      })
-      if (canceled || filePaths.length === 0) return null
-      return filePaths[0]
     }
   )
 
   // 返回合并后的系统候选值：系统候选 + 用户扩展（持久化在 settings 表）
   // 用于导入预览页 ValueMappingPanel 显示已有候选值
+  // 按项目约定包装为 ApiResponse，与 preload/index.d.ts 类型声明对齐
   ipcMain.handle(
     IPC_CHANNELS.SYSTEM_GET_CANDIDATES,
-    (): Record<CandidateField, string[]> => {
-      return getMergedCandidatesWithDB()
+    (): ApiResponse<Record<CandidateField, string[]>> => {
+      try {
+        const data = getMergedCandidatesWithDB()
+        return { success: true, data }
+      } catch (e) {
+        return {
+          success: false,
+          error: e instanceof Error ? e.message : String(e)
+        }
+      }
     }
   )
 
@@ -59,7 +78,8 @@ export function registerSystemIpc(): void {
       } catch (e) {
         return {
           success: false,
-          error: e instanceof Error ? e.message : '重置失败'
+          // P3-8: 保留原始错误信息，避免 '重置失败' 覆盖真实错误原因
+          error: e instanceof Error ? e.message : String(e)
         }
       }
     }

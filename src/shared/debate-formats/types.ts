@@ -12,7 +12,11 @@ export type BellSound = 'beep' | 'bell' | 'double_bell' | 'time_up' | 'custom'
 export interface BellDef {
   /** 触发时间点（剩余毫秒，0 = 时间到） */
   atMs: number
-  sound: BellSound
+  /**
+   * 铃声类型：内置 4 种 + 自定义。
+   * 自定义格式为 `custom:<bellAssetId>`，引用 bell_assets 表的 id。
+   */
+  sound: BellSound | `custom:${string}`
   /** 当 sound='custom' 时，引用 bell_assets 表的 id */
   customBellId?: string
 }
@@ -27,6 +31,11 @@ export interface StageDef {
   bells: BellDef[]
   /** 自由辩论标记：标记后引擎允许通过 Space 键切换发言方 */
   isFreeDebate?: boolean
+  /** 计时模式：'countdown' 倒计时（默认），'untimed' 不计时（如开场/颁奖/评委点评） */
+  timingMode?: 'countdown' | 'untimed'
+  /** 铃声试听环节标记（仅 timingMode='untimed' 时有意义）：
+   *  勾选后进入此环节时，自动收集所有倒计时环节的铃声，按剩余时间倒序展示，主席可逐条试听 */
+  isBellPreview?: boolean
 }
 
 export interface DebateFormatData {

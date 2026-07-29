@@ -3,3 +3,252 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
     Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
 }
+
+/* ============================================================
+ * Primary 按钮增强样式（渐变背景 + 蓝色投影）
+ *
+ * antd v5 的 Button token 不直接支持渐变背景（colorPrimary 为单色），
+ * 此处通过 CSS 覆盖实现 primary 按钮的渐变背景 + 投影增强。
+ * 与 theme.ts 中 components.Button.primaryShadow 风格保持一致。
+ * ============================================================ */
+.ant-btn-primary {
+  background: linear-gradient(135deg, #1677ff, #4096ff) !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.3) !important;
+  transition: all 0.2s ease;
+}
+
+/* hover 态：渐变方向反转 + 投影加深 + 微上移 */
+.ant-btn-primary:hover:not(:disabled):not(.ant-btn-loading) {
+  background: linear-gradient(135deg, #4096ff, #1677ff) !important;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.4) !important;
+  transform: translateY(-1px);
+}
+
+/* active 态：取消上移，回归原位 */
+.ant-btn-primary:active:not(:disabled):not(.ant-btn-loading) {
+  transform: translateY(0);
+}
+
+/* disabled / loading 态：保留 antd 默认降级视觉，不应用渐变与投影 */
+.ant-btn-primary:disabled,
+.ant-btn-primary.ant-btn-disabled,
+.ant-btn-primary.ant-btn-loading {
+  background: rgba(22, 119, 255, 0.5) !important;
+  box-shadow: none !important;
+  transform: none !important;
+  cursor: not-allowed;
+}
+
+/* 暗色模式适配：投影稍强（透明度 0.4），保证深底可见性 */
+[data-theme='dark'] .ant-btn-primary {
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.4) !important;
+}
+
+[data-theme='dark'] .ant-btn-primary:hover:not(:disabled):not(.ant-btn-loading) {
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.5) !important;
+}
+
+/* ============================================================
+ * 动效系统关键帧定义
+ *
+ * 配合 src/renderer/src/styles/motion.ts 使用。
+ * 命名前缀 `bianhe-` 防止与 antd / 第三方库冲突。
+ * ============================================================ */
+@keyframes bianhe-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bianhe-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bianhe-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ============================================================
+ * untimed 环节「进行中」脉冲动画
+ *
+ * 用于沉浸模式下非计时环节大字「进行中」的呼吸感舞台效果。
+ * display: inline-block 确保 transform 生效（inline 元素 transform 不生效）。
+ * ============================================================ */
+@keyframes bianhe-pulse {
+  0%, 100% { transform: scale(1.0); }
+  50% { transform: scale(1.05); }
+}
+
+.bianhe-pulse {
+  animation: bianhe-pulse 2s ease-in-out infinite;
+  display: inline-block;
+}
+
+/* 动画结束后保持终态（避免 flicker） */
+.bianhe-fade-in,
+.bianhe-slide-up,
+.bianhe-scale-in {
+  animation-fill-mode: both;
+}
+
+/* ============================================================
+ * Toast 统一胶囊样式
+ *
+ * 通过 .bianhe-toast className 标识（由 useToast.ts 应用），
+ * 覆盖 antd message 默认视觉：
+ * - 位置：底部居中（覆盖默认顶部）
+ * - 形状：胶囊圆角（pill 999px）
+ * - 背景：毛玻璃 + 加深阴影
+ * - 动效：0.3s 微缩放仪式感（spring 曲线）
+ * ============================================================ */
+
+/* 把 antd message 从顶部移到底部居中 */
+.ant-message {
+  top: auto !important;
+  bottom: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+
+/* 胶囊主体样式 */
+.bianhe-toast.ant-message-notice-content,
+.ant-message-notice-content.bianhe-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px !important;
+  padding: 10px 20px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.95) !important;
+  animation: bianhe-toast-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  pointer-events: auto;
+  font-size: 14px;
+  max-width: min(90vw, 640px);
+}
+
+/* 暗色模式适配 */
+[data-theme='dark'] .bianhe-toast.ant-message-notice-content,
+[data-theme='dark'] .ant-message-notice-content.bianhe-toast {
+  background: rgba(30, 30, 30, 0.95) !important;
+  color: #f0f0f0 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* 内容容器：让图标+文案+按钮水平排列 */
+.bianhe-toast .ant-message-custom-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 操作按钮：紧凑、不占位 */
+.bianhe-toast .ant-btn-sm {
+  padding: 0 8px;
+  height: 24px;
+  line-height: 24px;
+}
+
+/* 微缩放仪式感动效 */
+@keyframes bianhe-toast-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ===== Motion keyframes =====
+ * P2 Task 9 通用动效关键帧与工具类。
+ * 与 motion.ts 中 keyframes / motionClass 导出配套使用。
+ * 命名采用连字符形式（fade-in / slide-up / ...），与上方 bianhe- 前缀体系并存。
+ */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.motion-fade-in {
+  animation: fade-in 0.3s ease forwards;
+}
+
+.motion-slide-up {
+  animation: slide-up 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.motion-scale-in {
+  animation: scale-in 0.2s ease forwards;
+}
+
+.motion-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ============================================================
+ * 维度图标按钮焦点环（SubTask 21.1）
+ * :focus-visible 仅在键盘导航时显示焦点环，鼠标点击不显示
+ * 使用 antd CSS 变量 --ant-color-primary 适配亮/暗主题
+ * ============================================================ */
+.dimension-icon-btn:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 2px;
+}
+

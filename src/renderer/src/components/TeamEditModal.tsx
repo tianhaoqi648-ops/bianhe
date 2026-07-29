@@ -4,7 +4,8 @@ import { useEffect, useRef } from 'react';
 import type {
   Team,
   TeamCreateInput,
-  TeamUpdateInput
+  TeamUpdateInput,
+  TeamGroup
 } from '../../../shared/types';
 import { primaryButtonStyle } from '../styles/shared';
 
@@ -15,6 +16,8 @@ export interface TeamEditModalProps {
   eventId?: string;
   /** 创建模式下可选的赛事列表（若提供则在表单中显示赛事选择器） */
   eventOptions?: Array<{ id: string; name: string }>;
+  /** 当前赛事的所有分组列表（非空时显示「所属分组」选择器） */
+  groupOptions?: TeamGroup[];
   onOk: (data: TeamCreateInput | TeamUpdateInput, isEdit: boolean) => Promise<void>;
   onCancel: () => void;
   /** 创建模式下"保存并继续"回调：连续添加多支队伍 */
@@ -26,6 +29,7 @@ export default function TeamEditModal({
   team,
   eventId,
   eventOptions,
+  groupOptions,
   onOk,
   onCancel,
   onContinue
@@ -39,7 +43,10 @@ export default function TeamEditModal({
   useEffect(() => {
     if (open) {
       if (team) {
-        form.setFieldsValue({ name: team.name });
+        form.setFieldsValue({
+          name: team.name,
+          group_id: team.group_id ?? undefined
+        });
       } else {
         form.resetFields();
         if (eventId) {
@@ -52,10 +59,14 @@ export default function TeamEditModal({
   const handleOk = async () => {
     const values = await form.validateFields();
     const data: TeamCreateInput | TeamUpdateInput = isEdit
-      ? { name: values.name }
+      ? {
+          name: values.name,
+          group_id: values.group_id ?? null
+        }
       : {
           name: values.name,
-          event_id: values.event_id ?? eventId ?? ''
+          event_id: values.event_id ?? eventId ?? '',
+          group_id: values.group_id ?? null
         };
     await onOk(data, isEdit);
   };
@@ -64,7 +75,8 @@ export default function TeamEditModal({
     const values = await form.validateFields();
     const data: TeamCreateInput = {
       name: values.name,
-      event_id: values.event_id ?? eventId ?? ''
+      event_id: values.event_id ?? eventId ?? '',
+      group_id: values.group_id ?? null
     };
     await onContinue?.(data);
     // 清空队伍名（保留 event_id 选择），自动聚焦回 name 输入框
@@ -116,6 +128,15 @@ export default function TeamEditModal({
         >
           <Input ref={nameInputRef} placeholder="如：北京大学辩论队" maxLength={100} />
         </Form.Item>
+        {groupOptions && groupOptions.length > 0 && (
+          <Form.Item name="group_id" label="所属分组">
+            <Select
+              placeholder="选择分组（可选）"
+              allowClear
+              options={groupOptions.map((g) => ({ label: g.name, value: g.id }))}
+            />
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );

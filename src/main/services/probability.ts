@@ -48,6 +48,24 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 // ============================================================
+// coinFlip
+// ============================================================
+
+/**
+ * 公平硬币翻转：返回 true/false，各约 50% 概率。
+ *
+ * 用于持方分配等需要二选一随机决策的场景。集中管理随机源，便于：
+ *   - 统一替换为更安全的随机数生成器（如需可测试性或加密强度）
+ *   - 测试时通过 jest.mock 拦截单一入口，避免散落各处的 Math.random
+ *
+ * 与 weightedRandomSelect 等加权函数不同，coinFlip 不依赖 weight 字段，
+ * 仅做无权重的二选一。
+ */
+export function coinFlip(): boolean {
+  return Math.random() < 0.5
+}
+
+// ============================================================
 // weightedRandomSelect
 // ============================================================
 
@@ -109,10 +127,59 @@ export function weightedRandomSelect<T extends WeightedItem>(items: T[], count: 
         pickedIdx = j
         break
       }
-      pickedIdx = j
+      // P1-12 修复：不再在 r >= 0 时更新 pickedIdx
+      // 浮点减法累积误差可能导致 r 永不 < 0，此时 pickedIdx 保持 0（更安全的兜底）
     }
 
     result.push(workingPool.splice(pickedIdx, 1)[0])
+  }
+
+  return result
+}
+
+// ============================================================
+// weightedRandomSelectWithReplacement
+// ============================================================
+
+/**
+ * 有放回加权随机抽取：每次独立从 pool 按权重抽一个，允许重复。
+ * 返回长度 = count 的数组（可能含重复元素）。
+ *
+ * 与 weightedRandomSelect 的区别：
+ * - weightedRandomSelect: 不放回抽样，count <= pool.length
+ * - weightedRandomSelectWithReplacement: 有放回抽样，count 可大于 pool.length
+ *
+ * 权重逻辑与 weightedRandomSelect 保持一致：按 item.weight 字段加权。
+ * 由于泛型约束为 `{ weight?: number }`，未声明 weight 字段的对象视为权重 1，
+ * 与 weightedRandomSelect（约束 WeightedItem.weight 必填）形成兼容兜底。
+ *
+ * 边界：
+ *   - pool 为空或 count <= 0 → 返回 []
+ *   - 浮点误差兜底：每次抽取后若未命中任何元素，取 pool 最后一项
+ *
+ * @param pool 候选项数组（不会被修改）
+ * @param count 要抽取的数量（可大于 pool.length）
+ */
+export function weightedRandomSelectWithReplacement<T extends { weight?: number }>(
+  pool: T[],
+  count: number
+): T[] {
+  if (pool.length === 0 || count <= 0) return []
+
+  const result: T[] = []
+  const totalWeight = pool.reduce((sum, item) => sum + (item.weight ?? 1), 0)
+
+  for (let i = 0; i < count; i++) {
+    let r = Math.random() * totalWeight
+    for (const item of pool) {
+      r -= (item.weight ?? 1)
+      if (r < 0) {
+        result.push(item)
+        break
+      }
+    }
+    // 兜底（浮点误差）
+    if (result.length <= i) result.push(pool[pool.length - 1])
   }
 
   return result

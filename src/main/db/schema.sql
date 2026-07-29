@@ -1,6 +1,6 @@
 -- ============================================================
 -- Debate Topic Drawer - Database Schema
--- 共 9 张表，覆盖辩题、赛事、队伍、抽签、审计与设置
+-- 共 11 张表，覆盖辩题、赛事、分组、队伍、抽签、审计与设置
 -- ============================================================
 
 PRAGMA foreign_keys = ON;
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS topics (
   status        TEXT DEFAULT 'active',
   created_at    TEXT,
   updated_at    TEXT,
-  custom_data   TEXT              -- JSON：自定义字段值 { "competition": "新国辩", ... }
+  custom_data   TEXT,             -- JSON：自定义字段值 { "competition": "新国辩", ... }
+  batch_id      TEXT              -- 导入批次 ID（由 migration 20260726 添加，此处同步定义）
 );
 
 -- ------------------------------------------------------------
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS events (
   start_date    TEXT,
   end_date      TEXT,
   status        TEXT,
-  created_at    TEXT
+  created_at    TEXT,
+  allow_repeat  INTEGER NOT NULL DEFAULT 0   -- 是否允许辩题重复（0=不允许，1=允许）
 );
 
 -- ------------------------------------------------------------
@@ -46,31 +48,46 @@ CREATE TABLE IF NOT EXISTS rounds (
   name                TEXT,
   round_number        INTEGER,
   difficulty_override TEXT,
-  topic_count         INTEGER
+  topic_count         INTEGER,
+  is_round_robin      INTEGER NOT NULL DEFAULT 0
 );
 
 -- ------------------------------------------------------------
--- 4. teams: 队伍
+-- 4. team_groups: 队伍分组（赛事维度，多队同题抽取时使用）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS team_groups (
+  id          TEXT PRIMARY KEY,
+  event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  name        TEXT NOT NULL,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL
+);
+
+-- ------------------------------------------------------------
+-- 5. teams: 队伍
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS teams (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
-  event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE
+  event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  group_id    TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- ------------------------------------------------------------
--- 5. team_history: 队伍历史（已抽过的辩题）
+-- 6. team_history: 队伍历史（已抽过的辩题）
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS team_history (
   id          TEXT PRIMARY KEY,
   team_id     TEXT NOT NULL REFERENCES teams(id)  ON DELETE CASCADE ON UPDATE CASCADE,
   topic_id    TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE ON UPDATE CASCADE,
   event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  played_at   TEXT
+  played_at   TEXT,
+  session_id  TEXT,         -- 关联抽取会话，用于确认结果时关联去重
+  stance      TEXT          -- 持方快照：正方/反方
 );
 
 -- ------------------------------------------------------------
--- 6. draw_sessions: 抽签会话
+-- 7. draw_sessions: 抽签会话
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS draw_sessions (
   id          TEXT PRIMARY KEY,
@@ -82,20 +99,27 @@ CREATE TABLE IF NOT EXISTS draw_sessions (
 );
 
 -- ------------------------------------------------------------
--- 7. draw_session_items: 抽签明细（每个辩题的对阵）
+-- 8. draw_session_items: 抽签明细（每个辩题的对阵）
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS draw_session_items (
   id          TEXT PRIMARY KEY,
   session_id  TEXT NOT NULL REFERENCES draw_sessions(id) ON DELETE CASCADE   ON UPDATE CASCADE,
-  topic_id    TEXT NOT NULL REFERENCES topics(id)       ON DELETE CASCADE   ON UPDATE CASCADE,
+  topic_id    TEXT          REFERENCES topics(id)       ON DELETE SET NULL  ON UPDATE CASCADE,
   team_a_id   TEXT REFERENCES teams(id)                 ON DELETE SET NULL  ON UPDATE CASCADE,
   team_b_id   TEXT REFERENCES teams(id)                 ON DELETE SET NULL  ON UPDATE CASCADE,
   stance_a    TEXT,
-  stance_b    TEXT
+  stance_b    TEXT,
+  topic_title TEXT,                                     -- 冗余快照：辩题标题
+  team_a_name TEXT,                                     -- 冗余快照：A 方队伍名
+  team_b_name TEXT,                                     -- 冗余快照：B 方队伍名
+  team_ids    TEXT,                                      -- JSON 数组：多队同题模式下的队伍 id 列表（versus 模式为空）
+  team_stances TEXT,                                     -- JSON 数组：多队持方快照，与 team_ids 一一对应
+  team_names   TEXT,                                     -- JSON 数组：队伍名快照，与 team_ids 一一对应
+  group_id    TEXT REFERENCES team_groups(id)           ON DELETE SET NULL  ON UPDATE CASCADE
 );
 
 -- ------------------------------------------------------------
--- 8. audit_log: 审计日志
+-- 9. audit_log: 审计日志
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_log (
   id            TEXT PRIMARY KEY,
@@ -108,7 +132,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 -- ------------------------------------------------------------
--- 9. settings: 键值配置
+-- 10. settings: 键值配置
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
   key           TEXT PRIMARY KEY,
@@ -116,7 +140,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- ------------------------------------------------------------
--- 10. topic_custom_fields: 自定义字段元数据
+-- 11. topic_custom_fields: 自定义字段元数据
 -- ------------------------------------------------------------
 -- 用户在导入时通过 FieldMappingPanel 创建的自定义字段定义。
 -- topics 表通过 custom_data JSON 列存储实际值，本表仅存元数据。
@@ -136,6 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_topics_domain                ON topics(domain);
 CREATE INDEX IF NOT EXISTS idx_topics_status                ON topics(status);
 CREATE INDEX IF NOT EXISTS idx_topics_source                ON topics(source);
 CREATE INDEX IF NOT EXISTS idx_rounds_event_id              ON rounds(event_id);
+CREATE INDEX IF NOT EXISTS idx_team_groups_event_id          ON team_groups(event_id);
 CREATE INDEX IF NOT EXISTS idx_teams_event_id               ON teams(event_id);
 CREATE INDEX IF NOT EXISTS idx_team_history_team_id         ON team_history(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_history_event_id        ON team_history(event_id);
@@ -146,3 +171,5 @@ CREATE INDEX IF NOT EXISTS idx_draw_session_items_topic_id  ON draw_session_item
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at         ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action             ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_target_type        ON audit_log(target_type);
+CREATE INDEX IF NOT EXISTS idx_topics_created_at            ON topics(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_created_at            ON events(created_at DESC);

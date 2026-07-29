@@ -1,4 +1,5 @@
-import { Modal, Form, Input, Select, DatePicker } from 'antd';
+import { Modal, Form, Input, Select, DatePicker, Switch, Tooltip, theme } from 'antd';
+import { QuestionCircleOutlined } from '@ant-design/icons';
 import { useEffect } from 'react';
 import dayjs from 'dayjs';
 import type {
@@ -28,25 +29,29 @@ export default function EventEditModal({
   onCancel
 }: EventEditModalProps) {
   const [form] = Form.useForm();
+  const { token } = theme.useToken();
   const isEdit = !!event;
 
   useEffect(() => {
     if (open) {
       if (event) {
         // 编辑模式：把 YYYY-MM-DD 字符串转回 dayjs 对象
+        // allow_repeat (number) -> boolean 给 Switch（0 → false, 1 → true）
         form.setFieldsValue({
           name: event.name,
           status: event.status ?? 'preparing',
           start_date: event.start_date ? dayjs(event.start_date, 'YYYY-MM-DD') : undefined,
-          end_date: event.end_date ? dayjs(event.end_date, 'YYYY-MM-DD') : undefined
+          end_date: event.end_date ? dayjs(event.end_date, 'YYYY-MM-DD') : undefined,
+          allow_repeat: !!event.allow_repeat
         });
       } else {
-        // 新建模式：默认今天开始，一周后结束
+        // 新建模式：默认今天开始，一周后结束；允许重复默认关闭
         form.resetFields();
         form.setFieldsValue({
           status: 'preparing',
           start_date: dayjs(),
-          end_date: dayjs().add(7, 'day')
+          end_date: dayjs().add(7, 'day'),
+          allow_repeat: false
         });
       }
     }
@@ -55,11 +60,13 @@ export default function EventEditModal({
   const handleOk = async () => {
     const values = await form.validateFields();
     // DatePicker 的 value 是 dayjs 对象，提交时转回 YYYY-MM-DD 字符串保持后端兼容
+    // allow_repeat: Switch 的 boolean -> number（1/0）传给后端
     const data: EventCreateInput | EventUpdateInput = {
       name: values.name,
       status: values.status,
       start_date: values.start_date ? dayjs(values.start_date).format('YYYY-MM-DD') : null,
-      end_date: values.end_date ? dayjs(values.end_date).format('YYYY-MM-DD') : null
+      end_date: values.end_date ? dayjs(values.end_date).format('YYYY-MM-DD') : null,
+      allow_repeat: values.allow_repeat ? 1 : 0
     };
     await onOk(data, isEdit);
   };
@@ -95,6 +102,22 @@ export default function EventEditModal({
 
         <Form.Item name="end_date" label="结束日期">
           <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" placeholder="选择结束日期" />
+        </Form.Item>
+
+        {/* 允许辩题重复：开启后该赛事抽取时允许同一辩题被多次抽出（有放回抽样） */}
+        <Form.Item
+          name="allow_repeat"
+          label={
+            <span>
+              允许辩题重复&nbsp;
+              <Tooltip title="开启后该赛事抽取时允许同一辩题被多次抽出（有放回抽样）">
+                <QuestionCircleOutlined style={{ color: token.colorTextSecondary }} />
+              </Tooltip>
+            </span>
+          }
+          valuePropName="checked"
+        >
+          <Switch checkedChildren="允许" unCheckedChildren="不允许" />
         </Form.Item>
       </Form>
     </Modal>

@@ -1,4 +1,4 @@
-import { Modal, Form, Input, InputNumber, Select } from 'antd';
+import { Modal, Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { useEffect } from 'react';
 import type {
   Round,
@@ -37,7 +37,8 @@ export default function RoundEditModal({
           name: round.name ?? undefined,
           round_number: round.round_number ?? undefined,
           difficulty_override: round.difficulty_override ?? undefined,
-          topic_count: round.topic_count ?? undefined
+          topic_count: round.topic_count ?? undefined,
+          is_round_robin: round.is_round_robin ?? false
         });
       } else {
         form.resetFields();
@@ -45,7 +46,8 @@ export default function RoundEditModal({
           round_number: nextRoundNumber ?? 1,
           topic_count: 4,
           name: `第 ${nextRoundNumber ?? 1} 轮`,
-          difficulty_override: '入门级'
+          difficulty_override: '入门级',
+          is_round_robin: false
         });
       }
     }
@@ -58,14 +60,16 @@ export default function RoundEditModal({
           name: values.name ?? null,
           round_number: values.round_number ?? null,
           difficulty_override: values.difficulty_override ?? null,
-          topic_count: values.topic_count ?? null
+          topic_count: values.topic_count ?? null,
+          is_round_robin: values.is_round_robin ?? false
         }
       : {
           event_id: eventId ?? '',
           name: values.name ?? null,
           round_number: values.round_number ?? null,
           difficulty_override: values.difficulty_override ?? null,
-          topic_count: values.topic_count ?? null
+          topic_count: values.topic_count ?? null,
+          is_round_robin: values.is_round_robin ?? false
         };
     await onOk(data, isEdit);
   };
@@ -105,6 +109,17 @@ export default function RoundEditModal({
 
         <Form.Item name="topic_count" label="本轮题量">
           <InputNumber min={1} max={50} style={{ width: '100%' }} />
+        </Form.Item>
+
+        <Form.Item
+          name="is_round_robin"
+          label="循环赛（组内不分正反方）"
+          valuePropName="checked"
+        >
+          <Switch />
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+            勾选后，分组抽取时本轮所有组内队伍不分正反方（适用于单循环小组赛）
+          </Typography.Text>
         </Form.Item>
       </Form>
     </Modal>

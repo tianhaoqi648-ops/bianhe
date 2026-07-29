@@ -4,17 +4,16 @@ import {
   Switch,
   Typography,
   Space,
-  Empty,
   Alert,
   Button,
-  Spin,
   Select,
   Divider,
   Tabs,
-  Tag,
-  message
+  Tag
 } from 'antd';
+import BrandSpin from './common/BrandSpin';
 import { TagsOutlined } from '@ant-design/icons';
+import EmptyState from './common/EmptyState';
 import type {
   TagCategory,
   TagDisplayConfig,
@@ -28,6 +27,7 @@ import {
   DEFAULT_TAG_DISPLAY_CONFIG,
   loadTagDisplayConfig
 } from '../utils/tagDisplay';
+import { useToast } from '../hooks/useToast';
 import { spacing } from '../styles/tokens';
 
 const { Text } = Typography;
@@ -66,7 +66,7 @@ export default function TagDisplaySettingsModal({
   open,
   onClose
 }: TagDisplaySettingsModalProps) {
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
   const topicStore = useTopicStore();
   const settingsStore = useSettingsStore();
   const [config, setConfig] = useState<TagDisplayConfig>(DEFAULT_TAG_DISPLAY_CONFIG);
@@ -158,23 +158,23 @@ export default function TagDisplaySettingsModal({
         [activeScene]: { ...DEFAULT_SCENE_CONFIG }
       }
     }));
-    messageApi.info(`已恢复「${SCENE_DEFS.find((s) => s.key === activeScene)?.label}」默认配置，需点击"保存"后生效`);
+    toast.info(`已恢复「${SCENE_DEFS.find((s) => s.key === activeScene)?.label}」默认配置，需点击"保存"后生效`);
   };
 
   // 重置全部场景
   const handleResetAll = () => {
     setConfig(DEFAULT_TAG_DISPLAY_CONFIG);
-    messageApi.info('已恢复全部场景默认配置，需点击"保存"后生效');
+    toast.info('已恢复全部场景默认配置，需点击"保存"后生效');
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await settingsStore.set(SETTING_KEY, config);
-      messageApi.success('标签显示配置已保存');
+      toast.success('标签显示配置已保存');
       onClose();
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '保存失败');
+      toast.error(e instanceof Error ? e.message : '保存失败');
     } finally {
       setSaving(false);
     }
@@ -221,7 +221,7 @@ export default function TagDisplaySettingsModal({
             不选=显示全部；选中后只显示选中的
           </Text>
           {values.length === 0 ? (
-            <Empty description="暂无候选值" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            <EmptyState type="default" description="暂无候选值" size="small" />
           ) : (
             <Select
               mode="multiple"
@@ -320,8 +320,7 @@ export default function TagDisplaySettingsModal({
         </Space>
       )}
     >
-      {contextHolder}
-      <Spin spinning={loading}>
+      <BrandSpin spinning={loading}>
         <Alert
           message="配置说明"
           description={
@@ -349,7 +348,7 @@ export default function TagDisplaySettingsModal({
             children: renderScenePanel(s.key)
           }))}
         />
-      </Spin>
+      </BrandSpin>
     </Modal>
   );
 }

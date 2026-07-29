@@ -4,19 +4,19 @@ import {
   Table,
   Button,
   Popconfirm,
-  Empty,
   Badge,
   Space,
   Tooltip,
-  Typography,
-  Spin,
-  message
+  Typography
 } from 'antd';
+import BrandSpin from './common/BrandSpin';
 import { EyeOutlined, DeleteOutlined, HistoryOutlined } from '@ant-design/icons';
+import EmptyState from './common/EmptyState';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import type { ImportBatch } from '../../../shared/types';
 import { spacing } from '../styles/tokens';
+import { useToast } from '../hooks/useToast';
 
 const { Text } = Typography;
 
@@ -35,7 +35,7 @@ export default function ImportHistoryModal({
   onSuccess,
   onViewBatch
 }: ImportHistoryModalProps) {
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
   const [batches, setBatches] = useState<ImportBatch[]>([]);
   const [loading, setLoading] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -50,7 +50,7 @@ export default function ImportHistoryModal({
       }
       setBatches(res.data);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '加载失败');
+      toast.error(e instanceof Error ? e.message : '加载失败');
       setBatches([]);
     } finally {
       setLoading(false);
@@ -71,11 +71,11 @@ export default function ImportHistoryModal({
       if (!res.success || !res.data) {
         throw new Error(res.error || '撤销失败');
       }
-      messageApi.success(`已撤销该批次导入（删除 ${res.data.deletedCount} 条辩题）`);
+      toast.success(`已撤销该批次导入（删除 ${res.data.deletedCount} 条辩题）`);
       onSuccess?.();
       await fetchBatches();
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '撤销失败');
+      toast.error(e instanceof Error ? e.message : '撤销失败');
     } finally {
       setRevokingId(null);
     }
@@ -186,7 +186,6 @@ export default function ImportHistoryModal({
 
   return (
     <>
-      {contextHolder}
       <Modal
         title={
           <Space>
@@ -204,10 +203,10 @@ export default function ImportHistoryModal({
         }
         destroyOnClose
       >
-        <Spin spinning={loading}>
+        <BrandSpin spinning={loading}>
           {batches.length === 0 ? (
             <div style={{ padding: `${spacing.xxxl} 0` }}>
-              <Empty description="暂无导入记录" />
+              <EmptyState type="default" description="暂无导入记录" />
             </div>
           ) : (
             <>
@@ -226,7 +225,7 @@ export default function ImportHistoryModal({
               />
             </>
           )}
-        </Spin>
+        </BrandSpin>
       </Modal>
     </>
   );

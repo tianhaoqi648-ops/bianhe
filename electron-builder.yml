@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: debate-topic-drawer
+appId: com.bianhe.app
+productName: 辩盒
 directories:
   buildResources: build
 files:
@@ -11,16 +11,30 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  - '**/node_modules/better-sqlite3/**'
+  - '**/*.node'
+extraResources:
+  - from: data
+    to: data
+    filter:
+      - '**/*.json'
 win:
-  executableName: debate-topic-drawer
+  executableName: bianhe
+  icon: build/icon.png
+  signAndEditExecutable: false
   target:
     - nsis
+  compression: maximum
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
+  artifactName: 辩盒-${version}-setup.${ext}
+  shortcutName: 辩盒
+  uninstallDisplayName: 辩盒
   createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
 mac:
+  icon: build/icon.png
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - documentsPersistOnQuit: true
@@ -30,15 +44,16 @@ mac:
     - dmg
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: 辩盒-${version}.${ext}
 linux:
+  icon: build/icon.png
   target:
     - AppImage
     - deb
-  maintainer: electronjs.org
+  maintainer: bianhe.app
   category: Utility
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: 辩盒-${version}.${ext}
 npmRebuild: false
 publish:
   provider: generic

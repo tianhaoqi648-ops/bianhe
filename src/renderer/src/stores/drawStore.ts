@@ -7,6 +7,7 @@ import type {
   SessionFilter,
   ApiResponse
 } from '../../../shared/types';
+import { undoManager, registerStoreRefresher } from '../utils/undo-manager';
 
 interface SessionListResponse {
   items: DrawSession[];
@@ -27,6 +28,8 @@ interface DrawState {
   error: string | null;
 
   setDrawParams: (p: DrawParams | null) => void;
+  /** 直接覆盖 lastResult（用于 confirmDrawSession 后用更新后的 session 替换原 session） */
+  setLastResult: (r: DrawResult | null) => void;
   execute: (params: DrawParams) => Promise<DrawResult | null>;
   redo: (oldSessionId: string, params: DrawParams) => Promise<DrawResult | null>;
 
@@ -41,6 +44,11 @@ function extractError<T>(res: ApiResponse<unknown>): T {
   throw new Error(res.error || '未知错误');
 }
 
+// 注册 drawStore 的刷新函数：undo execute 后重新拉取 sessions
+registerStoreRefresher('draw', () => {
+  void useDrawStore.getState().listSessions();
+});
+
 export const useDrawStore = create<DrawState>((set) => ({
   drawParams: null,
   lastResult: null,
@@ -52,10 +60,20 @@ export const useDrawStore = create<DrawState>((set) => ({
 
   setDrawParams: (p) => set({ drawParams: p }),
 
+  setLastResult: (r) => set({ lastResult: r }),
+
   execute: async (params) => {
     const res = await window.drawAPI.execute(params);
     const data = extractError<DrawResult>(res);
     set({ lastResult: data });
+    undoManager.pushEntry({
+      storeName: 'draw',
+      action: 'execute',
+      targetType: 'session',
+      targetId: data.session.id,
+      label: `执行抽取（${params.topic_count} 题）`,
+      logId: res._undoLogId ?? undefined
+    });
     return data;
   },
 
@@ -63,6 +81,17 @@ export const useDrawStore = create<DrawState>((set) => ({
     const res = await window.drawAPI.redo(oldSessionId, params);
     const data = extractError<DrawResult>(res);
     set({ lastResult: data });
+    // Critical-2 修复：redo 必须入 undo 栈。
+    // IPC handler 已用 withUndoLog 包裹（action='redraw'），DB 中有 undo_log 记录，
+    // 若不入栈会导致 undo 栈与 DB 失同步。
+    undoManager.pushEntry({
+      storeName: 'draw',
+      action: 'redraw',
+      targetType: 'session',
+      targetId: data.session.id,
+      label: `重抽（${params.topic_count} 题）`,
+      logId: res._undoLogId ?? undefined
+    });
     return data;
   },
 

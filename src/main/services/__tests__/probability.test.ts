@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   weightedRandomSelect,
+  weightedRandomSelectWithReplacement,
   getDifficultyDistribution,
   applyDifficultyDistribution,
   type WeightedItem
@@ -205,5 +206,107 @@ describe('applyDifficultyDistribution', () => {
     const result = applyDifficultyDistribution(pool, dist, 8)
     const ids = result.map((r) => r.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+// ============================================================
+// weightedRandomSelectWithReplacement
+// ============================================================
+
+describe('weightedRandomSelectWithReplacement', () => {
+  it('返回长度 = count', () => {
+    const pool = [
+      { weight: 1, id: 'a' },
+      { weight: 1, id: 'b' },
+      { weight: 1, id: 'c' }
+    ]
+    const result = weightedRandomSelectWithReplacement(pool, 5)
+    expect(result).toHaveLength(5)
+  })
+
+  it('允许重复元素（count > pool.length）', () => {
+    const pool = [
+      { weight: 1, id: 'a' },
+      { weight: 1, id: 'b' }
+    ]
+    const result = weightedRandomSelectWithReplacement(pool, 10)
+    expect(result).toHaveLength(10)
+    // pool 只有 2 个元素，10 个结果必然有重复
+    const uniqueCount = new Set(result.map((r) => r.id)).size
+    expect(uniqueCount).toBeLessThanOrEqual(2)
+  })
+
+  it('空池返回空数组', () => {
+    const result = weightedRandomSelectWithReplacement([], 5)
+    expect(result).toHaveLength(0)
+  })
+
+  it('count=0 返回空数组', () => {
+    const pool = [{ weight: 1, id: 'a' }]
+    const result = weightedRandomSelectWithReplacement(pool, 0)
+    expect(result).toHaveLength(0)
+  })
+
+  it('count 为负数返回空数组', () => {
+    const pool = [{ weight: 1, id: 'a' }]
+    const result = weightedRandomSelectWithReplacement(pool, -3)
+    expect(result).toHaveLength(0)
+  })
+
+  it('无 weight 字段视为 1', () => {
+    // weight 字段缺失时按权重 1 处理，仍可正常抽取
+    const pool: Array<{ weight?: number; id: string }> = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    const result = weightedRandomSelectWithReplacement(pool, 3)
+    expect(result).toHaveLength(3)
+    // 抽取结果均来自 pool
+    const validIds = ['a', 'b', 'c']
+    for (const item of result) {
+      expect(validIds).toContain(item.id)
+    }
+  })
+
+  it('权重为 0 的项不被抽取', () => {
+    const pool = [
+      { weight: 0, id: 'zero' },
+      { weight: 1, id: 'a' },
+      { weight: 1, id: 'b' }
+    ]
+    // 多次抽样，zero 永不应被抽到
+    for (let i = 0; i < 50; i++) {
+      const result = weightedRandomSelectWithReplacement(pool, 5)
+      expect(result.map((r) => r.id)).not.toContain('zero')
+    }
+  })
+
+  it('加权概率近似正确（大规模抽样）', () => {
+    // weight 1 vs weight 9 → 期望 1 出现 10%，9 出现 90%
+    const pool = [
+      { weight: 1, id: 'low' },
+      { weight: 9, id: 'high' }
+    ]
+    const N = 2000
+    let lowCount = 0
+    let highCount = 0
+    for (let i = 0; i < N; i++) {
+      const r = weightedRandomSelectWithReplacement(pool, 1)
+      if (r[0].id === 'low') lowCount++
+      else highCount++
+    }
+    const lowRatio = lowCount / N
+    // 期望 0.10，容差 ±0.05
+    expect(lowRatio).toBeGreaterThan(0.05)
+    expect(lowRatio).toBeLessThan(0.15)
+    expect(highCount + lowCount).toBe(N)
+  })
+
+  it('不修改原 pool', () => {
+    const pool = [
+      { weight: 1, id: 'a' },
+      { weight: 1, id: 'b' }
+    ]
+    const originalLength = pool.length
+    weightedRandomSelectWithReplacement(pool, 5)
+    // 原 pool 长度不变（有放回抽样不应消费 pool）
+    expect(pool).toHaveLength(originalLength)
   })
 })

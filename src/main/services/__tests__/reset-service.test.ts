@@ -32,6 +32,13 @@ vi.mock('../../db/repository/audit.repo', () => ({
     addLog: vi.fn()
   }
 }))
+// Fix 8: resetData 现在用 db.transaction() 包裹整体操作，需 mock getDb
+vi.mock('../../db', () => {
+  const transaction = (fn: () => unknown) => () => fn()
+  return {
+    getDb: () => ({ transaction })
+  }
+})
 
 import { resetData } from '../reset-service'
 import { topicRepo } from '../../db/repository/topic.repo'

@@ -27,7 +27,7 @@ const standardBells = [
 export const CHINESE_FORMAT: PresetDef = {
   id: 'preset-chinese',
   name: '中式辩论赛制',
-  description: '立论3分+质询2分+自由辩论4分+总结3分，共约20分钟',
+  description: '立论3分+质询2分+自由辩论（单方4分）+总结3分',
   formatData: {
     totalDurationMs: 20 * MINUTE,
     stages: [
@@ -35,7 +35,7 @@ export const CHINESE_FORMAT: PresetDef = {
       { id: 'neg_cross', name: '反方质询', side: 'neg', durationMs: 2 * MINUTE, bells: standardBells },
       { id: 'neg_opening', name: '反方立论', side: 'neg', durationMs: 3 * MINUTE, bells: standardBells },
       { id: 'aff_cross', name: '正方质询', side: 'aff', durationMs: 2 * MINUTE, bells: standardBells },
-      { id: 'free_debate', name: '自由辩论', side: 'both', durationMs: 4 * MINUTE, isFreeDebate: true, bells: standardBells },
+      { id: 'free_debate', name: '自由辩论', side: 'aff', durationMs: 4 * MINUTE, isFreeDebate: true, bells: standardBells },
       { id: 'aff_summary', name: '正方总结', side: 'aff', durationMs: 3 * MINUTE, bells: standardBells },
       { id: 'neg_summary', name: '反方总结', side: 'neg', durationMs: 3 * MINUTE, bells: standardBells }
     ]
@@ -46,7 +46,7 @@ export const CHINESE_FORMAT: PresetDef = {
 export const NEW_NATIONAL_FORMAT: PresetDef = {
   id: 'preset-new-national',
   name: '新国辩赛制',
-  description: '陈词4分+质询3分+自由辩论4分+总结4分，共约30分钟',
+  description: '陈词4分+质询3分+自由辩论（单方4分）+总结4分',
   formatData: {
     totalDurationMs: 30 * MINUTE,
     stages: [
@@ -54,7 +54,7 @@ export const NEW_NATIONAL_FORMAT: PresetDef = {
       { id: 'neg_constructive', name: '反方陈词', side: 'neg', durationMs: 4 * MINUTE, bells: standardBells },
       { id: 'aff_cross', name: '正方质询', side: 'aff', durationMs: 3 * MINUTE, bells: standardBells },
       { id: 'neg_cross', name: '反方质询', side: 'neg', durationMs: 3 * MINUTE, bells: standardBells },
-      { id: 'free_debate', name: '自由辩论', side: 'both', durationMs: 4 * MINUTE, isFreeDebate: true, bells: standardBells },
+      { id: 'free_debate', name: '自由辩论', side: 'aff', durationMs: 4 * MINUTE, isFreeDebate: true, bells: standardBells },
       { id: 'aff_summary', name: '正方总结', side: 'aff', durationMs: 4 * MINUTE, bells: standardBells },
       { id: 'neg_summary', name: '反方总结', side: 'neg', durationMs: 4 * MINUTE, bells: standardBells }
     ]

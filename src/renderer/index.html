@@ -4,9 +4,132 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>辩题抽取工具</title>
+    <style>
+      /* P3.4 Task 21：Preload 加载失败降级错误页样式（暗色背景 + 居中卡片） */
+      #preload-error-page {
+        position: fixed;
+        inset: 0;
+        background: #0a0f1a;
+        color: #e6e6e6;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+          Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      #preload-error-page .pec-card {
+        max-width: 480px;
+        width: calc(100% - 48px);
+        background: #141b2d;
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 32px 28px;
+        text-align: center;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+      }
+      #preload-error-page .pec-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        color: #ff4d4f;
+      }
+      #preload-error-page .pec-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: #fff;
+      }
+      #preload-error-page .pec-desc {
+        font-size: 14px;
+        line-height: 1.6;
+        color: #a0aec0;
+        margin: 0 0 24px;
+      }
+      #preload-error-page .pec-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+      }
+      #preload-error-page .pec-btn {
+        padding: 8px 20px;
+        border-radius: 6px;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        transition: opacity 0.2s;
+      }
+      #preload-error-page .pec-btn:hover {
+        opacity: 0.85;
+      }
+      #preload-error-page .pec-btn-primary {
+        background: #1677ff;
+        color: #fff;
+      }
+      #preload-error-page .pec-btn-secondary {
+        background: #2a3550;
+        color: #e6e6e6;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- P3.4 Task 21：Preload 加载失败降级错误页（默认隐藏） -->
+    <div id="preload-error-page">
+      <div class="pec-card">
+        <div class="pec-icon">⚠</div>
+        <h1 class="pec-title">应用初始化失败</h1>
+        <p class="pec-desc">
+          核心模块加载失败，请重启应用。若问题持续，请查看日志文件：<br />
+          <code style="color: #8ab4f8; font-size: 12px">%APPDATA%/辩盒/logs/error.log</code>
+        </p>
+        <div class="pec-actions">
+          <button class="pec-btn pec-btn-primary" onclick="window.location.reload()">
+            重启应用
+          </button>
+          <button
+            class="pec-btn pec-btn-secondary"
+            onclick="alert('日志路径：%APPDATA%/辩盒/logs/error.log\n\n请手动打开该目录查看错误日志。')"
+          >
+            查看日志
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // P3.4 Task 21：检测 preload 脚本加载失败
+      // 触发条件：
+      //   1. window.onerror 捕获 'Failed to load preload script' 错误
+      //   2. 3 秒后检测 window.electronAPI 是否已注入（未注入说明 preload 未成功执行）
+      (function () {
+        var errorPage = document.getElementById('preload-error-page');
+        function showErrorPage() {
+          if (errorPage) errorPage.style.display = 'flex';
+        }
+        // 捕获 preload 加载失败错误
+        window.addEventListener('error', function (event) {
+          var msg = (event && (event.message || event.error && event.error.message)) || '';
+          if (
+            msg.indexOf('Failed to load preload script') !== -1 ||
+            msg.indexOf('Unable to load preload script') !== -1
+          ) {
+            console.error('[Preload] Failed to load preload script:', msg);
+            showErrorPage();
+          }
+        });
+        // 3 秒后检测 electron API 是否注入（兜底：preload 静默失败但未抛错）
+        // 注意：preload 通过 contextBridge.exposeInMainWorld('electron', ...) 暴露的是 window.electron
+        setTimeout(function () {
+          // 仅在渲染进程入口尚未接管时检测（避免误报）
+          if (!window.electron && !window.topicAPI && !window.__PRELOAD_CHECK_PASSED__) {
+            console.error('[Preload] electron API not detected after 3s');
+            showErrorPage();
+          }
+        }, 3000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -10,7 +10,7 @@
 // 选 create 时同步调 onCreateField 持久化到 DB，避免重复创建。
 // ============================================================
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Card, Select, Input, Radio, Space, Typography, Alert, Divider, Tag } from 'antd'
 import { LinkOutlined } from '@ant-design/icons'
 import type {
@@ -54,32 +54,49 @@ export default function FieldMappingPanel({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [editingMatched, setEditingMatched] = useState<Record<string, boolean>>({})
 
+  // Bug 3.7: 异步操作 mounted 守卫
+  const mountedRef = useRef(true)
   useEffect(() => {
-    onMappingChange(mapping)
-  }, [mapping, onMappingChange])
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const matchedEntries = Object.entries(matchedMappings)
   if (unmatchedColumns.length === 0 && matchedEntries.length === 0) return null
 
-  // 可绑定的目标字段列表：系统字段（isCountable=true 的元数据字段，排除 tags/batch_id）+ 自定义字段
-  const bindableSystemFields = systemFields.filter(
-    (f) => f.isCountable && f.key !== 'tags' && f.key !== 'batch_id'
-  )
-  const bindTargets: Array<{ value: string; label: string; group: string }> = [
-    ...bindableSystemFields.map((f) => ({
-      value: f.key,
-      label: `${f.label}（系统）`,
-      group: '系统字段'
-    })),
-    ...customFields.map((f) => ({
-      value: f.field_key,
-      label: `${f.field_label}（自定义）`,
-      group: '自定义字段'
-    }))
-  ]
+  // Bug 5.12: 用 useMemo 缓存 bindTargets
+  const bindTargets = useMemo(() => {
+    const bindable = systemFields.filter(
+      (f) => f.isCountable && f.key !== 'tags' && f.key !== 'batch_id'
+    )
+    const targets: Array<{ value: string; label: string; group: string }> = [
+      ...bindable.map((f) => ({
+        value: f.key,
+        label: `${f.label}（系统）`,
+        group: '系统字段'
+      })),
+      ...customFields.map((f) => ({
+        value: f.field_key,
+        label: `${f.field_label}（自定义）`,
+        group: '自定义字段'
+      }))
+    ]
+    return targets
+  }, [systemFields, customFields])
+
+  // Bug 1.1: 显式调用 onMappingChange 的辅助函数，替代 useEffect 同步器
+  const updateMapping = (updater: (prev: FieldMapping) => FieldMapping): void => {
+    setMapping((prev) => {
+      const next = updater(prev)
+      onMappingChange(next)
+      return next
+    })
+  }
 
   const updateAction = (column: string, action: FieldMappingAction) => {
-    setMapping((prev) => ({ ...prev, [column]: action }))
+    updateMapping((prev) => ({ ...prev, [column]: action }))
     setErrors((prev) => ({ ...prev, [column]: '' }))
   }
 
@@ -91,19 +108,26 @@ export default function FieldMappingPanel({
     setCreating((prev) => ({ ...prev, [column]: true }))
     try {
       const created = await onCreateField(label, type)
+      // Bug 3.7: 异步操作后检查 mounted
+      if (!mountedRef.current) return
       // 创建成功后改为 bind 到新字段
-      setMapping((prev) => ({
+      updateMapping((prev) => ({
         ...prev,
         [column]: { kind: 'bind', fieldKey: created.field_key }
       }))
       setErrors((prev) => ({ ...prev, [column]: '' }))
     } catch (e) {
+      if (!mountedRef.current) return
+      // Bug 5.11: 创建失败时把 mapping[column] 改回 ignore，避免残留 create 状态
       setErrors((prev) => ({
         ...prev,
         [column]: e instanceof Error ? e.message : '创建失败'
       }))
+      updateMapping((prev) => ({ ...prev, [column]: { kind: 'ignore' } }))
     } finally {
-      setCreating((prev) => ({ ...prev, [column]: false }))
+      if (mountedRef.current) {
+        setCreating((prev) => ({ ...prev, [column]: false }))
+      }
     }
   }
 
@@ -180,8 +204,10 @@ export default function FieldMappingPanel({
                         size="small"
                         style={{ width: 150 }}
                         value={editAction.kind === 'bind' ? editAction.fieldKey : fieldKey}
-                        onChange={(v) => {
-                          updateAction(column, { kind: 'bind', fieldKey: v })
+                        onChange={(v: string) => {
+                          // 用户新选择的 fieldKey 作为 bind 覆盖写入 mapping，
+                          // 父组件 onMappingChange 会触发 applyFieldMapping 重新解析
+                          updateMapping((prev) => ({ ...prev, [column]: { kind: 'bind', fieldKey: v } }))
                           setEditingMatched((prev) => ({ ...prev, [column]: false }))
                         }}
                         options={bindTargets}
@@ -193,7 +219,7 @@ export default function FieldMappingPanel({
                         onClick={() => {
                           setEditingMatched((prev) => ({ ...prev, [column]: false }))
                           // 清除该列的 mapping 覆盖，恢复原识别
-                          setMapping((prev) => {
+                          updateMapping((prev) => {
                             const next = { ...prev }
                             delete next[column]
                             return next
@@ -214,6 +240,8 @@ export default function FieldMappingPanel({
         const action = mapping[column] ?? { kind: 'ignore' as const }
         const error = errors[column] ?? ''
         const isCreating = creating[column] ?? false
+        // Bug 5.9: bindTargets 为空时禁用"绑定已有字段"选项
+        const canBind = bindTargets.length > 0
         return (
           <div
             key={column}
@@ -235,6 +263,7 @@ export default function FieldMappingPanel({
                 onChange={(v) => {
                   if (v === 'ignore') updateAction(column, { kind: 'ignore' })
                   else if (v === 'bind') {
+                    if (!canBind) return
                     updateAction(column, {
                       kind: 'bind',
                       fieldKey: bindTargets[0]?.value ?? ''
@@ -249,7 +278,7 @@ export default function FieldMappingPanel({
                 }}
                 options={[
                   { value: 'ignore', label: '忽略' },
-                  { value: 'bind', label: '绑定已有字段' },
+                  { value: 'bind', label: '绑定已有字段', disabled: !canBind },
                   { value: 'create', label: '创建新字段' }
                 ]}
               />
@@ -295,8 +324,15 @@ export default function FieldMappingPanel({
                       <Radio.Button value="tags">标签</Radio.Button>
                     </Radio.Group>
                     <a
-                      onClick={() => handleCreateField(column, action.fieldLabel, action.fieldType)}
-                      style={{ fontSize: 12 }}
+                      // Bug 5.10: 创建中禁用点击防重复
+                      onClick={() => {
+                        if (!isCreating) handleCreateField(column, action.fieldLabel, action.fieldType)
+                      }}
+                      style={{
+                        fontSize: 12,
+                        pointerEvents: isCreating ? 'none' : 'auto',
+                        opacity: isCreating ? 0.5 : 1
+                      }}
                     >
                       {isCreating ? '创建中...' : '确认创建'}
                     </a>

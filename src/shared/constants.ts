@@ -26,3 +26,43 @@ export const SYSTEM_CANDIDATES = {
 } as const
 
 export type CandidateField = keyof typeof SYSTEM_CANDIDATES
+
+// ============================================================
+// 全量数据备份类别
+//
+// 每个类别对应一组业务表，导出/导入按类别勾选执行。
+// 表名需与 schema.sql 中保持一致（注意 import_batch 为单数）。
+// ============================================================
+
+export const BACKUP_CATEGORIES = [
+  { key: 'topics', label: '辩题库', tables: ['topics', 'topic_custom_fields'] },
+  { key: 'events', label: '赛事体系', tables: ['events', 'rounds', 'team_groups', 'teams'] },
+  { key: 'draw_records', label: '抽取记录', tables: ['draw_sessions', 'draw_session_items', 'team_history'] },
+  { key: 'timer', label: '计时数据', tables: ['timer_sessions', 'timer_records'] },
+  { key: 'formats_bells', label: '赛制与铃声', tables: ['debate_formats', 'bell_assets'] },
+  { key: 'settings', label: '设置配置', tables: ['settings'] },
+  { key: 'audit_history', label: '审计与历史', tables: ['audit_log', 'import_batch', 'batch_edit_history', 'batch_edit_history_item', 'undo_log'] }
+] as const
+
+export type BackupCategoryKey = (typeof BACKUP_CATEGORIES)[number]['key']
+
+export const DEFAULT_BACKUP_CATEGORIES = [
+  'topics',
+  'events',
+  'draw_records',
+  'timer',
+  'formats_bells'
+] as const
+
+export const SUPPORTED_BACKUP_VERSION = '1.0'
+
+/** 备份恢复时按外键依赖顺序排序类别 */
+export const BACKUP_RESTORE_ORDER: BackupCategoryKey[] = [
+  'topics', // topics 是 team_history 的父表
+  'events', // events 是 rounds/team_groups/teams 的父表
+  'draw_records', // 依赖 topics + events
+  'timer', // 独立
+  'formats_bells', // 独立
+  'settings', // 独立
+  'audit_history' // 独立
+]

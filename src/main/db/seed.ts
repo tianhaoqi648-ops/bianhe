@@ -9,9 +9,9 @@
 //
 // 文件路径解析：
 //   开发环境：app.getAppPath() 指向项目根，data/ 完整存在
-//   生产环境：data/ 通过 electron-builder extraResources 配置复制到资源目录
-//   两种情况都使用 path.resolve(app.getAppPath(), 'data/official-topics.json')
-//   若文件缺失则跳过（不阻断启动）
+//   生产环境：data/ 通过 electron-builder extraResources 配置复制到
+//             process.resourcesPath/data/ 目录
+//   两种情况分别解析路径，若文件缺失则跳过（不阻断启动）
 // ============================================================
 
 import { app } from 'electron'
@@ -34,6 +34,21 @@ interface OfficialTopicsFile {
   version: string
   description: string
   topics: OfficialTopic[]
+}
+
+/**
+ * 解析官方题库文件路径。
+ * - 开发环境：<项目根>/data/official-topics.json
+ * - 生产环境：<resourcesPath>/data/official-topics.json
+ */
+function resolveOfficialTopicsPath(): string {
+  // 生产环境优先：process.resourcesPath 指向 electron-builder 的 resources 目录
+  if (!process.env.ELECTRON_IS_DEV && process.resourcesPath) {
+    const prodPath = join(process.resourcesPath, 'data', 'official-topics.json')
+    if (existsSync(prodPath)) return prodPath
+  }
+  // 开发环境或回退：app.getAppPath()/data/official-topics.json
+  return join(app.getAppPath(), 'data', 'official-topics.json')
 }
 
 /**
@@ -72,7 +87,7 @@ export function seedOfficialTopics(): number {
   }
 
   // 文件路径解析
-  const filePath = join(app.getAppPath(), 'data', 'official-topics.json')
+  const filePath = resolveOfficialTopicsPath()
   if (!existsSync(filePath)) {
     console.warn('[seed] Official topics file not found:', filePath, ', skip seeding')
     return 0

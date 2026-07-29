@@ -134,6 +134,8 @@ export interface Event {
   end_date: string | null
   status: string | null
   created_at: string | null
+  /** 是否允许辩题重复（0=不允许, 1=允许，对应有放回抽样） */
+  allow_repeat?: number
 }
 
 export interface EventFilter {
@@ -147,6 +149,8 @@ export interface EventCreateInput {
   start_date?: string | null
   end_date?: string | null
   status?: string | null
+  /** 是否允许辩题重复（0=不允许, 1=允许），未传时默认 0 */
+  allow_repeat?: number
 }
 
 export interface EventUpdateInput {
@@ -154,6 +158,8 @@ export interface EventUpdateInput {
   start_date?: string | null
   end_date?: string | null
   status?: string | null
+  /** 是否允许辩题重复（0=不允许, 1=允许） */
+  allow_repeat?: number
 }
 
 export interface Round {
@@ -163,6 +169,8 @@ export interface Round {
   round_number: number | null
   difficulty_override: string | null
   topic_count: number | null
+  /** 是否为循环赛轮次（DB 中存为 0/1，应用层使用 boolean） */
+  is_round_robin?: boolean
 }
 
 export interface RoundCreateInput {
@@ -171,6 +179,7 @@ export interface RoundCreateInput {
   round_number?: number | null
   difficulty_override?: string | null
   topic_count?: number | null
+  is_round_robin?: boolean
 }
 
 export interface RoundUpdateInput {
@@ -178,21 +187,65 @@ export interface RoundUpdateInput {
   round_number?: number | null
   difficulty_override?: string | null
   topic_count?: number | null
+  is_round_robin?: boolean
 }
 
 export interface Team {
   id: string
   name: string
   event_id: string
+  /** 所属分组 id（可空，未分组为 null） */
+  group_id?: string | null
 }
 
 export interface TeamCreateInput {
   name: string
   event_id: string
+  /** 所属分组 id（null 表示不分组） */
+  group_id?: string | null
 }
 
 export interface TeamUpdateInput {
   name?: string
+  /** 所属分组 id（null 表示移出分组） */
+  group_id?: string | null
+}
+
+/** 队伍分组（赛事维度，用于多队同题抽取） */
+export interface TeamGroup {
+  id: string
+  event_id: string
+  name: string
+  sort_order: number
+  created_at: string
+}
+
+export interface TeamGroupCreateInput {
+  event_id: string
+  name: string
+  sort_order?: number
+}
+
+export interface TeamGroupUpdateInput {
+  name?: string
+  sort_order?: number
+}
+
+/** 随机分组请求参数 */
+export interface RandomAssignGroupParams {
+  event_id: string;
+  strategy: 'by_group_count' | 'by_team_count';
+  count: number;
+  group_names?: string[];
+  overwrite: boolean;
+  dry_run?: boolean;
+}
+
+/** 随机分组结果 */
+export interface RandomAssignGroupResult {
+  groups_plan: Array<{ name: string; team_ids: string[]; team_names: string[] }>;
+  groups_created: number;
+  teams_assigned: number;
 }
 
 export interface TeamHistory {
@@ -201,6 +254,8 @@ export interface TeamHistory {
   topic_id: string
   event_id: string
   played_at: string | null
+  /** 关联抽取会话 id，用于确认结果时关联去重（重抽时先按 session_id 删旧再写新） */
+  session_id?: string | null
 }
 
 export interface TeamHistoryCreateInput {
@@ -208,6 +263,10 @@ export interface TeamHistoryCreateInput {
   topic_id: string
   event_id: string
   played_at?: string | null
+  /** 关联抽取会话 id（可选，由"确定抽取结果"流程写入） */
+  session_id?: string | null
+  /** 持方快照：正方/反方（确认抽取结果时从 DrawSessionItem.stance_a/stance_b 复制） */
+  stance?: string | null
 }
 
 export interface DrawSessionSettings {
@@ -216,6 +275,20 @@ export interface DrawSessionSettings {
   include_stance?: boolean
   team_pairs?: Array<{ team_a_id: string; team_b_id: string }>
   filter?: TopicFilter
+  /** 抽取结果是否已确认写入队伍历史 */
+  confirmed?: boolean
+  /** 单人持方模式：记录抽取时使用的队伍 id */
+  solo_team_id?: string | null
+  /** 抽取模式：'versus' 对战（默认）/ 'group' 分组同题 / 'multi_team' 多队同题 */
+  draw_mode?: 'versus' | 'group' | 'multi_team'
+  /** group 模式下参与抽取的分组 id 列表 */
+  group_ids?: string[]
+  /** multi_team 模式下每道题同题的队伍数（>=2） */
+  teams_per_topic?: number
+  /** 实际抽取的题数（由 draw-engine 写入，group/multi_team 模式下可能覆盖用户传入值） */
+  topic_count?: number
+  /** 测试模式标记：true 表示该 session 为测试抽取，不写入队伍历史 */
+  is_test?: boolean
 }
 
 export interface DrawSession {
@@ -235,6 +308,21 @@ export interface DrawSessionItem {
   team_b_id: string | null
   stance_a: string | null
   stance_b: string | null
+  /** 冗余快照：辩题标题（避免硬删除后显示 ID 片段） */
+  topic_title?: string | null
+  /** 冗余快照：A 方队伍名 */
+  team_a_name?: string | null
+  /** 冗余快照：B 方队伍名 */
+  team_b_name?: string | null
+  /** 多队同题模式下的队伍 id 列表（versus 模式为空，仍使用 team_a_id/team_b_id）。
+   *  DB 中存为 JSON 字符串，应用层使用数组。 */
+  team_ids?: string[] | null
+  /** 多队持方快照（与 team_ids 一一对应）。DB 中存为 JSON 字符串，应用层使用数组。 */
+  team_stances?: string[] | null
+  /** 队伍名快照（与 team_ids 一一对应）。DB 中存为 JSON 字符串，应用层使用数组。 */
+  team_names?: string[] | null
+  /** 分组模式下的所属分组 id */
+  group_id?: string | null
 }
 
 export interface DrawSessionDetail extends DrawSession {
@@ -305,6 +393,27 @@ export interface DrawParams {
   filters?: TopicFilter
   source_mix_ratio?: SourceMixRatio
   operator?: string
+  /** 单人持方模式：传一支队伍 id，引擎为每道题随机分配正反方 */
+  solo_team_id?: string
+  /** 抽取模式：'versus' 对战（默认）/ 'group' 分组同题 / 'multi_team' 多队同题 */
+  draw_mode?: 'versus' | 'group' | 'multi_team'
+  /** group 模式下参与抽取的分组 id 列表 */
+  group_ids?: string[]
+  /** multi_team 模式下每道题同题的队伍数（>=2） */
+  teams_per_topic?: number
+  /**
+   * v6 新增：标记 teams 是否来自用户 TeamPairing 配置。
+   * - true：teams 来自 TeamPairing 扁平化，multi_team 引擎应保留配对顺序，不 shuffle
+   * - false 或未传：teams 来自 eventStore 或其他来源，multi_team 引擎应 shuffle
+   * - group 模式不使用此标记（总是 shuffle 同组队伍，确保随机对阵）
+   */
+  user_pairing?: boolean
+  /** 测试模式：跳过 applyExclusions、不写 team_history、settings.is_test=true、自动 allow_repeat */
+  test_mode?: boolean
+  /** 允许辩题重复：跳过题池不足检查，使用有放回抽样 */
+  allow_repeat?: boolean
+  /** P3.1 Task 1：揭晓动画模式（仅客户端使用，引擎忽略此字段） */
+  reveal_mode?: 'flip' | 'tear' | 'spotlight' | 'fade'
 }
 
 export interface DrawResult {
@@ -359,9 +468,137 @@ export interface ApiResponse<T = unknown> {
   success: boolean
   data?: T
   error?: string
+  /**
+   * 撤销日志 ID（仅写操作返回）。
+   * - string：成功创建 undo_log，可用于精确撤销/重做
+   * - null：payload 超限或其他原因未入栈，该操作不可撤销
+   * - undefined：非写操作（如 list/get/count），无 undo_log
+   *
+   * C1 修复：渲染进程据 logId 判断是否入栈，避免与 DB 失同步。
+   */
+  _undoLogId?: string | null
 }
 
 export type ApiResult<T = unknown> = ApiResponse<T>
+
+// ---------- P3.4 稳定性扩展：ElectronAPI 增强类型 ----------
+
+/** 数据库模式：'persistent' 持久化 / 'memory' 临时（降级） */
+export type DbMode = 'persistent' | 'memory'
+
+/** 错误日志输入（与主进程 logs/index.ts ErrorLogInput 对齐） */
+export interface ErrorLogInput {
+  name: string
+  message: string
+  stack: string
+  timestamp: string
+}
+
+/** 备份文件信息 */
+export interface BackupInfo {
+  filename: string
+  size: number
+  mtime: string
+}
+
+/**
+ * db:status 监听 API。
+ * - onChange(cb): 订阅 db 模式变化，返回取消订阅函数
+ * - getMode(): 同步查询当前 db 模式（通过 invoke）
+ */
+export interface DbStatusAPI {
+  onChange(cb: (mode: DbMode) => void): () => void
+  getMode(): Promise<DbMode>
+}
+
+/** 错误日志 API */
+export interface LogsAPI {
+  writeError(error: ErrorLogInput): Promise<void>
+}
+
+/** 备份 API */
+export interface BackupAPI {
+  run(): Promise<ApiResponse<{ ok: true }>>
+  list(): Promise<ApiResponse<BackupInfo[]>>
+  restore(filename: string): Promise<ApiResponse<{ ok: true }>>
+  delete(filename: string): Promise<ApiResponse<{ ok: true }>>
+  /** 全量导出：选择保存位置 + 写入 JSON 备份文件 */
+  export(params: BackupParams): Promise<ApiResponse<BackupExportResult>>
+  /** 预览导入文件 */
+  previewImport(filePath: string): Promise<ApiResponse<BackupPreviewResult>>
+  /** 执行全量导入 */
+  import(params: BackupImportParams): Promise<ApiResponse<BackupImportResult>>
+  /** 获取各类别本地数据条数统计（用于备份弹窗展示） */
+  stats(): Promise<ApiResponse<Record<string, number>>>
+}
+
+/**
+ * 通过声明合并扩展 @electron-toolkit/preload 的 ElectronAPI 接口。
+ *
+ * 主进程 preload 通过 contextBridge.exposeInMainWorld('electron', extendedElectronAPI)
+ * 暴露这些 API，渲染进程可通过 window.electron.dbStatus / .logs / .backup 访问。
+ * 字段声明为可选（?:），便于在测试环境或不暴露时不报错。
+ */
+declare module '@electron-toolkit/preload' {
+  interface ElectronAPI {
+    dbStatus?: DbStatusAPI
+    logs?: LogsAPI
+    backup?: BackupAPI
+  }
+}
+
+// ---------- 全量数据备份与恢复 ----------
+
+export type BackupCategory =
+  | 'topics'
+  | 'events'
+  | 'draw_records'
+  | 'timer'
+  | 'formats_bells'
+  | 'settings'
+  | 'audit_history'
+
+export type BackupImportStrategy = 'clear_rebuild' | 'skip_existing' | 'overwrite_existing'
+
+export interface BackupParams {
+  categories: BackupCategory[]
+}
+
+export interface BackupImportParams {
+  filePath: string
+  strategy: BackupImportStrategy
+  /** 仅导入这些类别 */
+  categories: BackupCategory[]
+}
+
+export interface BackupPackage {
+  version: string
+  exportedAt: string
+  appVersion: string
+  categories: BackupCategory[]
+  tables: Record<string, any[]> | Record<string, Record<string, string>>
+}
+
+export interface BackupPreviewResult {
+  version: string
+  exportedAt: string
+  appVersion: string
+  categories: BackupCategory[]
+  tableCounts: Record<string, number>
+}
+
+export interface BackupExportResult {
+  filePath: string
+  totalRecords: number
+  bellFilesCount: number
+}
+
+export interface BackupImportResult {
+  inserted: number
+  skipped: number
+  overwritten: number
+  bellFilesRestored: number
+}
 
 // ---------- 标签显示配置 ----------
 
@@ -443,6 +680,13 @@ export const IPC_CHANNELS = {
   TEAM_CREATE: 'team:create',
   TEAM_UPDATE: 'team:update',
   TEAM_DELETE: 'team:delete',
+  // team group（赛事分组，多队同题抽取）
+  TEAM_GROUP_LIST: 'group:list',
+  TEAM_GROUP_CREATE: 'group:create',
+  TEAM_GROUP_UPDATE: 'group:update',
+  TEAM_GROUP_DELETE: 'group:delete',
+  TEAM_ASSIGN_GROUP: 'team:assignGroup',
+  TEAM_RANDOM_ASSIGN_GROUP: 'team:randomAssignGroup',
   // team_history
   TEAM_HISTORY_LIST: 'teamHistory:list',
   TEAM_HISTORY_LIST_BY_EVENT: 'teamHistory:listByEvent',
@@ -455,6 +699,9 @@ export const IPC_CHANNELS = {
   DRAW_DELETE_SESSION: 'draw:deleteSession',
   DRAW_LIST_DRAWN_TOPIC_IDS: 'draw:listDrawnTopicIds',
   DRAW_REDO: 'draw:redo',
+  DRAW_CONFIRM_SESSION: 'draw:confirmSession',
+  /** Task 6.7：按 topic_id 查询最近一条多队模式（team_ids 非空）的抽取明细，供大屏多队渲染 */
+  DRAW_GET_ITEM_BY_TOPIC: 'draw:getItemByTopicId',
   // audit
   AUDIT_LIST_LOGS: 'audit:listLogs',
   AUDIT_ADD_LOG: 'audit:addLog',
@@ -474,6 +721,8 @@ export const IPC_CHANNELS = {
   IMPORT_REVOKE_BATCH: 'import:revokeBatch',
   IMPORT_LIST_BATCHES: 'import:listBatches',
   IMPORT_APPLY_FIELD_MAPPING: 'import:applyFieldMapping',
+  IMPORT_EVENT_PACKAGE: 'import:eventPackage',
+  IMPORT_EVENT_PACKAGE_PREVIEW: 'import:eventPackagePreview',
   // export
   EXPORT_TOPICS: 'export:topics',
   EXPORT_DRAW_SESSIONS: 'export:drawSessions',
@@ -517,15 +766,34 @@ export const IPC_CHANNELS = {
   TIMER_ADD_RECORD: 'timer:addRecord',
   TIMER_FINISH_RECORD: 'timer:finishRecord',
   TIMER_EXPORT_RECORDS: 'timer:exportRecords',
+  TIMER_THEME_GET: 'timer:themeGet',
+  TIMER_THEME_SET: 'timer:themeSet',
   BELL_ASSET_LIST: 'bell:list',
   BELL_ASSET_UPLOAD: 'bell:upload',
   BELL_ASSET_DELETE: 'bell:delete',
   BELL_ASSET_GET_DATA_URL: 'bell:getDataUrl',
+  BELL_PLAY: 'bell:play',
+  BELL_STOP: 'bell:stop',
+  // background (计时器自定义背景图片)
+  BACKGROUND_UPLOAD: 'background:upload',
+  BACKGROUND_LIST: 'background:list',
+  BACKGROUND_DELETE: 'background:delete',
   FORMAT_IMPORT: 'format:import',
   FORMAT_EXPORT: 'format:export',
-  SHARE_START: 'share:start',
-  SHARE_STOP: 'share:stop',
-  SHARE_STATUS: 'share:status'
+  // backup (DB 文件级备份与恢复)
+  BACKUP_RUN: 'backup:run',
+  BACKUP_LIST: 'backup:list',
+  BACKUP_RESTORE: 'backup:restore',
+  BACKUP_DELETE: 'backup:delete',
+  // backup (全量数据备份与恢复)
+  BACKUP_EXPORT: 'backup:export',
+  BACKUP_PREVIEW_IMPORT: 'backup:previewImport',
+  BACKUP_IMPORT: 'backup:import',
+  BACKUP_STATS: 'backup:stats',
+  // db 状态与错误日志
+  DB_STATUS: 'db:status',
+  DB_GET_MODE: 'db:get-mode',
+  DB_LOGS_WRITE: 'logs:write'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -627,6 +895,52 @@ export interface ExportResult {
   count: number
 }
 
+/** 赛事包导入请求（Task 4 实现 IPC handler） */
+export interface ImportEventPackageRequest {
+  /** 导入文件路径（JSON） */
+  filePath: string
+  /** 冲突处理策略：skip 跳过 / overwrite 先删后建 / rename 加后缀 */
+  conflictStrategy?: 'skip' | 'overwrite' | 'rename'
+}
+
+/** 赛事包导入结果摘要（Task 4 实现） */
+export interface ImportEventPackageResult {
+  /** 导入的赛事 id */
+  eventId: string
+  /** 导入的轮次数 */
+  roundCount: number
+  /** 导入的队伍数 */
+  teamCount: number
+  /** 导入的分组数 */
+  groupCount: number
+  /** 冲突处理策略实际应用情况 */
+  strategy: 'skip' | 'overwrite' | 'rename'
+  /** 若 rename，原赛事名 */
+  originalName?: string
+  /** 若 rename，新赛事名 */
+  renamedTo?: string
+}
+
+/** 赛事包预览结果（导入前解析 JSON 得到的摘要，用于 ImportEventModal 展示） */
+export interface ImportEventPackagePreviewResult {
+  /** 赛事名 */
+  eventName: string
+  /** 轮次数 */
+  roundCount: number
+  /** 队伍数 */
+  teamCount: number
+  /** 分组数 */
+  groupCount: number
+  /** 抽取会话数 */
+  drawSessionCount: number
+  /** 队伍历史记录数 */
+  teamHistoryCount: number
+  /** 是否与库内已有赛事同名（冲突检测） */
+  hasConflict: boolean
+  /** 导出时间（ISO 字符串，可选） */
+  exportedAt?: string
+}
+
 // ---------- 去重检查相关类型 ----------
 
 export interface DedupRunResult {
@@ -646,7 +960,7 @@ export interface DrawPageLocationState {
 
 /** 数据重置请求（前端 → 主进程） */
 export interface ResetDataRequest {
-  /** 配置类要重置的 settings keys 并集（来自 dedup/tagDisplay/candidates） */
+  /** 配置类要重置的 settings keys 并集（来自 dedup/tagDisplay/candidates/hotkeys/timerTheme） */
   configKeys: string[]
   /** 数据类重置选项 */
   dataOptions: {
@@ -664,6 +978,14 @@ export interface ResetDataRequest {
     batchEditHistory?: boolean
     /** 撤销历史（undo_log 表） */
     undoLog?: boolean
+    /** 计时会话（timer_sessions 表） */
+    timerSessions?: boolean
+    /** 计时记录（timer_records 表） */
+    timerRecords?: boolean
+    /** 自定义赛制（仅 is_preset=0，保留内置预设） */
+    debateFormats?: boolean
+    /** 自定义铃声（bell_assets 表 + userData/bells/ 文件） */
+    customBells?: boolean
   }
 }
 
@@ -681,6 +1003,14 @@ export interface ResetDataResponse {
   batchEditHistoryDeleted: number
   /** 撤销历史删除行数（undo_log 表） */
   undoLogDeleted: number
+  /** 计时会话删除行数 */
+  timerSessionsDeleted: number
+  /** 计时记录删除行数 */
+  timerRecordsDeleted: number
+  /** 自定义赛制删除行数（不含预设） */
+  debateFormatsDeleted: number
+  /** 自定义铃声删除行数 */
+  customBellsDeleted: number
   /** 题库子选项是否保留了官方题库 */
   officialKept: boolean
 }
@@ -767,6 +1097,11 @@ export interface UndoLogEntry {
   after_data: unknown | null
   payload_size: number
   label: string | null
+  /**
+   * 撤销时间戳（ISO 字符串）。null 表示该 log 未被撤销；
+   * 非 null 表示已被 executeUndo 标记撤销，可用于 executeRedo 重做。
+   */
+  undone_at: string | null
 }
 
 /** 渲染进程入栈的简化条目（不含 id/created_at，由主进程生成） */
@@ -830,7 +1165,26 @@ export interface DebateFormat {
   updatedAt: string
 }
 
+/** 计时器自定义背景图片元数据（对应 userData/backgrounds/ 目录下文件） */
+export interface BackgroundFile {
+  /** 文件名前缀 UUID（用于删除定位） */
+  id: string
+  /** 原始文件名（含扩展名） */
+  fileName: string
+  /** file:// 协议 URL，可直接用于 CSS background-image */
+  fileUrl: string
+  /** 文件大小（字节） */
+  fileSize: number
+  /** 创建时间 ISO 字符串 */
+  createdAt: string
+}
+
 export type TimerSessionStatus = 'idle' | 'running' | 'paused' | 'finished'
+
+/** 环节时间缓存值。
+ *  - 非自由辩论环节：number（remainingMs）
+ *  - 自由辩论环节：{ aff: number; neg: number }（双方独立时间） */
+export type StageCacheValue = number | { aff: number; neg: number }
 
 export interface TimerSession {
   id: string
@@ -839,7 +1193,7 @@ export interface TimerSession {
   teamAffId?: string | null
   teamNegId?: string | null
   topicId?: string | null
-  formatId: string
+  formatId: string | null
   formatSnapshot: DebateFormatData
   status: TimerSessionStatus
   startedAt?: string | null
@@ -850,6 +1204,22 @@ export interface TimerSession {
   themeSnapshot?: TimerTheme | null
   label?: string | null
   createdAt: string
+  /** 各环节最近离开时的时间缓存。
+   *  - 非自由辩论环节：number
+   *  - 自由辩论环节：{ aff: number; neg: number } */
+  stageRemainingCache?: Record<number, StageCacheValue> | null
+  /** 自由辩论环节：正方剩余时间（毫秒）。仅 isFreeDebate=true 环节使用 */
+  affRemainingMs?: number | null
+  /** 自由辩论环节：反方剩余时间（毫秒）。仅 isFreeDebate=true 环节使用 */
+  negRemainingMs?: number | null
+  /** 冗余快照：赛事名称（删除事件后仍可显示） */
+  eventName?: string | null
+  /** 冗余快照：正方队伍名称（删除队伍后仍可显示） */
+  teamAffName?: string | null
+  /** 冗余快照：反方队伍名称（删除队伍后仍可显示） */
+  teamNegName?: string | null
+  /** 冗余快照：辩题标题（删除辩题后仍可显示） */
+  topicTitle?: string | null
 }
 
 export interface TimerRecord {
@@ -874,4 +1244,12 @@ export interface TimerState {
   elapsedMs: number
   pausedAt?: string | null
   lastBellIndex: number
+  /** 自由辩论环节：正方剩余时间（毫秒）。仅在 isFreeDebate=true 的环节使用 */
+  affRemainingMs?: number
+  /** 自由辩论环节：反方剩余时间（毫秒）。仅在 isFreeDebate=true 的环节使用 */
+  negRemainingMs?: number
+  /** 各环节最近离开时的 remainingMs 缓存，key=stageIndex，value=remainingMs。
+   *  用于 prevStage 完全保留策略。
+   *  自由辩论环节下，value 为 { aff, neg } 双方独立时间；其他环节为 number */
+  stageRemainingMsCache?: Record<number, StageCacheValue>
 }

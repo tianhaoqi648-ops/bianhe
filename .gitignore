@@ -2,7 +2,10 @@ node_modules
 dist
 out
 .electron-cache
+.eb-cache
 .electron-userdata
+.cache
+.trae
 .DS_Store
 *.log
 .env
@@ -11,3 +14,13 @@ out
 .vscode/*
 !.vscode/extensions.json
 .idea
+# 数据库文件（兜底安全排除）
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+# Windows 系统文件
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

@@ -24,8 +24,14 @@ import type {
   TeamUpdateInput,
   TeamHistory,
   TeamHistoryCreateInput,
+  TeamGroup,
+  TeamGroupCreateInput,
+  TeamGroupUpdateInput,
+  RandomAssignGroupParams,
+  RandomAssignGroupResult,
   DrawSession,
   DrawSessionDetail,
+  DrawSessionItem,
   DrawParams,
   DrawResult,
   SessionFilter,
@@ -35,6 +41,9 @@ import type {
   ImportExecuteRequest,
   ImportExecuteResult,
   ImportBatch,
+  ImportEventPackageRequest,
+  ImportEventPackageResult,
+  ImportEventPackagePreviewResult,
   ParsedResult,
   FieldMapping,
   ExportLogsRequest,
@@ -49,8 +58,23 @@ import type {
   ResetDataRequest,
   ResetDataResponse,
   CustomField,
-  CustomFieldType
+  CustomFieldType,
+  BatchEditExecuteRequest,
+  BatchEditExecuteResult,
+  BatchEditRevertResult,
+  BatchEditHistory,
+  UndoRequest,
+  UndoResult,
+  RedoRequest,
+  RedoResult,
+  UndoLogEntry,
+  DebateFormat,
+  DebateFormatData,
+  TimerSession,
+  TimerRecord,
+  BackgroundFile
 } from '../shared/types'
+import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 
 interface TopicListResponse {
   items: Topic[]
@@ -116,6 +140,25 @@ export interface EventAPI {
   listTeamHistoryByEvent: (eventId: string) => Promise<ApiResponse<TeamHistory[]>>
   addTeamHistory: (data: TeamHistoryCreateInput) => Promise<ApiResponse<TeamHistory>>
   deleteTeamHistory: (id: string) => Promise<ApiResponse<boolean>>
+  // team group（赛事分组）
+  listGroups: (eventId: string) => Promise<ApiResponse<TeamGroup[]>>
+  createGroup: (data: TeamGroupCreateInput) => Promise<ApiResponse<TeamGroup>>
+  updateGroup: (id: string, patch: TeamGroupUpdateInput) => Promise<ApiResponse<TeamGroup>>
+  deleteGroup: (id: string) => Promise<ApiResponse<void>>
+  /** 将队伍分配到分组（groupId=null 表示移出分组） */
+  assignTeamToGroup: (teamId: string, groupId: string | null) => Promise<ApiResponse<boolean>>
+  /** 随机分组：将赛事下的队伍随机分配到多个分组 */
+  randomAssignGroups: (
+    params: RandomAssignGroupParams
+  ) => Promise<ApiResponse<RandomAssignGroupResult>>
+  /** 导入赛事包（Task 4 实现 IPC handler，当前为占位） */
+  importEventPackage: (
+    req: ImportEventPackageRequest
+  ) => Promise<ApiResponse<ImportEventPackageResult>>
+  /** 预览赛事包（解析 JSON 返回摘要，不写库） */
+  previewEventPackage: (
+    filePath: string
+  ) => Promise<ApiResponse<ImportEventPackagePreviewResult>>
 }
 
 export interface DrawAPI {
@@ -125,6 +168,11 @@ export interface DrawAPI {
   deleteSession: (id: string) => Promise<ApiResponse<boolean>>
   listDrawnTopicIds: (eventId: string) => Promise<ApiResponse<string[]>>
   redo: (oldSessionId: string, params: DrawParams) => Promise<ApiResponse<DrawResult>>
+  /** 确认抽取结果：写入队伍历史 + 标记 session 已确认。
+   *  返回更新后的 session 详情（含 settings.confirmed=true） */
+  confirmDrawSession: (sessionId: string) => Promise<ApiResponse<DrawSessionDetail | undefined>>
+  /** Task 6.7：按 topic_id 查询最近一条多队模式抽取明细（大屏多队渲染用） */
+  getItemByTopicId: (topicId: string) => Promise<ApiResponse<DrawSessionItem | undefined>>
 }
 
 export interface AuditAPI {
@@ -180,10 +228,10 @@ export interface DedupAPI {
 }
 
 export interface FileAPI {
-  /** 调用主进程 dialog.showOpenDialog 选择单个文件，返回文件路径或 null */
+  /** 调用主进程 dialog.showOpenDialog 选择单个文件，返回 ApiResponse 包裹的文件路径或 null */
   pickFile: (
     filters?: Array<{ name: string; extensions: string[] }>
-  ) => Promise<string | null>
+  ) => Promise<ApiResponse<string | null>>
 }
 
 export interface SystemAPI {
@@ -205,6 +253,115 @@ export interface CustomFieldAPI {
   delete: (fieldKey: string) => Promise<ApiResponse<void>>
 }
 
+export interface BatchEditAPI {
+  /** 执行批量编辑（事务 + 快照 + 历史） */
+  execute: (
+    req: BatchEditExecuteRequest
+  ) => Promise<ApiResponse<BatchEditExecuteResult>>
+  /** 撤销一次批量编辑 */
+  revert: (historyId: string) => Promise<ApiResponse<BatchEditRevertResult>>
+  /** 列出最近 20 条批量编辑历史 */
+  listHistory: () => Promise<ApiResponse<BatchEditHistory[]>>
+}
+
+export interface UndoAPI {
+  /** 撤销最近一步操作（或指定 logId） */
+  undo: (req?: UndoRequest) => Promise<ApiResponse<UndoResult>>
+  /** 重做（占位，本阶段返回"暂未实现"） */
+  redo: (req?: RedoRequest) => Promise<ApiResponse<RedoResult>>
+  /** 列出最近 N 条 undo_log（默认 50） */
+  listUndoLog: (limit?: number) => Promise<ApiResponse<UndoLogEntry[]>>
+  /** 清空 undo_log 表（数据重置时调用） */
+  clearUndoLog: () => Promise<ApiResponse<number>>
+}
+
+export interface FormatAPI {
+  list: () => Promise<ApiResponse<DebateFormat[]>>
+  get: (id: string) => Promise<ApiResponse<DebateFormat | null>>
+  create: (opts: { name: string; description?: string; formatData: DebateFormatData }) => Promise<ApiResponse<DebateFormat>>
+  update: (id: string, opts: { name?: string; description?: string; formatData?: DebateFormatData }) => Promise<ApiResponse<DebateFormat | null>>
+  delete: (id: string) => Promise<ApiResponse<boolean>>
+  seedPresets: () => Promise<ApiResponse<number>>
+  /** 导入赛制（从 JSON 重建） */
+  importFormat: (data: { name: string; description?: string; formatData: DebateFormatData }) => Promise<ApiResponse<DebateFormat>>
+  /** 导出赛制为可序列化 JSON */
+  exportFormat: (id: string) => Promise<ApiResponse<{ name: string; description: string; formatData: DebateFormatData } | null>>
+}
+
+export interface TimerAPI {
+  createSession: (opts: {
+    formatId: string
+    formatSnapshot: DebateFormatData
+    label?: string
+    eventId?: string
+    roundId?: string
+    teamAffId?: string
+    teamNegId?: string
+    topicId?: string
+    eventName?: string
+    teamAffName?: string
+    teamNegName?: string
+    topicTitle?: string
+  }) => Promise<ApiResponse<TimerSession>>
+  getSession: (id: string) => Promise<ApiResponse<TimerSession | null>>
+  listSessions: (limit?: number) => Promise<ApiResponse<TimerSession[]>>
+  updateSession: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs'>>) => Promise<ApiResponse<TimerSession | null>>
+  deleteSession: (id: string) => Promise<ApiResponse<boolean>>
+  listRecords: (sessionId: string) => Promise<ApiResponse<TimerRecord[]>>
+  /** 结束会话：状态置为 finished + 写 endedAt */
+  finishSession: (id: string, endedAt: string) => Promise<ApiResponse<TimerSession | null>>
+  /** 新增计时记录（环节开始时调用） */
+  addRecord: (opts: {
+    sessionId: string
+    stageIndex: number
+    stageName: string
+    side: StageSide
+    durationMs: number
+    startedAt: string
+  }) => Promise<ApiResponse<TimerRecord>>
+  /** 完成计时记录（环节结束时调用，写 actualMs/endedAt/pauseCount） */
+  finishRecord: (
+    sessionId: string,
+    stageIndex: number,
+    actualMs: number,
+    endedAt: string,
+    pauseCount: number
+  ) => Promise<ApiResponse<void>>
+  /** 导出会话的所有计时记录 */
+  exportRecords: (sessionId: string) => Promise<ApiResponse<TimerRecord[]>>
+  /** 获取计时器主题配置 */
+  getTheme: () => Promise<ApiResponse<TimerTheme>>
+  /** 更新计时器主题配置（部分字段） */
+  setTheme: (theme: Partial<TimerTheme>) => Promise<ApiResponse<TimerTheme>>
+}
+
+export interface BellAPI {
+  /** 列出所有自定义铃声 */
+  list: () => Promise<ApiResponse<BellAsset[]>>
+  /** 上传铃声：renderer 读取文件为 base64 后传入 */
+  upload: (opts: { name: string; fileName: string; base64: string; mimeType: string }) => Promise<ApiResponse<BellAsset>>
+  /** 删除铃声（同时删除文件） */
+  delete: (id: string) => Promise<ApiResponse<boolean>>
+  /** 获取铃声 data URL（用于 <audio> 播放） */
+  getDataUrl: (id: string) => Promise<ApiResponse<string | null>>
+  /** 试听铃声：返回文件绝对路径，由渲染进程 HTML5 Audio 播放 */
+  playBell: (bellId: string) => Promise<ApiResponse<{ filePath: string }>>
+  /** 停止试听：通知主进程（实际停止由渲染进程完成） */
+  stopBell: () => Promise<ApiResponse<boolean>>
+}
+
+export interface BackgroundAPI {
+  /** 上传背景图片：renderer 读取文件为 base64 后传入 */
+  upload: (
+    fileName: string,
+    base64: string
+  ) => Promise<ApiResponse<{ id: string; fileName: string; fileUrl: string }>>
+  /** 列出所有自定义背景图片 */
+  list: () => Promise<ApiResponse<BackgroundFile[]>>
+  /** 按 id 删除背景图片 */
+  delete: (id: string) => Promise<ApiResponse<void>>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -219,6 +376,12 @@ declare global {
     fileAPI: FileAPI
     systemAPI: SystemAPI
     customFieldAPI: CustomFieldAPI
+    batchEditAPI: BatchEditAPI
+    undoAPI: UndoAPI
+    formatAPI: FormatAPI
+    timerAPI: TimerAPI
+    bellAPI: BellAPI
+    backgroundAPI: BackgroundAPI
   }
 }
 
