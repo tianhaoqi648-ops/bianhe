@@ -1,6 +1,8 @@
-import { Button, List, Select, Space, Tag, Typography, Empty } from 'antd';
+import { Button, List, Select, Space, Tag, Typography } from 'antd';
 import { SwapOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { Team } from '../../../../shared/types';
+import EmptyState from '../common/EmptyState';
+import { spacing, fontSize } from '../../styles/tokens';
 
 export interface TeamPair {
   teamA: Team | null;
@@ -36,12 +38,12 @@ export default function TeamPairing({ teams, pairs, onChange }: TeamPairingProps
   };
 
   if (teams.length === 0) {
-    return <Empty description="该赛事暂无队伍，请先在赛事管理中添加队伍" />;
+    return <EmptyState type="default" description="该赛事暂无队伍，请先在赛事管理中添加队伍" />;
   }
 
   if (teams.length % 2 !== 0) {
     return (
-      <div style={{ padding: 12, color: '#ff4d4f' }}>
+      <div style={{ padding: spacing.md, color: '#ff4d4f' }}>
         队伍数量为奇数（{teams.length}），需为偶数才能配对。
       </div>
     );
@@ -91,7 +93,7 @@ export default function TeamPairing({ teams, pairs, onChange }: TeamPairingProps
           </List.Item>
         )}
       />
-      <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+      <Typography.Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
         持方（正方/反方）在抽取时由引擎随机分配，此处仅配置对阵双方。
       </Typography.Text>
     </div>

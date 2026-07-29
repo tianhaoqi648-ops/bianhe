@@ -26,13 +26,31 @@ const EMPTY_EXTRA: Record<CandidateField, string[]> = {
 }
 
 /**
+ * Bug 2.4: 运行时类型校验函数，防止旧版/篡改数据导致候选列表被字符拆分污染。
+ * 确保用户配置数据格式为 Record<CandidateField, string[]>。
+ */
+function isCandidateMap(v: unknown): v is Record<CandidateField, string[]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const obj = v as Record<string, unknown>
+  return Object.keys(obj).every(
+    (k) => Array.isArray(obj[k]) && obj[k]!.every((x) => typeof x === 'string')
+  )
+}
+
+/**
+ * 读取用户扩展候选，带类型校验兜底。
+ */
+function readUserExtra(): Record<CandidateField, string[]> {
+  const raw = auditRepo.getSetting(SETTING_KEY)
+  return isCandidateMap(raw) ? raw : { ...EMPTY_EXTRA }
+}
+
+/**
  * 获取合并后的候选值（系统候选 + 用户扩展）。
  * 用户扩展值追加在系统候选之后，去重。
  */
 export function getMergedCandidates(): Record<CandidateField, string[]> {
-  const userExtra =
-    (auditRepo.getSetting(SETTING_KEY) as Record<CandidateField, string[]> | undefined) ??
-    EMPTY_EXTRA
+  const userExtra = readUserExtra()
 
   const merged = {} as Record<CandidateField, string[]>
   for (const field of Object.keys(SYSTEM_CANDIDATES) as CandidateField[]) {
@@ -50,14 +68,14 @@ export function getMergedCandidates(): Record<CandidateField, string[]> {
  * 永久加入一个候选值。
  * - 若已存在（系统候选或已加入过的扩展候选），不重复写入
  * - 否则追加到 settings 表 key='system.candidates' 对应字段数组
+ *
+ * Bug 4.9: 只读一次 DB，避免重复读取。
  */
 export function addCandidateValue(field: CandidateField, value: string): void {
-  const current = getMergedCandidates()
-  if (current[field].includes(value)) return
-
-  const userExtra =
-    (auditRepo.getSetting(SETTING_KEY) as Record<CandidateField, string[]> | undefined) ??
-    EMPTY_EXTRA
+  const userExtra = readUserExtra()
+  // 合并系统候选 + 用户扩展用于判重
+  const merged = new Set<string>([...SYSTEM_CANDIDATES[field], ...(userExtra[field] ?? [])])
+  if (merged.has(value)) return
 
   userExtra[field] = [...(userExtra[field] ?? []), value]
   auditRepo.setSetting(SETTING_KEY, userExtra)
@@ -83,10 +101,14 @@ export function getMergedCandidatesWithDB(): Record<CandidateField, string[]> {
     'source_type'
   ])
   const merged: Record<CandidateField, string[]> = { ...system }
+  // Bug 4.7: 显式过滤系统候选 key，防止 dbValues 含未知 key
   for (const k of Object.keys(dbValues) as CandidateField[]) {
-    const set = new Set([...(system[k] ?? []), ...dbValues[k].map((r) => r.value)])
-    // 过滤空字符串（DB 中可能是空字符串）
-    set.delete('')
+    if (!SYSTEM_CANDIDATES[k]) continue
+    const set = new Set<string>(system[k] ?? [])
+    // Bug 4.8: 过滤 null 和空字符串（DB 中可能是 null 或空字符串）
+    for (const r of dbValues[k]) {
+      if (r.value != null && r.value !== '') set.add(r.value)
+    }
     merged[k] = Array.from(set)
   }
   return merged

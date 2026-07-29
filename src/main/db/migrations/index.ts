@@ -12,10 +12,15 @@
 // ============================================================
 
 import type { Database } from 'better-sqlite3'
+import { fixStancePairing } from './20260801_fix_stance_pairing'
+import { addAllowRepeatAndTestFlag } from './20260901_add_allow_repeat_and_test_flag'
+import { fixFkAndAddSnapshotColumns } from './20260902_fix_fk_and_add_snapshot_columns'
+import { addMissingIndexes } from './20260903_add_missing_indexes'
 
 interface Migration {
   id: string
   up: (db: Database) => void
+  optional?: boolean
 }
 
 const MIGRATIONS: Migration[] = [
@@ -202,8 +207,231 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_bell_assets_created ON bell_assets(created_at DESC);
     `)
     }
+  },
+  {
+    id: '20260727_add_stage_remaining_cache_to_timer_sessions',
+    up: (db) => {
+      // 为 timer_sessions 表添加 stage_remaining_cache JSON 列，存储各环节最近离开时的 remainingMs
+      // 用于 prevStage 完全保留策略
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN stage_remaining_cache TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260730_add_free_debate_remaining_to_timer_sessions',
+    up: (db) => {
+      // 为 timer_sessions 表添加 aff_remaining_ms / neg_remaining_ms 字段
+      // 用于持久化自由辩论环节双方独立计时器
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_remaining_ms INTEGER')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_remaining_ms INTEGER')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260731_add_undone_at_to_undo_log',
+    up: (db) => {
+      // 为 undo_log 表添加 undone_at 字段，用于实现 Redo 功能
+      // executeUndo 不再删除 log，而是标记 undone_at；executeRedo 清除 undone_at
+      try {
+        db.exec('ALTER TABLE undo_log ADD COLUMN undone_at TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      // 创建 redo 队列索引（仅 undone_at IS NOT NULL 的行）
+      try {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_undo_log_undone_at ON undo_log(undone_at) WHERE undone_at IS NOT NULL')
+      } catch {
+        /* 索引已存在 */
+      }
+    }
+  },
+  {
+    id: '20260729_add_snapshot_columns_to_draw_session_items',
+    up: (db) => {
+      // 为 draw_session_items 表添加冗余快照列：
+      //   topic_title / team_a_name / team_b_name
+      // 用于辩题或队伍硬删除后仍能显示原始标题/名称，避免出现 ID 片段
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN topic_title TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_a_name TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_b_name TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260729_add_session_id_to_team_history',
+    up: (db) => {
+      // 为 team_history 表添加 session_id 列，用于确认抽取结果时关联去重
+      // （重抽时先用 session_id 删除旧历史再写入新历史）
+      try {
+        db.exec('ALTER TABLE team_history ADD COLUMN session_id TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_team_history_session_id ON team_history(session_id) WHERE session_id IS NOT NULL')
+      } catch {
+        /* 索引已存在 */
+      }
+    }
+  },
+  {
+    id: '20260730_add_stance_to_team_history',
+    up: (db) => {
+      // 为 team_history 表添加 stance 列，用于记录队伍持方（正方/反方）
+      try {
+        db.exec('ALTER TABLE team_history ADD COLUMN stance TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260729_create_team_groups_and_extend_teams',
+    up: (db) => {
+      // 1. 创建 team_groups 表（schema.sql 中也有 IF NOT EXISTS 定义，此处兜底）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_groups (
+          id          TEXT PRIMARY KEY,
+          event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE,
+          name        TEXT NOT NULL,
+          sort_order  INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_groups_event_id ON team_groups(event_id);
+      `)
+      // 2. 为 teams 表添加 group_id 列（可空，引用 team_groups.id）
+      try {
+        db.exec('ALTER TABLE teams ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_teams_group_id ON teams(group_id)')
+      } catch {
+        /* 索引已存在 */
+      }
+    }
+  },
+  {
+    id: '20260729_extend_draw_session_items_for_multi_team',
+    up: (db) => {
+      // 为 draw_session_items 表添加 team_ids（JSON 数组）和 group_id 列
+      // team_ids：多队同题模式下的队伍 id 列表（versus 模式为空，仍用 team_a_id/team_b_id）
+      // group_id：分组模式下记录所属分组
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_ids TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_draw_session_items_group_id ON draw_session_items(group_id)')
+      } catch {
+        /* 索引已存在 */
+      }
+    }
+  },
+  {
+    id: '20260730_add_is_round_robin_to_rounds',
+    up: (db) => {
+      // 为 rounds 表添加 is_round_robin 列（循环赛标记，0=普通轮次，1=循环赛）
+      try {
+        db.exec('ALTER TABLE rounds ADD COLUMN is_round_robin INTEGER NOT NULL DEFAULT 0')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260730_add_team_stances_and_names_to_draw_session_items',
+    up: (db) => {
+      // 为 draw_session_items 表添加 team_stances 和 team_names 列
+      // team_stances：JSON 数组，多队持方快照，与 team_ids 一一对应
+      // team_names：JSON 数组，队伍名快照，与 team_ids 一一对应
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_stances TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_names TEXT')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260801_fix_stance_pairing_v4',
+    up: (db) => {
+      // 修正旧会话持方数据：
+      //   - team_stances 数组相邻同侧 → 翻转第二位
+      //   - stance_a / stance_b 同侧 → 翻转 stance_b
+      // 失败时记录错误日志，不阻塞应用启动（migration 仍标记为已应用）
+      try {
+        const { fixed, skipped } = fixStancePairing(db)
+        console.log('[migration] fix_stance_pairing_v4 done', { fixed, skipped })
+      } catch (e) {
+        console.error('[migration] fix_stance_pairing_v4 failed:', e)
+      }
+    }
+  },
+  {
+    id: '20260901_add_allow_repeat_and_test_flag',
+    up: (db) => {
+      // 为 events 表添加 allow_repeat 列（赛事级"允许辩题重复"配置，0=不允许，1=允许）
+      // 幂等性：内部用 pragma_table_info 检查列是否已存在，已存在则跳过
+      // 不修改 draw_sessions：settings 是 JSON 字段，已支持 is_test 子字段
+      addAllowRepeatAndTestFlag(db)
+    }
+  },
+  {
+    id: '20260902_fix_fk_and_add_snapshot_columns',
+    up: (db) => {
+      // P1-16: team_history.topic_id / draw_session_items.topic_id
+      //        ON DELETE CASCADE → ON DELETE SET NULL（避免删辩题级联删历史）
+      // P1-17: timer_sessions.format_id NOT NULL → 可空 + ON DELETE SET NULL
+      //        （避免删赛制外键约束失败）
+      // P2-44: timer_sessions 添加 event_name / team_aff_name / team_neg_name / topic_title
+      //        冗余快照列（避免删事件/队伍/辩题后显示空名称）
+      // SQLite 不支持 ALTER FOREIGN KEY，通过重建表实现
+      fixFkAndAddSnapshotColumns(db)
+    }
+  },
+  {
+    id: '20260903_add_missing_indexes',
+    up: (db) => {
+      // P4-1: topics.source_type 缺索引
+      // P4-2: events.status 缺索引
+      // P4-3: team_history.topic_id 缺索引
+      addMissingIndexes(db)
+    }
   }
-]
+].sort((a, b) => a.id.localeCompare(b.id))
 
 /**
  * 确保 __migrations 表存在。
@@ -230,7 +458,17 @@ export function runMigrations(db: Database): void {
   )
   for (const m of MIGRATIONS) {
     if (applied.has(m.id)) continue
-    m.up(db)
+    try {
+      m.up(db)
+    } catch (e) {
+      console.error(`[migrations] Migration ${m.id} failed:`, e)
+      if (m.optional) {
+        // 可选迁移失败时仅记录日志，继续执行后续迁移
+        continue
+      }
+      // 关键迁移失败时重新抛出，中止整个迁移流程（保留原有行为）
+      throw e
+    }
     db.prepare('INSERT INTO __migrations (id, applied_at) VALUES (?, ?)').run(
       m.id,
       new Date().toISOString()

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Button, Typography, Space } from 'antd';
 import {
   LeftOutlined,
@@ -9,14 +9,20 @@ import {
   FullscreenExitOutlined
 } from '@ant-design/icons';
 import type { DrawResult, Team, Round } from '../../../../shared/types';
+import { normalizeStances } from '../../../../shared/stance-utils';
 import { kbdStyle } from '../../styles/shared';
-import { spacing, radius } from '../../styles/tokens';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { spacing, radius, fontSize } from '../../styles/tokens';
+import { useSettingsStore, getBgmSetting } from '../../stores/settingsStore';
+import { useSoundManager } from '../SoundManager';
 import {
   loadTagDisplayConfig,
   filterTag,
   filterTags
 } from '../../utils/tagDisplay';
+import { useHotkeys, useHotkeyScope } from '../../hooks/useHotkeys';
+import KbdHint from '../common/KbdHint';
+import DrawAnimation from './DrawAnimation';
+import type { RevealMode } from './RevealAnimation';
 
 export interface BigScreenProps {
   result: DrawResult;
@@ -24,35 +30,151 @@ export interface BigScreenProps {
   round: Round | null;
   eventName: string;
   onClose: () => void;
+  /** 抽取进行中（由 DrawPage 传入），用于触发大屏三幕动画 */
+  animating?: boolean;
+  /** 当前已揭晓题数（由 DrawPage 提升管理，便于小屏同步进度） */
+  revealedCount: number;
+  setRevealedCount: React.Dispatch<React.SetStateAction<number>>;
+  /** P3.1 Task 1：揭晓动画模式，透传给 DrawAnimation */
+  revealMode?: RevealMode;
 }
 
-export default function BigScreen({ result, teams, round, eventName, onClose }: BigScreenProps) {
+export default function BigScreen({
+  result,
+  teams,
+  round,
+  eventName,
+  onClose,
+  animating,
+  revealedCount,
+  setRevealedCount,
+  revealMode = 'fade'
+}: BigScreenProps) {
   const { topics, session } = result;
-  const [revealedCount, setRevealedCount] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  // 大屏三幕动画遮罩：animating 由 false→true 时锁存为 true，
+  // 由用户在第三幕按 →/Space 继续（onAdvance）时解除，使三幕完整播完
+  const [bigAnimating, setBigAnimating] = useState(false);
+  // closing ref：避免关闭动画期间 exitFullscreen 触发重复 onClose
+  const closingRef = useRef(false);
   const settings = useSettingsStore((s) => s.settings);
+  const { playBgm, stopBgm } = useSoundManager();
+  const bgmSetting = useMemo(() => getBgmSetting(settings), [settings]);
 
-  // ESC 退出 + 左右切换
+  // 锁存 bigAnimating：仅在 animating 变 true 时触发动画
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowRight' && revealedCount < topics.length) {
-        handleNext();
-      } else if (e.key === 'ArrowLeft' && revealedCount > 0) {
-        handlePrev();
+    if (animating) {
+      setBigAnimating(true);
+      // P3.1 Task 5：揭晓动画开始时播放 BGM（不循环）
+      if (bgmSetting.volume > 0) {
+        playBgm(bgmSetting.defaultTrack, { loop: false, volume: bgmSetting.volume / 100 });
+      }
+    }
+  }, [animating, bgmSetting, playBgm]);
+
+  // P3.1 Task 5：揭晓动画结束（bigAnimating → false）时淡出 BGM
+  useEffect(() => {
+    if (!bigAnimating) {
+      stopBgm(300);
+    }
+  }, [bigAnimating, stopBgm]);
+
+  // 第二幕揭晓第一题回调
+  const handleRevealFirst = () => setRevealedCount(1);
+  // 第三幕用户继续：关闭遮罩，正常 BigScreen 内容接管（revealedCount 已为 1）
+  const handleAdvance = () => setBigAnimating(false);
+
+  // 大屏快捷键：ESC 退出 + 左右切换 + Space 下一题 + F 全屏（通过全局 HotkeyManager 管理）
+  useHotkeyScope('bigscreen');
+  useHotkeys([
+    {
+      combo: 'escape',
+      description: '退出大屏',
+      scope: 'bigscreen',
+      handler: () => onClose()
+    },
+    {
+      combo: 'arrowright',
+      description: '下一题',
+      scope: 'bigscreen',
+      handler: () => {
+        if (revealedCount < topics.length) handleNext();
+      },
+      // 动画期间禁用题目切换（→/Space 由 DrawAnimation 第三幕接管）
+      enabled: !bigAnimating && revealedCount < topics.length
+    },
+    {
+      combo: 'arrowleft',
+      description: '上一题',
+      scope: 'bigscreen',
+      handler: () => {
+        if (revealedCount > 0) handlePrev();
+      },
+      enabled: !bigAnimating && revealedCount > 0
+    },
+    {
+      combo: 'space',
+      description: '下一题',
+      scope: 'bigscreen',
+      handler: () => {
+        if (revealedCount < topics.length) handleNext();
+      },
+      enabled: !bigAnimating && revealedCount < topics.length
+    },
+    {
+      combo: 'f',
+      description: '切换浏览器全屏',
+      scope: 'bigscreen',
+      handler: () => handleToggleFullscreen()
+    }
+  ]);
+
+  // ===== 自动浏览器全屏（投屏模式）=====
+  // 挂载时自动 requestFullscreen，卸载时自动 exitFullscreen
+  useEffect(() => {
+    if (!document.fullscreenElement) {
+      void document.documentElement.requestFullscreen().catch(() => {
+        // 用户拒绝全屏权限或环境不支持，不阻塞大屏打开
+      });
+    }
+    return () => {
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [revealedCount, topics.length, onClose]);
+  }, []);
 
-  // 监听全屏状态
+  // ===== 锁定 body/html 滚动（防止父页面滚动条穿透到大屏）=====
+  // 大屏为 position:fixed 覆盖视口，但浏览器原生滚动条无法被 z-index 覆盖，
+  // 必须从源头锁定 body/html 的 overflow
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+    };
+  }, []);
+
+  // 监听全屏状态变化：同步 isFullscreen + ESC 退出浏览器全屏时同步关闭大屏
+  useEffect(() => {
+    const handler = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+      // 用户主动退出浏览器全屏（非 closing 流程），同步关闭大屏
+      if (!isFs && !closingRef.current) {
+        closingRef.current = true;
+        onClose();
+      }
+    };
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
-  }, []);
+  }, [onClose]);
 
   const allRevealed = revealedCount >= topics.length;
   const currentTopic = revealedCount > 0 ? topics[revealedCount - 1] : null;
@@ -61,6 +183,16 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
     : null;
   const teamA = currentItem ? teams.find((t) => t.id === currentItem.team_a_id) : null;
   const teamB = currentItem ? teams.find((t) => t.id === currentItem.team_b_id) : null;
+
+  // 长辩题自动缩放字号：按字数分 4 档
+  const topicFontSize = useMemo(() => {
+    if (!currentTopic) return 'clamp(28px, 5vw, 64px)'
+    const len = currentTopic.title.length
+    if (len <= 20) return 'clamp(40px, 6vw, 72px)'   // 短辩题：大字号
+    if (len <= 40) return 'clamp(32px, 5vw, 56px)'   // 中等
+    if (len <= 60) return 'clamp(24px, 4vw, 44px)'   // 长
+    return 'clamp(20px, 3vw, 36px)'                  // 超长（>60字）
+  }, [currentTopic])
 
   const handleNext = () => {
     if (revealedCount >= topics.length) return;
@@ -93,24 +225,21 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
       {/* 顶部：轮次 + 索引指示器 + 关闭/全屏 */}
       <div
         style={{
-          position: 'absolute',
-          top: 24,
-          left: 0,
-          right: 0,
+          width: '100%',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: `0 40px`,
+          flexShrink: 0,
           zIndex: 2
         }}
       >
-        <Space size={16} style={{ fontSize: 22, color: 'rgba(255,255,255,0.85)' }}>
+        <Space size={16} style={{ fontSize: 'clamp(14px, 1.5vw, 22px)', color: 'rgba(255,255,255,0.85)' }}>
           <span>{eventName}</span>
           {round?.name && <span>· {round.name}</span>}
         </Space>
 
         {/* 题目索引圆点指示器 */}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '40vw' }}>
           {topics.map((_, idx) => (
             <span
               key={idx}
@@ -128,18 +257,22 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
         </div>
 
         <Space size={8}>
-          <Button
-            type="text"
-            icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-            onClick={handleToggleFullscreen}
-            style={{ color: '#fff', fontSize: 20 }}
-          />
-          <Button
-            type="text"
-            icon={<CloseOutlined />}
-            onClick={onClose}
-            style={{ color: '#fff', fontSize: 20 }}
-          />
+          <KbdHint kbd="F" description="切换浏览器全屏">
+            <Button
+              type="text"
+              icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+              onClick={handleToggleFullscreen}
+              style={{ color: '#fff', fontSize: fontSize.h3 }}
+            />
+          </KbdHint>
+          <KbdHint kbd="Esc" description="退出大屏">
+            <Button
+              type="text"
+              icon={<CloseOutlined />}
+              onClick={onClose}
+              style={{ color: '#fff', fontSize: fontSize.h3 }}
+            />
+          </KbdHint>
         </Space>
       </div>
 
@@ -150,16 +283,19 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          width: '100%'
+          alignItems: 'center',
+          width: '100%',
+          minHeight: 0,
+          overflow: 'hidden'
         }}
       >
         {!currentTopic ? (
           <div style={{ textAlign: 'center' }} className="fade-in-up">
-            <div style={{ fontSize: 48, fontWeight: 700, marginBottom: 16 }}>准备抽取</div>
-            <div style={{ fontSize: 24, color: 'rgba(255,255,255,0.7)', marginBottom: 24 }}>
+            <div style={{ fontSize: 'clamp(32px, 5vw, 48px)', fontWeight: 700, marginBottom: 'clamp(8px, 1.5vh, 16px)' }}>准备抽取</div>
+            <div style={{ fontSize: 'clamp(18px, 2vw, 28px)', color: 'rgba(255,255,255,0.7)', marginBottom: 'clamp(8px, 2vh, 20px)' }}>
               共 {topics.length} 道辩题待揭晓
             </div>
-            <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.5)' }}>
+            <div style={{ fontSize: 'clamp(14px, 1.5vw, 20px)', color: 'rgba(255,255,255,0.5)' }}>
               按 <kbd style={kbdStyle}>→</kbd> 开始揭晓
             </div>
           </div>
@@ -170,23 +306,14 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
             style={{ textAlign: 'center', width: '100%' }}
           >
             {/* 题号大字水印 */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                fontSize: 280,
-                fontWeight: 900,
-                color: 'rgba(255, 255, 255, 0.04)',
-                pointerEvents: 'none',
-                zIndex: 0
-              }}
-            >
+            <div className="bigscreen-stage-watermark">
               {String(revealedCount).padStart(2, '0')}
             </div>
 
-            <div className="bigscreen-topic-title" style={{ position: 'relative', zIndex: 1 }}>
+            <div
+              className="bigscreen-topic-title"
+              style={{ position: 'relative', zIndex: 1, fontSize: topicFontSize }}
+            >
               {currentTopic.title}
             </div>
 
@@ -211,8 +338,8 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
                     display: 'flex',
                     justifyContent: 'center',
                     gap: 12,
-                    marginTop: 16,
-                    fontSize: 18,
+                    marginTop: 'clamp(8px, 1.5vh, 16px)',
+                    fontSize: 'clamp(14px, 1.5vw, 20px)',
                     position: 'relative',
                     zIndex: 1
                   }}
@@ -221,8 +348,8 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
                     <span
                       key={t.key}
                       style={{
-                        padding: '4px 16px',
-                        borderRadius: 16,
+                        padding: 'clamp(4px, 0.5vh, 8px) clamp(8px, 1vw, 16px)',
+                        borderRadius: radius.xxl,
                         background: t.color ? 'rgba(22,119,255,0.2)' : 'rgba(255,255,255,0.1)',
                         border: `1px solid ${t.color ? 'rgba(22,119,255,0.4)' : 'rgba(255,255,255,0.2)'}`,
                         color: 'rgba(255,255,255,0.9)'
@@ -235,7 +362,10 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
               );
             })()}
 
-            {/* 持方对阵 */}
+            {/* 持方对阵
+             * - 对战模式（teamA + teamB 均存在）：渲染双方 VS
+             * - 单人模式（teamB 为 null，仅 teamA 存在）：只渲染一方持方 + 队伍名
+             */}
             {teamA && teamB && currentItem && (
               <div className="bigscreen-versus" style={{ position: 'relative', zIndex: 1 }}>
                 <div
@@ -261,6 +391,86 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
                 </div>
               </div>
             )}
+            {/* 单人模式：teamB 不存在时只渲染一方持方 + 队伍名 */}
+            {teamA && !teamB && currentItem && (
+              <div className="bigscreen-versus" style={{ position: 'relative', zIndex: 1 }}>
+                <div
+                  className="bigscreen-team slide-in-left"
+                  style={{
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                  }}
+                >
+                  <div className="bigscreen-stance">{currentItem.stance_a}</div>
+                  <div>{teamA.name}</div>
+                </div>
+              </div>
+            )}
+            {/* 多队模式：team_ids 非空时渲染两两配对 VS */}
+            {currentItem && Array.isArray(currentItem.team_ids) && currentItem.team_ids.length > 0 && !teamA && !teamB && (() => {
+              const teamIds = currentItem.team_ids as string[];
+              const stances = (currentItem.team_stances ?? []) as string[];
+              const names = (currentItem.team_names ?? []) as string[];
+              // 循环赛检测：所有持位均为空字符串
+              const isRoundRobin = stances.length > 0 && stances.every((s) => !s);
+              // Task 12.2：渲染层防御性持方修正（不修改原 currentItem.team_stances）
+              const normalizedStances = normalizeStances(stances);
+
+              // 构建配对
+              const pairs: Array<{ left: { name: string; stance?: string }; right: { name: string; stance?: string } | null }> = [];
+              for (let i = 0; i < teamIds.length; i += 2) {
+                const leftName = names[i] ?? '（已删除队伍）';
+                const leftStance = normalizedStances[i];
+                const left = { name: leftName, stance: leftStance };
+                let right: { name: string; stance?: string } | null = null;
+                if (i + 1 < teamIds.length) {
+                  right = { name: names[i + 1] ?? '（已删除队伍）', stance: normalizedStances[i + 1] };
+                }
+                pairs.push({ left, right });
+              }
+
+              return (
+                <div className="bigscreen-versus" style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', gap: 24, alignItems: 'center' }}>
+                  {pairs.map((pair, idx) => (
+                    <div key={idx} className="bigscreen-versus" style={{ display: 'flex', alignItems: 'center', gap: 48, justifyContent: 'center' }}>
+                      <div
+                        className="bigscreen-team slide-in-left"
+                        style={{
+                          textAlign: 'center',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                        }}
+                      >
+                        {!isRoundRobin && pair.left.stance && (
+                          <div className="bigscreen-stance" style={{ fontSize: 24, color: '#999', marginBottom: 8 }}>{pair.left.stance}</div>
+                        )}
+                        <div style={{ fontSize: 40, fontWeight: 700 }}>{pair.left.name}</div>
+                      </div>
+                      {pair.right ? (
+                        <>
+                          <div className="bigscreen-vs vs-glow" style={{ fontSize: 48, fontWeight: 800, color: '#ff4d4f' }}>VS</div>
+                          <div
+                            className="bigscreen-team slide-in-right"
+                            style={{
+                              textAlign: 'center',
+                              border: '1px solid rgba(255, 255, 255, 0.2)',
+                              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+                            }}
+                          >
+                            {!isRoundRobin && pair.right.stance && (
+                              <div className="bigscreen-stance" style={{ fontSize: 24, color: '#999', marginBottom: 8 }}>{pair.right.stance}</div>
+                            )}
+                            <div style={{ fontSize: 40, fontWeight: 700 }}>{pair.right.name}</div>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 32, color: '#999' }}>轮空</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -268,64 +478,88 @@ export default function BigScreen({ result, teams, round, eventName, onClose }: 
       {/* 底部按钮组 */}
       <div
         style={{
+          width: '100%',
+          flexShrink: 0,
           display: 'flex',
           gap: 24,
           alignItems: 'center',
           justifyContent: 'center',
-          padding: `${spacing.lg} ${spacing.xxxl}`,
+          padding: `${spacing.md} ${spacing.xxl}`,
           background: 'rgba(0, 0, 0, 0.3)',
           borderRadius: radius.xl,
           backdropFilter: 'blur(10px)',
-          WebkitBackdropFilter: 'blur(10px)',
-          marginBottom: spacing.xl
+          WebkitBackdropFilter: 'blur(10px)'
         }}
       >
-        <Button
-          size="large"
-          icon={<LeftOutlined />}
-          disabled={revealedCount === 0}
-          onClick={handlePrev}
-          style={{ minWidth: 120 }}
-        >
-          上一题
-        </Button>
-        {!allRevealed ? (
+        <KbdHint kbd="←" description="上一题">
           <Button
-            type="primary"
             size="large"
-            icon={<RightOutlined />}
-            onClick={handleNext}
-            style={{
-              minWidth: 220,
-              height: 64,
-              fontSize: 20,
-              borderRadius: radius.lg,
-              background: 'linear-gradient(135deg, #ffd666 0%, #faad14 100%)',
-              border: 'none',
-              boxShadow: '0 4px 16px rgba(255, 214, 102, 0.5)'
-            }}
-            className="pulse-primary"
+            icon={<LeftOutlined />}
+            disabled={revealedCount === 0}
+            onClick={handlePrev}
+            style={{ minWidth: 'clamp(90px, 10vw, 120px)', height: 'clamp(40px, 4vw, 48px)' }}
           >
-            {revealedCount === 0 ? '开始揭晓' : '下一题'}
+            上一题
           </Button>
+        </KbdHint>
+        {!allRevealed ? (
+          <KbdHint kbd="→" description="下一题">
+            <Button
+              type="primary"
+              size="large"
+              icon={<RightOutlined />}
+              onClick={handleNext}
+              style={{
+                minWidth: 'clamp(160px, 18vw, 220px)',
+                height: 'clamp(48px, 5vw, 56px)',
+                fontSize: 'clamp(14px, 1.5vw, 18px)',
+                borderRadius: radius.lg,
+                background: 'linear-gradient(135deg, #ffd666 0%, #faad14 100%)',
+                border: 'none',
+                boxShadow: '0 4px 16px rgba(255, 214, 102, 0.5)'
+              }}
+              className="pulse-primary"
+            >
+              {revealedCount === 0 ? '开始揭晓' : '下一题'}
+            </Button>
+          </KbdHint>
         ) : (
           <Button
             size="large"
             type="primary"
             icon={<CheckOutlined />}
             onClick={onClose}
-            style={{ minWidth: 220, height: 64, fontSize: 20, borderRadius: radius.lg }}
+            style={{
+              minWidth: 'clamp(160px, 18vw, 220px)',
+              height: 'clamp(48px, 5vw, 56px)',
+              fontSize: 'clamp(14px, 1.5vw, 18px)',
+              borderRadius: radius.lg
+            }}
           >
             全部揭晓，退出
           </Button>
         )}
       </div>
 
-      <div style={{ textAlign: 'center' }}>
-        <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+      <div style={{ textAlign: 'center', width: '100%', flexShrink: 0 }}>
+        <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'clamp(11px, 1vw, 13px)' }}>
           按 <kbd style={kbdStyle}>ESC</kbd> 退出 · <kbd style={kbdStyle}>←</kbd> <kbd style={kbdStyle}>→</kbd> 切换题目
         </Typography.Text>
       </div>
+
+      {/* 大屏三幕动画遮罩：覆盖大屏正常内容，由 bigAnimating 锁存控制 */}
+      {bigAnimating && (
+        <DrawAnimation
+          open
+          mode="bigscreen"
+          result={result}
+          teams={teams}
+          animating={animating}
+          onRevealFirst={handleRevealFirst}
+          onAdvance={handleAdvance}
+          revealMode={revealMode}
+        />
+      )}
     </div>
   );
 }

@@ -197,9 +197,11 @@ function computeTextSimilarity(
   }
 
   // 2. Levenshtein 编辑距离
+  // P2-28: 改为 <= 避免阈值=0 时层失效（dist=0 的精确匹配虽已被上层 exact 捕获，
+  // 但阈值=1 时 < 1 仅捕获 dist=0，改为 <= 1 后 dist=0/1 均可命中）
   if (titleA.length > 0 && titleB.length > 0) {
     const dist = levenshteinDistance(titleA, titleB)
-    if (dist < levenshteinThreshold) {
+    if (dist <= levenshteinThreshold) {
       const maxLen = Math.max(titleA.length, titleB.length)
       const sim = maxLen > 0 ? 1 - dist / maxLen : 0
       return { similarity: Math.max(0, sim), reason: 'levenshtein' }
@@ -207,6 +209,7 @@ function computeTextSimilarity(
   }
 
   // 3. 关键词重合度
+  // P2-29: 钳制 keywordThreshold 为非负，避免 0/负数时过度归组
   const ka = extractKeywords(titleA)
   const kb = extractKeywords(titleB)
   if (ka.length > 0 && kb.length > 0) {
@@ -214,7 +217,8 @@ function computeTextSimilarity(
     const intersection = kb.filter((k) => setA.has(k)).length
     const union = new Set([...ka, ...kb]).size
     const overlap = union > 0 ? intersection / union : 0
-    if (overlap > keywordThreshold) {
+    const clampedKeywordThreshold = Math.max(0, keywordThreshold)
+    if (overlap > clampedKeywordThreshold) {
       return { similarity: overlap, reason: 'keyword' }
     }
   }
@@ -301,6 +305,15 @@ class UnionFind {
  *
  * @param topics 待检测的辩题列表
  * @param options 配置项
+ *
+ * TODO(P4-17): N+1 查询优化评估结论——
+ *   本函数为纯内存计算，不直接访问数据库，无 N+1 DB 查询。
+ *   AI 语义层 similarityFn 为 O(n²) 两两调用模式（类似 N+1），
+ *   已通过 MAX_AI_PAIRS=500 上限 + bigram Jaccard>0.5 预筛双重大幅削减调用次数。
+ *   文本层使用 bigram 倒排索引预筛候选对，避免 O(n²) 全两两比较。
+ *   调用方（如 import.ipc.ts IMPORT_EXECUTE）负责批量拉取库内 existing 题库后
+ *   一次性传入本函数，已实现批量查询模式，无 N+1。
+ *   未来若引入按需查库的相似度源，需保持批量获取而非逐条查询。
  */
 export async function findDuplicates(
   topics: Topic[],
@@ -317,14 +330,60 @@ export async function findDuplicates(
   const uf = new UnionFind(n)
 
   // 1. AI 语义层（可选）
+  //    P1-8 修复：bigram Jaccard 相似度预筛 + 对数上限，避免 O(n²) AI 调用
+  //    兜底：若 bigram 预筛后无候选对，则对所有对调用 AI，避免预筛过严导致 AI 层完全失效
   if (similarityFn) {
+    const bigramSets = topics.map((t) => extractBigrams(t.title))
+    const MAX_AI_PAIRS = 500
+
+    // 收集通过 bigram 预筛的候选对（Jaccard 相似度 > 0.5）
+    const candidatePairs: Array<[number, number]> = []
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
-        const sim = await similarityFn(topics[i], topics[j])
-        if (sim >= aiThreshold) {
-          uf.union(i, j, sim, 'ai')
+        const bi = bigramSets[i]
+        const bj = bigramSets[j]
+        let intersection = 0
+        for (const b of bi) {
+          if (bj.has(b)) intersection++
+        }
+        const union = bi.size + bj.size - intersection
+        // union === 0：双方标题都太短（< 2 字符）无 bigram 可比，跳过
+        if (union === 0) continue
+        const bigramSim = intersection / union
+        if (bigramSim > 0.5) {
+          candidatePairs.push([i, j])
         }
       }
+    }
+
+    // 兜底：bigram 预筛过严（如短标题、同义不同字）导致无候选对时，
+    // 对所有对调用 AI，保证 AI 语义层仍可生效
+    if (candidatePairs.length === 0) {
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          candidatePairs.push([i, j])
+        }
+      }
+    }
+
+    let aiCallCount = 0
+    let skippedPairs = 0
+    for (const [i, j] of candidatePairs) {
+      // 对数上限保护：超过 MAX_AI_PAIRS 的对跳过并记录
+      if (aiCallCount >= MAX_AI_PAIRS) {
+        skippedPairs++
+        continue
+      }
+      aiCallCount++
+      const sim = await similarityFn(topics[i], topics[j])
+      if (sim >= aiThreshold) {
+        uf.union(i, j, sim, 'ai')
+      }
+    }
+    if (skippedPairs > 0) {
+      console.warn(
+        `[dedup-engine] AI 去重比较对数超过上限 ${MAX_AI_PAIRS}，跳过剩余 ${skippedPairs} 对`
+      )
     }
   }
 

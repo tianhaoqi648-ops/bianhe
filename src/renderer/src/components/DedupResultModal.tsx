@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Modal,
+ Modal,
   Button,
   Space,
-  Empty,
-  Spin,
   Typography,
   Tag,
   Alert,
   Popconfirm,
-  message,
   Statistic,
   Card,
   Row,
@@ -19,6 +16,8 @@ import {
   Checkbox,
   theme
 } from 'antd';
+import BrandSpin from './common/BrandSpin';
+import EmptyState from './common/EmptyState';
 import {
   DeleteOutlined,
   CheckCircleOutlined,
@@ -33,6 +32,7 @@ import type {
 import { spacing } from '../styles/tokens';
 import { useSettingsStore } from '../stores/settingsStore';
 import { loadTagDisplayConfig } from '../utils/tagDisplay';
+import { useToast } from '../hooks/useToast';
 
 const { Text, Paragraph } = Typography;
 
@@ -57,7 +57,7 @@ export default function DedupResultModal({
 }: DedupResultModalProps) {
   const { token } = theme.useToken();
   const settings = useSettingsStore((s) => s.settings);
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<DedupRunResult | null>(null);
@@ -121,7 +121,7 @@ export default function DedupResultModal({
 
   const handleDelete = async () => {
     if (selectedIds.size === 0) {
-      messageApi.warning('请先勾选要删除的辩题');
+      toast.warning('请先勾选要删除的辩题');
       return;
     }
     setDeleting(true);
@@ -131,11 +131,11 @@ export default function DedupResultModal({
       if (!res.success) {
         throw new Error(res.error || '删除失败');
       }
-      messageApi.success(`已删除 ${ids.length} 条重复辩题`);
+      toast.success(`已删除 ${ids.length} 条重复辩题`);
       // 重新检查
       await runCheck();
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '删除失败');
+      toast.error(e instanceof Error ? e.message : '删除失败');
     } finally {
       setDeleting(false);
     }
@@ -246,7 +246,6 @@ export default function DedupResultModal({
 
   return (
     <>
-      {contextHolder}
       <Modal
         title="去重检查"
         open={open}
@@ -292,7 +291,7 @@ export default function DedupResultModal({
       >
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
-            <Spin tip="正在检查全库重复..." />
+            <BrandSpin tip="正在检查全库重复..." />
           </div>
         ) : error ? (
           <Alert
@@ -307,7 +306,7 @@ export default function DedupResultModal({
             }
           />
         ) : !result ? (
-          <Empty description="尚未检查" />
+          <EmptyState type="default" description="尚未检查" />
         ) : (
           <div>
             <Row gutter={spacing.md} style={{ marginBottom: spacing.md }}>

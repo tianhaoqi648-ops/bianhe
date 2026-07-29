@@ -13,6 +13,15 @@ import { registerExportIpc } from './export.ipc'
 import { registerDedupIpc } from './dedup.ipc'
 import { registerSystemIpc } from './system.ipc'
 import { registerCustomFieldIpc } from './custom-field.ipc'
+import { registerBatchEditIpc } from './batch-edit.ipc'
+import { registerUndoIpc } from './undo.ipc'
+import { registerFormatIpc } from './format.ipc'
+import { registerTimerIpc } from './timer.ipc'
+import { registerBellAssetIpc } from './bell-asset.ipc'
+import { registerBellPlayIpc } from './bell-play.ipc'
+import { registerTimerThemeIpc } from './timer-theme.ipc'
+import { registerBackgroundIpc } from './background.ipc'
+import { registerBackupIpc } from './backup.ipc'
 
 export function registerAllIpc(): void {
   registerSystemIpc()
@@ -24,5 +33,14 @@ export function registerAllIpc(): void {
   registerExportIpc()
   registerDedupIpc()
   registerCustomFieldIpc()
+  registerBatchEditIpc()
+  registerUndoIpc()
+  registerFormatIpc()
+  registerTimerIpc()
+  registerBellAssetIpc()
+  registerBellPlayIpc()
+  registerTimerThemeIpc()
+  registerBackgroundIpc()
+  registerBackupIpc()
   console.log('[main] All IPC handlers registered')
 }

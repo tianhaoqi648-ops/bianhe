@@ -5,8 +5,6 @@ import {
   Button,
   Space,
   Modal,
-  Empty,
-  Spin,
   Typography,
   Tag,
   Card,
@@ -16,22 +14,42 @@ import {
   Row,
   Col,
   Progress,
-  message,
+  Radio,
+  Badge,
+  Select,
+  Tooltip,
   theme
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import BrandSpin from '../components/common/BrandSpin';
+import EmptyState from '../components/common/EmptyState';
+import PageHeader from '../components/common/PageHeader';
+import WorkflowCard from '../components/onboarding/WorkflowCard';
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  TrophyOutlined,
   ReloadOutlined,
   TeamOutlined,
   CalendarOutlined,
   ThunderboltOutlined,
-  SettingOutlined
+  SettingOutlined,
+  UnorderedListOutlined,
+  AppstoreOutlined,
+  TrophyOutlined,
+  SyncOutlined,
+  CheckCircleOutlined,
+  HistoryOutlined,
+  GroupOutlined,
+  ImportOutlined,
+  ExportOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import AccentCard from '../components/common/AccentCard';
+import StatCard from '../components/common/StatCard';
+import DonutChart from '../components/common/DonutChart';
+import ProgressRing from '../components/common/ProgressRing';
+import { safeIpc } from '../lib/ipc';
 import { useEventStore } from '../stores/eventStore';
 import { useTopicStore } from '../stores/topicStore';
 import type {
@@ -39,27 +57,34 @@ import type {
   Round,
   Team,
   TeamHistory,
-  EventCreateInput,
-  EventUpdateInput,
+  TeamGroup,
+  TeamGroupCreateInput,
+  TeamGroupUpdateInput,
   RoundCreateInput,
   RoundUpdateInput,
   TeamCreateInput,
-  TeamUpdateInput
+  TeamUpdateInput,
+  DrawSessionDetail
 } from '../../../shared/types';
-import EventEditModal from '../components/EventEditModal';
+import EventDrawsTab from '../components/events/EventDrawsTab';
+import ImportEventModal from '../components/events/ImportEventModal';
 import EventWizardModal from '../components/EventWizardModal';
+import GroupEditModal from '../components/events/GroupEditModal';
+import RandomGroupAssignModal from '../components/events/RandomGroupAssignModal';
 import RoundEditModal from '../components/RoundEditModal';
 import TeamEditModal from '../components/TeamEditModal';
 import TeamHistoryModal from '../components/TeamHistoryModal';
 import {
-  toolbarStyle,
   cardStyle,
   primaryButtonStyle,
   titleBarStyle,
   selectedStyle,
   pageContainerStyle
 } from '../styles/shared';
-import { spacing, shadow, transition } from '../styles/tokens';
+import { spacing, shadow, transition, radius, fontSize } from '../styles/tokens';
+import { useToast } from '../hooks/useToast';
+// P4-18 修复：提取公共常量到 shared/difficulty-presets.ts，避免与 EventWizardModal 重复定义
+import { DIFFICULTY_PRESETS } from '../../../shared/difficulty-presets';
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -70,77 +95,93 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
   finished: { color: 'success', label: '已结束' }
 };
 
-// 难度梯度一键预设方案
-const DIFFICULTY_PRESETS: Array<{
-  key: string;
-  label: string;
-  presets: Array<{ name: string; round_number: number; difficulty_override: string }>;
-}> = [
-  {
-    key: 'standard',
-    label: '标准赛制（分组赛→复赛→决赛）',
-    presets: [
-      { name: '分组赛', round_number: 1, difficulty_override: '入门级' },
-      { name: '复赛', round_number: 2, difficulty_override: '进阶级' },
-      { name: '决赛', round_number: 3, difficulty_override: '专业级' }
-    ]
-  },
-  {
-    key: 'compact',
-    label: '紧凑赛制（初赛→决赛）',
-    presets: [
-      { name: '初赛', round_number: 1, difficulty_override: '入门级' },
-      { name: '决赛', round_number: 2, difficulty_override: '进阶级' }
-    ]
-  },
-  {
-    key: 'extended',
-    label: '长赛制（小组赛→淘汰赛→半决赛→决赛）',
-    presets: [
-      { name: '小组赛', round_number: 1, difficulty_override: '入门级' },
-      { name: '淘汰赛', round_number: 2, difficulty_override: '入门级' },
-      { name: '半决赛', round_number: 3, difficulty_override: '进阶级' },
-      { name: '决赛', round_number: 4, difficulty_override: '专业级' }
-    ]
-  }
-];
+// 视图模式持久化 key（列表 / 看板）
+const EVENT_VIEW_MODE_STORAGE_KEY = 'bianhe-event-view-mode';
+
+// 看板三列的状态 → 主题色映射（筹备=蓝、进行=金、已结束=灰）
+const BOARD_COLUMN_COLOR: Record<'preparing' | 'ongoing' | 'finished', string> = {
+  preparing: '#1677ff',
+  ongoing: '#faad14',
+  finished: '#8c8c8c'
+};
 
 export default function EventManage() {
   const { token } = theme.useToken();
   const navigate = useNavigate();
   const eventStore = useEventStore();
   const topicStore = useTopicStore();
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
 
   // 选中的赛事（详情视图）
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   // 详情面板当前 Tab
-  const [detailTab, setDetailTab] = useState<'teams' | 'rounds'>('teams');
+  const [detailTab, setDetailTab] = useState<'teams' | 'rounds' | 'groups' | 'draws'>('teams');
+
+  // 视图模式：列表 / 看板（默认列表，持久化到 localStorage）
+  const [viewMode, setViewMode] = useState<'list' | 'board'>(() => {
+    try {
+      const saved = localStorage.getItem(EVENT_VIEW_MODE_STORAGE_KEY);
+      return saved === 'board' ? 'board' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  // 视图模式变化时同步到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(EVENT_VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+      // 忽略写入失败（如禁用 localStorage）
+    }
+  }, [viewMode]);
 
   // 弹窗状态
-  const [eventModalOpen, setEventModalOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  // 新建赛事向导弹窗
+  // 新建/编辑赛事向导弹窗（编辑模式 = editingWizardEvent 非 null）
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [editingWizardEvent, setEditingWizardEvent] = useState<Event | null>(null);
   const [roundModalOpen, setRoundModalOpen] = useState(false);
   const [editingRound, setEditingRound] = useState<Round | null>(null);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyTeam, setHistoryTeam] = useState<Team | null>(null);
+  // 分组编辑弹窗
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<TeamGroup | null>(null);
+  // 随机分组弹窗
+  const [randomGroupModalOpen, setRandomGroupModalOpen] = useState(false);
+  // 队伍分组筛选（'__none__' = 未分组；undefined = 全部）
+  const [teamGroupFilter, setTeamGroupFilter] = useState<string | undefined>(undefined);
+  // 队伍多选（批量分配分组）
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  // 批量分配分组弹窗
+  const [batchAssignGroupId, setBatchAssignGroupId] = useState<string | null | undefined>(undefined);
   // 当前队伍历史
   const [teamHistory, setTeamHistory] = useState<TeamHistory[]>([]);
   // 预设弹窗
   const [presetModalOpen, setPresetModalOpen] = useState(false);
+  // 赛事导入弹窗
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  // 赛事导出 loading
+  const [exporting, setExporting] = useState(false);
   // 预设选中态（最近应用的方案）
   const [appliedPresetKey, setAppliedPresetKey] = useState<string | null>(null);
   // 预设卡片 hover 态
   const [hoveredPresetKey, setHoveredPresetKey] = useState<string | null>(null);
 
-  // 赛事卡片统计：每个赛事的轮次数与队伍数
-  const [eventStats, setEventStats] = useState<Record<string, { rounds: number; teams: number }>>({});
+  // 赛事卡片统计：每个赛事的轮次数、队伍数与已完成轮次数
+  // 已完成轮次 = 有抽取记录（DrawSession.round_id 命中）的轮次数
+  const [eventStats, setEventStats] = useState<
+    Record<string, { rounds: number; teams: number; completedRounds: number }>
+  >({});
   // 详情头部 Progress：已完成轮次（有抽取记录的轮次）/ 总轮次
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
+  // 本周抽取次数（顶部 StatCard 展示）
+  const [weekDrawCount, setWeekDrawCount] = useState<number>(0);
+  // 当前选中赛事的抽取会话（详情「抽取结果」Tab 用）
+  const [eventSessions, setEventSessions] = useState<DrawSessionDetail[]>([]);
+  const [eventSessionsLoading, setEventSessionsLoading] = useState(false);
 
   // ====== 数据加载 ======
   useEffect(() => {
@@ -152,24 +193,61 @@ export default function EventManage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 拉取每个赛事的轮次/队伍数量（用于卡片显示）
+  // 拉取本周抽取次数（顶部 StatCard 展示）
+  // 按本周一 00:00 至当前时间过滤 draw sessions
+  useEffect(() => {
+    void (async () => {
+      try {
+        const now = new Date();
+        // 周日 getDay()=0，转为 7 以便统一计算「本周一」偏移
+        const dayOfWeek = now.getDay() || 7;
+        const monday = new Date(now);
+        monday.setDate(now.getDate() - (dayOfWeek - 1));
+        monday.setHours(0, 0, 0, 0);
+        const res = await window.drawAPI.listSessions({
+          startTime: monday.toISOString(),
+          endTime: now.toISOString(),
+          pageSize: 1000
+        });
+        if (res.success && res.data) {
+          setWeekDrawCount(res.data.total ?? res.data.items.length);
+        }
+      } catch {
+        setWeekDrawCount(0);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 拉取每个赛事的轮次/队伍数量 + 已完成轮次（用于卡片进度环显示）
+  // 已完成轮次的判定方式与详情视图一致：抽取会话列表中出现的 round_id 视为已完成
   useEffect(() => {
     if (eventStore.events.length === 0) return;
     void (async () => {
-      const stats: Record<string, { rounds: number; teams: number }> = {};
+      const stats: Record<string, { rounds: number; teams: number; completedRounds: number }> = {};
       await Promise.all(
         eventStore.events.map(async (e) => {
           try {
-            const [roundsRes, teamsRes] = await Promise.all([
+            const [roundsRes, teamsRes, sessionsRes] = await Promise.all([
               window.eventAPI.listRoundsByEvent(e.id),
-              window.eventAPI.listTeamsByEvent(e.id)
+              window.eventAPI.listTeamsByEvent(e.id),
+              window.drawAPI.listSessions({ event_id: e.id, pageSize: 1000 })
             ]);
+            const rounds = roundsRes.success && roundsRes.data ? roundsRes.data : [];
+            const sessions =
+              sessionsRes.success && sessionsRes.data ? (sessionsRes.data.items ?? []) : [];
+            // 用 Set 对 round_id 去重，得到已完成轮次数量
+            const completedSet = new Set<string>();
+            sessions.forEach((s) => {
+              if (s.round_id) completedSet.add(s.round_id);
+            });
             stats[e.id] = {
-              rounds: roundsRes.success && roundsRes.data ? roundsRes.data.length : 0,
-              teams: teamsRes.success && teamsRes.data ? teamsRes.data.length : 0
+              rounds: rounds.length,
+              teams: teamsRes.success && teamsRes.data ? teamsRes.data.length : 0,
+              completedRounds: completedSet.size
             };
           } catch {
-            stats[e.id] = { rounds: 0, teams: 0 };
+            stats[e.id] = { rounds: 0, teams: 0, completedRounds: 0 };
           }
         })
       );
@@ -183,24 +261,37 @@ export default function EventManage() {
     if (selectedEvent) {
       void eventStore.listRoundsByEvent(selectedEvent.id);
       void eventStore.listTeamsByEvent(selectedEvent.id);
+      void eventStore.fetchGroups(selectedEvent.id);
+      // 切换赛事时重置筛选与多选
+      setTeamGroupFilter(undefined);
+      setSelectedTeamIds([]);
       // 拉取该赛事的抽取记录，统计已完成的轮次（有抽取记录即视为已完成）
+      // 同时把会话列表存入 eventSessions state，供「抽取结果」Tab 使用
       void (async () => {
         try {
+          setEventSessionsLoading(true);
           const res = await window.drawAPI.listSessions({ event_id: selectedEvent.id, pageSize: 1000 });
           if (res.success && res.data) {
+            const items = res.data.items ?? [];
+            setEventSessions(items);
             const ids = new Set<string>();
-            (res.data.items ?? []).forEach((s) => {
+            items.forEach((s) => {
               if (s.round_id) ids.add(s.round_id);
             });
             setCompletedRoundIds(ids);
           } else {
+            setEventSessions([]);
             setCompletedRoundIds(new Set());
           }
         } catch {
+          setEventSessions([]);
           setCompletedRoundIds(new Set());
+        } finally {
+          setEventSessionsLoading(false);
         }
       })();
     } else {
+      setEventSessions([]);
       setCompletedRoundIds(new Set());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,37 +313,82 @@ export default function EventManage() {
     return dist;
   }, [eventStore.events]);
 
+  // 赛事总数（StatCard + DonutChart 中心标签共用）
+  const totalCount = eventStore.events.length;
+
+  // DonutChart 数据：按赛事 status 聚合（Event 无 type 字段，以状态分布替代）
+  // 颜色与看板三列主题色保持一致，中心展示赛事总数
+  const donutData = useMemo(
+    () => [
+      { label: '筹备中', value: statusDistribution.preparing, color: BOARD_COLUMN_COLOR.preparing },
+      { label: '进行中', value: statusDistribution.ongoing, color: BOARD_COLUMN_COLOR.ongoing },
+      { label: '已结束', value: statusDistribution.finished, color: BOARD_COLUMN_COLOR.finished }
+    ],
+    [statusDistribution]
+  );
+
+  // 根据赛事 status 字段映射到看板分组（preparing / ongoing / finished）
+  // null / undefined / 'preparing' / 'draft' 等都归入「筹备中」
+  const getStatusGroup = (status: string | null): 'preparing' | 'ongoing' | 'finished' => {
+    if (status === 'ongoing') return 'ongoing';
+    if (status === 'finished') return 'finished';
+    return 'preparing';
+  };
+
+  // 看板分组数据：三列分别持有对应状态的赛事
+  const groupedEvents = useMemo(() => {
+    const groups: { preparing: Event[]; ongoing: Event[]; finished: Event[] } = {
+      preparing: [],
+      ongoing: [],
+      finished: []
+    };
+    eventStore.events.forEach((e) => {
+      groups[getStatusGroup(e.status)].push(e);
+    });
+    return groups;
+  }, [eventStore.events]);
+
+  // ====== 看板拖拽：使用原生 HTML5 drag-and-drop API ======
+  // 卡片开始拖拽时，把赛事 ID 写入 dataTransfer
+  const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>, eventId: string) => {
+    e.dataTransfer.setData('text/plain', eventId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  // 列容器允许 drop（必须 preventDefault 才能触发 drop 事件）
+  const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  // 列容器接收 drop：读取赛事 ID，调用 store 更新赛事状态
+  const handleColumnDrop = async (
+    e: React.DragEvent<HTMLDivElement>,
+    newStatus: 'preparing' | 'ongoing' | 'finished'
+  ) => {
+    e.preventDefault();
+    const eventId = e.dataTransfer.getData('text/plain');
+    if (!eventId) return;
+    const event = eventStore.events.find((x) => x.id === eventId);
+    if (!event) return;
+    // 同组不重复更新
+    if (getStatusGroup(event.status) === newStatus) return;
+    try {
+      await eventStore.updateEvent(eventId, { status: newStatus });
+      toast.success(`已移至「${STATUS_TAG[newStatus].label}」`);
+      await eventStore.listEvents();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '状态更新失败');
+    }
+  };
+
   // ====== 赛事 CRUD ======
   const handleCreateEvent = () => {
+    setEditingWizardEvent(null);
     setWizardOpen(true);
   };
-  const handleEditEvent = (event: Event) => {
-    setEditingEvent(event);
-    setEventModalOpen(true);
-  };
-  const handleSubmitEvent = async (
-    data: EventCreateInput | EventUpdateInput,
-    isEdit: boolean
-  ) => {
-    try {
-      if (isEdit && editingEvent) {
-        await eventStore.updateEvent(editingEvent.id, data as EventUpdateInput);
-        messageApi.success('赛事已更新');
-        // 同步 selectedEvent
-        if (selectedEvent?.id === editingEvent.id) {
-          setSelectedEvent({ ...editingEvent, ...(data as EventUpdateInput) } as Event);
-        }
-      } else {
-        const created = await eventStore.createEvent(data as EventCreateInput);
-        messageApi.success('赛事已创建');
-        if (created) setSelectedEvent(created);
-      }
-      setEventModalOpen(false);
-      setEditingEvent(null);
-      await eventStore.listEvents();
-    } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '操作失败');
-    }
+  // 向导编辑（主入口）：打开 EventWizardModal 编辑模式
+  const handleWizardEditEvent = (event: Event) => {
+    setEditingWizardEvent(event);
+    setWizardOpen(true);
   };
   const handleDeleteEvent = (event: Event) => {
     Modal.confirm({
@@ -264,11 +400,11 @@ export default function EventManage() {
       onOk: async () => {
         try {
           await eventStore.deleteEvent(event.id);
-          messageApi.success('赛事已删除');
+          toast.success('赛事已删除');
           if (selectedEvent?.id === event.id) setSelectedEvent(null);
           await eventStore.listEvents();
         } catch (e) {
-          messageApi.error(e instanceof Error ? e.message : '删除失败');
+          toast.error(e instanceof Error ? e.message : '删除失败');
         }
       }
     });
@@ -291,19 +427,19 @@ export default function EventManage() {
     try {
       if (isEdit && editingRound) {
         await eventStore.updateRound(editingRound.id, data as RoundUpdateInput);
-        messageApi.success('轮次已更新');
+        toast.success('轮次已更新');
       } else {
         await eventStore.createRound({
           ...(data as RoundCreateInput),
           event_id: selectedEvent.id
         });
-        messageApi.success('轮次已创建');
+        toast.success('轮次已创建');
       }
       setRoundModalOpen(false);
       setEditingRound(null);
       await eventStore.listRoundsByEvent(selectedEvent.id);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : '操作失败');
     }
   };
   const handleDeleteRound = (round: Round) => {
@@ -315,12 +451,12 @@ export default function EventManage() {
       onOk: async () => {
         try {
           await eventStore.deleteRound(round.id);
-          messageApi.success('轮次已删除');
+          toast.success('轮次已删除');
           if (selectedEvent) {
             await eventStore.listRoundsByEvent(selectedEvent.id);
           }
         } catch (e) {
-          messageApi.error(e instanceof Error ? e.message : '删除失败');
+          toast.error(e instanceof Error ? e.message : '删除失败');
         }
       }
     });
@@ -353,12 +489,12 @@ export default function EventManage() {
               topic_count: 4
             });
           }
-          messageApi.success('难度梯度已应用');
+          toast.success('难度梯度已应用');
           setAppliedPresetKey(presetKey);
           setPresetModalOpen(false);
           await eventStore.listRoundsByEvent(selectedEvent.id);
         } catch (e) {
-          messageApi.error(e instanceof Error ? e.message : '应用失败');
+          toast.error(e instanceof Error ? e.message : '应用失败');
         }
       }
     });
@@ -381,19 +517,19 @@ export default function EventManage() {
     try {
       if (isEdit && editingTeam) {
         await eventStore.updateTeam(editingTeam.id, data as TeamUpdateInput);
-        messageApi.success('队伍已更新');
+        toast.success('队伍已更新');
       } else {
         await eventStore.createTeam({
           ...(data as TeamCreateInput),
           event_id: selectedEvent.id
         });
-        messageApi.success('队伍已添加');
+        toast.success('队伍已添加');
       }
       setTeamModalOpen(false);
       setEditingTeam(null);
       await eventStore.listTeamsByEvent(selectedEvent.id);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '操作失败');
+      toast.error(e instanceof Error ? e.message : '操作失败');
     }
   };
   const handleDeleteTeam = (team: Team) => {
@@ -405,15 +541,108 @@ export default function EventManage() {
       onOk: async () => {
         try {
           await eventStore.deleteTeam(team.id);
-          messageApi.success('队伍已删除');
+          toast.success('队伍已删除');
           if (selectedEvent) {
             await eventStore.listTeamsByEvent(selectedEvent.id);
           }
         } catch (e) {
-          messageApi.error(e instanceof Error ? e.message : '删除失败');
+          toast.error(e instanceof Error ? e.message : '删除失败');
         }
       }
     });
+  };
+
+  // ====== 分组 CRUD ======
+  const handleCreateGroup = () => {
+    setEditingGroup(null);
+    setGroupModalOpen(true);
+  };
+  const handleEditGroup = (group: TeamGroup) => {
+    setEditingGroup(group);
+    setGroupModalOpen(true);
+  };
+  const handleSubmitGroup = async (
+    data: TeamGroupCreateInput | TeamGroupUpdateInput,
+    isEdit: boolean
+  ) => {
+    if (!selectedEvent) return;
+    try {
+      if (isEdit && editingGroup) {
+        await eventStore.updateGroup(editingGroup.id, data as TeamGroupUpdateInput);
+        toast.success('分组已更新');
+      } else {
+        await eventStore.createGroup({
+          ...(data as TeamGroupCreateInput),
+          event_id: selectedEvent.id
+        });
+        toast.success('分组已创建');
+      }
+      setGroupModalOpen(false);
+      setEditingGroup(null);
+      await eventStore.fetchGroups(selectedEvent.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '操作失败');
+    }
+  };
+  const handleDeleteGroup = (group: TeamGroup) => {
+    Modal.confirm({
+      title: `确认删除分组"${group.name}"？`,
+      content: '该分组下的队伍 group_id 将自动置为空（未分组）',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await eventStore.deleteGroup(group.id);
+          toast.success('分组已删除');
+          if (selectedEvent) {
+            await Promise.all([
+              eventStore.fetchGroups(selectedEvent.id),
+              eventStore.listTeamsByEvent(selectedEvent.id)
+            ]);
+          }
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : '删除失败');
+        }
+      }
+    });
+  };
+
+  // ====== 队伍分组分配 ======
+  // 单支队伍分配到分组（行内 Select）
+  const handleAssignTeamGroup = async (teamId: string, groupId: string | null) => {
+    try {
+      await eventStore.assignTeamToGroup(teamId, groupId);
+      if (selectedEvent) {
+        await eventStore.listTeamsByEvent(selectedEvent.id);
+      }
+      toast.success('分组已更新');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '分配失败');
+    }
+  };
+  // 批量分配选中队伍到分组
+  const handleBatchAssignGroup = async () => {
+    if (!selectedEvent) return;
+    if (selectedTeamIds.length === 0) {
+      toast.error('请先勾选要分配的队伍');
+      return;
+    }
+    if (batchAssignGroupId === undefined) {
+      toast.error('请选择目标分组');
+      return;
+    }
+    try {
+      for (const tid of selectedTeamIds) {
+        await eventStore.assignTeamToGroup(tid, batchAssignGroupId);
+      }
+      toast.success(`已分配 ${selectedTeamIds.length} 支队伍`);
+      setSelectedTeamIds([]);
+      setBatchAssignGroupId(undefined);
+      await eventStore.listTeamsByEvent(selectedEvent.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '批量分配失败');
+    }
   };
 
   // ====== 队伍历史 ======
@@ -426,7 +655,7 @@ export default function EventManage() {
         setTeamHistory(res.data as TeamHistory[]);
       }
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '加载历史失败');
+      toast.error(e instanceof Error ? e.message : '加载历史失败');
     }
   };
   const handleAddHistory = async (data: {
@@ -454,6 +683,42 @@ export default function EventManage() {
     navigate('/draw', {
       state: { eventId: event.id, roundId: round?.id }
     });
+  };
+
+  // ====== 导出赛事数据包 ======
+  const handleExportEvent = async () => {
+    if (!selectedEvent) return;
+    setExporting(true);
+    try {
+      const res = await window.exportAPI.exportEventPackage({
+        eventId: selectedEvent.id
+      });
+      if (!res.success || !res.data) {
+        // 用户取消保存不算错误，静默处理
+        if (res.error && res.error.includes('取消')) return;
+        toast.error(res.error || '导出失败');
+        return;
+      }
+      toast.success(`已导出到 ${res.data.filePath}，共 ${res.data.count} 项`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ====== 导入赛事成功回调 ======
+  const handleImportSuccess = async (eventId: string) => {
+    await eventStore.listEvents();
+    // P3.4 Task 19：用 safeIpc 包装 IPC 调用，统一错误 Toast
+    // 选中刚导入的赛事（失败时返回 undefined，setSelectedEvent 跳过）
+    const fresh = await safeIpc<Event | undefined>(
+      window.eventAPI.getEvent(eventId),
+      undefined
+    );
+    if (fresh) {
+      setSelectedEvent(fresh);
+    }
   };
 
   // ====== 表格列定义 ======
@@ -524,6 +789,26 @@ export default function EventManage() {
       key: 'name'
     },
     {
+      title: '所属分组',
+      dataIndex: 'group_id',
+      key: 'group_id',
+      width: 200,
+      render: (groupId: string | null | undefined, record: Team) => {
+        return (
+          <Select
+            size="small"
+            allowClear
+            placeholder="未分组"
+            value={groupId ?? undefined}
+            onChange={(v) => handleAssignTeamGroup(record.id, v ?? null)}
+            style={{ width: '100%' }}
+            options={eventStore.groups.map((g) => ({ label: g.name, value: g.id }))}
+            notFoundContent={<Text type="secondary">暂无分组</Text>}
+          />
+        );
+      }
+    },
+    {
       title: '操作',
       key: 'action',
       width: 240,
@@ -553,9 +838,66 @@ export default function EventManage() {
     }
   ];
 
+  // 分组列表：每行展示名称 / 队伍数 / 排序 / 操作
+  const groupColumns: ColumnsType<TeamGroup> = [
+    {
+      title: '排序',
+      dataIndex: 'sort_order',
+      key: 'sort_order',
+      width: 80,
+      render: (v: number) => v
+    },
+    {
+      title: '分组名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => <Text strong>{name}</Text>
+    },
+    {
+      title: '队伍数',
+      key: 'team_count',
+      width: 100,
+      render: (_: any, record: TeamGroup) => {
+        const count = eventStore.teams.filter((t) => t.group_id === record.id).length;
+        return <Tag color="blue">{count}</Tag>;
+      }
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 160,
+      render: (_: any, record: TeamGroup) => (
+        <Space size={4}>
+          <Button size="small" icon={<EditOutlined />} onClick={() => handleEditGroup(record)}>
+            编辑
+          </Button>
+          <Popconfirm
+            title="确认删除该分组？"
+            description="该分组下队伍将变为未分组"
+            onConfirm={() => handleDeleteGroup(record)}
+            okText="删除"
+            okType="danger"
+            cancelText="取消"
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
+  // 队伍 Tab 数据：根据 teamGroupFilter 过滤
+  const filteredTeams = useMemo(() => {
+    if (teamGroupFilter === undefined) return eventStore.teams;
+    if (teamGroupFilter === '__none__') {
+      return eventStore.teams.filter((t) => !t.group_id);
+    }
+    return eventStore.teams.filter((t) => t.group_id === teamGroupFilter);
+  }, [eventStore.teams, teamGroupFilter]);
+
   // ====== 渲染：赛事卡片 ======
   const renderEventCard = (event: Event) => {
-    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0 };
+    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0, completedRounds: 0 };
     const statusInfo = event.status ? STATUS_TAG[event.status] : null;
     return (
       <Col xs={24} sm={12} md={8} lg={6} key={event.id}>
@@ -564,34 +906,42 @@ export default function EventManage() {
           hoverable
           style={{
             ...cardStyle,
-            height: '100%',
+            minHeight: '100%',
             transition: transition.base,
             cursor: 'pointer'
           }}
           styles={{ body: { padding: spacing.lg } }}
           onClick={() => setSelectedEvent(event)}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.sm }}>
-            <Text strong style={{ fontSize: 15, flex: 1, marginRight: spacing.sm }} ellipsis={{ tooltip: event.name }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
+            <Text strong style={{ fontSize: fontSize.h4, flex: 1, marginRight: spacing.sm }} ellipsis={{ tooltip: event.name }}>
               {event.name}
             </Text>
-            {statusInfo && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
+            <Space size={6} align="center" style={{ flexShrink: 0 }}>
+              {statusInfo && <Tag color={statusInfo.color} style={{ margin: 0 }}>{statusInfo.label}</Tag>}
+              {event.allow_repeat === 1 && (
+                <Tag color="gold" style={{ margin: 0 }}>允许重复</Tag>
+              )}
+              <Tooltip title={`轮次进度：${stats.completedRounds}/${stats.rounds}`}>
+                <ProgressRing current={stats.completedRounds} total={stats.rounds} size={40} />
+              </Tooltip>
+            </Space>
           </div>
           <div style={{ display: 'flex', gap: spacing.lg, marginBottom: spacing.md, color: token.colorTextSecondary }}>
             <span>
               <CalendarOutlined style={{ marginRight: 4 }} />
-              <Text type="secondary" style={{ fontSize: 12 }}>轮次 </Text>
+              <Text type="secondary" style={{ fontSize: fontSize.caption }}>轮次 </Text>
               <Text strong>{stats.rounds}</Text>
             </span>
             <span>
               <TeamOutlined style={{ marginRight: 4 }} />
-              <Text type="secondary" style={{ fontSize: 12 }}>队伍 </Text>
+              <Text type="secondary" style={{ fontSize: fontSize.caption }}>队伍 </Text>
               <Text strong>{stats.teams}</Text>
             </span>
           </div>
           {event.start_date && (
             <div style={{ marginBottom: spacing.sm }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                 {event.start_date}{event.end_date ? ` ~ ${event.end_date}` : ''}
               </Text>
             </div>
@@ -605,7 +955,12 @@ export default function EventManage() {
             >
               抽取
             </Button>
-            <Button size="small" icon={<EditOutlined />} onClick={() => handleEditEvent(event)}>
+            <Button
+              size="small"
+              type="primary"
+              icon={<EditOutlined />}
+              onClick={() => handleWizardEditEvent(event)}
+            >
               编辑
             </Button>
             <Popconfirm
@@ -623,64 +978,351 @@ export default function EventManage() {
     );
   };
 
+  // ====== 看板视图：单张赛事卡片（可拖拽） ======
+  const renderBoardEventCard = (event: Event) => {
+    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0 };
+    const group = getStatusGroup(event.status);
+    const barColor = BOARD_COLUMN_COLOR[group];
+    return (
+      <div
+        key={event.id}
+        draggable
+        onDragStart={(e) => handleCardDragStart(e, event.id)}
+        style={{
+          background: token.colorBgContainer,
+          borderRadius: radius.md,
+          padding: `${spacing.sm} ${spacing.md}`,
+          marginBottom: spacing.sm,
+          borderLeft: `4px solid ${barColor}`,
+          boxShadow: shadow.sm,
+          cursor: 'grab',
+          transition: transition.base
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: spacing.xs
+          }}
+        >
+          <Text
+            strong
+            ellipsis={{ tooltip: event.name }}
+            style={{ fontSize: fontSize.body, flex: 1, marginRight: spacing.xs }}
+          >
+            {event.name}
+          </Text>
+          {event.allow_repeat === 1 && (
+            <Tag color="gold" style={{ margin: 0, flexShrink: 0 }}>允许重复</Tag>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: spacing.md,
+            marginBottom: spacing.xs,
+            color: token.colorTextSecondary,
+            fontSize: fontSize.caption
+          }}
+        >
+          <span>
+            <CalendarOutlined style={{ marginRight: 4 }} />
+            轮次 <Text strong>{stats.rounds}</Text>
+          </span>
+          <span>
+            <TeamOutlined style={{ marginRight: 4 }} />
+            队伍 <Text strong>{stats.teams}</Text>
+          </span>
+        </div>
+        {event.start_date && (
+          <div style={{ marginBottom: spacing.xs, fontSize: fontSize.caption }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+              {event.start_date}
+              {event.end_date ? ` ~ ${event.end_date}` : ''}
+            </Text>
+          </div>
+        )}
+        <Space size={4} wrap>
+          <Button
+            size="small"
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={() => handleGotoDraw(event)}
+          >
+            抽取
+          </Button>
+          <Button
+            size="small"
+            type="primary"
+            icon={<EditOutlined />}
+            onClick={() => handleWizardEditEvent(event)}
+          >
+            编辑
+          </Button>
+          <Popconfirm
+            title="确认删除该赛事？"
+            onConfirm={() => handleDeleteEvent(event)}
+            okText="删除"
+            okType="danger"
+            cancelText="取消"
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      </div>
+    );
+  };
+
+  // ====== 看板视图：单列容器（接收拖拽） ======
+  const renderBoardColumn = (
+    status: 'preparing' | 'ongoing' | 'finished',
+    events: Event[]
+  ) => {
+    const barColor = BOARD_COLUMN_COLOR[status];
+    return (
+      <Col span={8} key={status}>
+        <Card
+          size="small"
+          style={{
+            ...cardStyle,
+            background: token.colorBgContainer,
+            minHeight: 'calc(100vh - 220px)',
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+          styles={{
+            body: {
+              padding: spacing.sm,
+              overflowY: 'auto',
+              flex: 1,
+              minHeight: 0
+            }
+          }}
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: barColor
+                }}
+              />
+              <span>{STATUS_TAG[status].label}</span>
+              <Tag style={{ marginInlineStart: 4 }}>{events.length}</Tag>
+            </div>
+          }
+          onDragOver={handleColumnDragOver}
+          onDrop={(e) => handleColumnDrop(e, status)}
+        >
+          {events.length === 0 ? (
+            <div
+              style={{
+                padding: spacing.lg,
+                textAlign: 'center',
+                color: token.colorTextSecondary,
+                fontSize: fontSize.caption
+              }}
+            >
+              拖拽赛事卡片到此列
+            </div>
+          ) : (
+            events.map(renderBoardEventCard)
+          )}
+        </Card>
+      </Col>
+    );
+  };
+
   // ====== 渲染 ======
   return (
     <>
-      {contextHolder}
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
-          {/* 顶部工具栏 */}
-          <div style={toolbarStyle}>
-            <Space>
-              <TrophyOutlined style={{ color: '#1677ff' }} />
-              <Text strong>赛事管理</Text>
-              <Tag color="blue">共 {eventStore.events.length} 场</Tag>
-              <Tag color="default">筹备中 {statusDistribution.preparing}</Tag>
-              <Tag color="processing">进行中 {statusDistribution.ongoing}</Tag>
-              <Tag color="success">已结束 {statusDistribution.finished}</Tag>
-            </Space>
-            <Space>
-              <Button icon={<ReloadOutlined />} onClick={() => eventStore.listEvents()}>
-                刷新
-              </Button>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleCreateEvent}
-                style={primaryButtonStyle}
-              >
-                新建赛事
-              </Button>
-            </Space>
-          </div>
-
-          {/* 赛事列表 — 卡片网格视图 */}
-          <Card
-            size="small"
-            style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
-            title={
+        <Content style={{ ...pageContainerStyle, padding: `0 ${spacing.lg} ${spacing.lg}`, overflow: 'auto' }}>
+          <PageHeader
+            title="赛事管理"
+            subtitle="组织赛事与抽取历史"
+            extra={
               <Space>
-                <Text strong>赛事列表</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  共 {eventStore.events.length} 项
-                </Text>
+                <Radio.Group
+                  value={viewMode}
+                  onChange={(e) => setViewMode(e.target.value)}
+                  optionType="button"
+                  buttonStyle="solid"
+                  size="small"
+                >
+                  <Radio.Button value="list">
+                    <UnorderedListOutlined /> 列表
+                  </Radio.Button>
+                  <Radio.Button value="board">
+                    <AppstoreOutlined /> 看板
+                  </Radio.Button>
+                </Radio.Group>
+                <Button
+                  icon={<ImportOutlined />}
+                  onClick={() => setImportModalOpen(true)}
+                >
+                  导入赛事
+                </Button>
+                <Tooltip
+                  title={selectedEvent ? '' : '请先在列表中选择要导出的赛事'}
+                >
+                  <Button
+                    icon={<ExportOutlined />}
+                    disabled={!selectedEvent}
+                    loading={exporting}
+                    onClick={handleExportEvent}
+                  >
+                    导出赛事
+                  </Button>
+                </Tooltip>
+                <Button icon={<ReloadOutlined />} onClick={() => eventStore.listEvents()}>
+                  刷新
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleCreateEvent}
+                  style={primaryButtonStyle}
+                >
+                  新建赛事
+                </Button>
               </Space>
             }
-          >
-            <Spin spinning={eventStore.loading}>
-              {eventStore.events.length === 0 ? (
-                <Empty description="暂无赛事">
-                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateEvent}>
-                    创建第一场赛事
-                  </Button>
-                </Empty>
-              ) : (
-                <Row gutter={[spacing.lg, spacing.lg]}>
-                  {eventStore.events.map(renderEventCard)}
-                </Row>
-              )}
-            </Spin>
-          </Card>
+          />
+
+          {/* 工作流引导卡（Task 10.1）：3 步上手，完成所有步骤后自动隐藏 */}
+          <WorkflowCard />
+
+          {/* 顶部统计卡片：赛事总数 / 进行中 / 已结束 / 本周抽取 */}
+          <Row gutter={[spacing.lg, spacing.lg]} style={{ marginBottom: spacing.lg }}>
+            <Col xs={12} sm={12} md={6}>
+              <StatCard
+                label="赛事总数"
+                value={totalCount}
+                icon={<TrophyOutlined />}
+                color="gold"
+              />
+            </Col>
+            <Col xs={12} sm={12} md={6}>
+              <StatCard
+                label="进行中"
+                value={statusDistribution.ongoing}
+                icon={<SyncOutlined spin />}
+                color="primary"
+              />
+            </Col>
+            <Col xs={12} sm={12} md={6}>
+              <StatCard
+                label="已结束"
+                value={statusDistribution.finished}
+                icon={<CheckCircleOutlined />}
+                color="primary"
+              />
+            </Col>
+            <Col xs={12} sm={12} md={6}>
+              <StatCard
+                label="本周抽取"
+                value={weekDrawCount}
+                icon={<HistoryOutlined />}
+                color="purple"
+              />
+            </Col>
+          </Row>
+
+          {/* 赛事视图：列表模式 / 看板模式（受 viewMode 控制） */}
+          {viewMode === 'list' ? (
+            /* 列表视图：原卡片网格（保持原有逻辑不变） */
+            <AccentCard
+              size="small"
+              style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+              title={
+                <Space>
+                  <Text strong>赛事列表</Text>
+                  <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                    共 {eventStore.events.length} 项
+                  </Text>
+                </Space>
+              }
+            >
+              <BrandSpin spinning={eventStore.loading}>
+                {eventStore.events.length === 0 ? (
+                  <EmptyState
+                    type="default"
+                    description="暂无赛事"
+                    cta={[
+                      {
+                        text: '创建赛事',
+                        icon: <PlusOutlined />,
+                        onClick: handleCreateEvent
+                      }
+                    ]}
+                  />
+                ) : (
+                  <Row gutter={[spacing.lg, spacing.lg]}>
+                    {eventStore.events.map(renderEventCard)}
+                  </Row>
+                )}
+              </BrandSpin>
+            </AccentCard>
+          ) : (
+            /* 看板视图：按状态分三列，支持拖拽改变状态 */
+            <AccentCard
+              size="small"
+              style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+              title={
+                <Space>
+                  <AppstoreOutlined />
+                  <Text strong>赛事看板</Text>
+                  <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                    拖拽卡片可改变赛事状态 · 共 {eventStore.events.length} 项
+                  </Text>
+                </Space>
+              }
+            >
+              <BrandSpin spinning={eventStore.loading}>
+                {eventStore.events.length === 0 ? (
+                  <EmptyState
+                    type="default"
+                    description="暂无赛事"
+                    cta={[
+                      {
+                        text: '创建赛事',
+                        icon: <PlusOutlined />,
+                        onClick: handleCreateEvent
+                      }
+                    ]}
+                  />
+                ) : (
+                  <>
+                    {/* 看板右上角：赛事状态分布环形图 */}
+                    <Row justify="end" style={{ marginBottom: spacing.md }}>
+                      <Col xs={24} sm={12} md={8} lg={6}>
+                        <Card title="赛事分布" size="small">
+                          <div style={{ display: 'flex', justifyContent: 'center', padding: `${spacing.sm}px 0` }}>
+                            <DonutChart
+                              data={donutData}
+                              centerLabel={String(totalCount)}
+                              centerSublabel="赛事总数"
+                              size={140}
+                            />
+                          </div>
+                        </Card>
+                      </Col>
+                    </Row>
+                    <Row gutter={spacing.lg}>
+                      {renderBoardColumn('preparing', groupedEvents.preparing)}
+                      {renderBoardColumn('ongoing', groupedEvents.ongoing)}
+                      {renderBoardColumn('finished', groupedEvents.finished)}
+                    </Row>
+                  </>
+                )}
+              </BrandSpin>
+            </AccentCard>
+          )}
 
           {/* 赛事详情 */}
           {selectedEvent && (
@@ -695,7 +1337,7 @@ export default function EventManage() {
                       {STATUS_TAG[selectedEvent.status]?.label ?? selectedEvent.status}
                     </Tag>
                   )}
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                     详情
                   </Text>
                 </div>
@@ -723,10 +1365,10 @@ export default function EventManage() {
               {/* Progress：已完成轮次 / 总轮次 */}
               <div style={{ marginBottom: spacing.lg, padding: `${spacing.sm} ${spacing.md}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: spacing.xs }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                     赛事进度：已完成 {completedRoundIds.size} / {eventStore.rounds.length} 轮次
                   </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                     {eventStore.rounds.length > 0
                       ? `${Math.round((completedRoundIds.size / eventStore.rounds.length) * 100)}%`
                       : '0%'}
@@ -745,7 +1387,7 @@ export default function EventManage() {
 
               <Tabs
                 activeKey={detailTab}
-                onChange={(k) => setDetailTab(k as 'teams' | 'rounds')}
+                onChange={(k) => setDetailTab(k as 'teams' | 'rounds' | 'groups' | 'draws')}
                 items={[
                   {
                     key: 'teams',
@@ -760,7 +1402,16 @@ export default function EventManage() {
                     ),
                     children: (
                       <div>
-                        <div style={{ marginBottom: spacing.md }}>
+                        {/* 工具栏：添加 / 筛选分组 / 批量分配 */}
+                        <div
+                          style={{
+                            marginBottom: spacing.md,
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: spacing.sm,
+                            alignItems: 'center'
+                          }}
+                        >
                           <Button
                             type="primary"
                             icon={<PlusOutlined />}
@@ -768,14 +1419,61 @@ export default function EventManage() {
                           >
                             添加队伍
                           </Button>
+                          <Select
+                            allowClear
+                            placeholder="按分组筛选"
+                            style={{ width: 180 }}
+                            value={teamGroupFilter}
+                            onChange={(v) => setTeamGroupFilter(v)}
+                            options={[
+                              { label: '未分组', value: '__none__' },
+                              ...eventStore.groups.map((g) => ({
+                                label: g.name,
+                                value: g.id
+                              }))
+                            ]}
+                          />
+                          {selectedTeamIds.length > 0 && (
+                            <Space>
+                              <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                                已选 {selectedTeamIds.length} 支
+                              </Text>
+                              <Select
+                                allowClear
+                                placeholder="选择目标分组"
+                                style={{ width: 180 }}
+                                value={batchAssignGroupId ?? undefined}
+                                onChange={(v) => setBatchAssignGroupId(v ?? undefined)}
+                                options={eventStore.groups.map((g) => ({
+                                  label: g.name,
+                                  value: g.id
+                                }))}
+                              />
+                              <Popconfirm
+                                title="确认批量分配分组？"
+                                onConfirm={handleBatchAssignGroup}
+                                okText="分配"
+                                okType="primary"
+                                cancelText="取消"
+                              >
+                                <Button type="primary" icon={<GroupOutlined />}>
+                                  分配分组
+                                </Button>
+                              </Popconfirm>
+                            </Space>
+                          )}
                         </div>
                         <Table
                           columns={teamColumns}
-                          dataSource={eventStore.teams}
+                          dataSource={filteredTeams}
                           rowKey="id"
                           size="small"
+                          rowSelection={{
+                            selectedRowKeys: selectedTeamIds,
+                            onChange: (keys) => setSelectedTeamIds(keys as string[])
+                          }}
                           pagination={
-                            eventStore.teams.length > 10
+                            filteredTeams.length > 10
                               ? {
                                   pageSize: 10,
                                   showSizeChanger: false,
@@ -783,7 +1481,7 @@ export default function EventManage() {
                                 }
                               : false
                           }
-                          locale={{ emptyText: <Empty description="暂无队伍" /> }}
+                          locale={{ emptyText: <EmptyState type="default" description="暂无队伍" /> }}
                         />
                       </div>
                     )
@@ -829,9 +1527,92 @@ export default function EventManage() {
                                 }
                               : false
                           }
-                          locale={{ emptyText: <Empty description="暂无轮次" /> }}
+                          locale={{ emptyText: <EmptyState type="default" description="暂无轮次" /> }}
                         />
                       </div>
+                    )
+                  },
+                  {
+                    key: 'groups',
+                    label: (
+                      <Space>
+                        <GroupOutlined />
+                        <span>分组设置</span>
+                        <Tag color="blue" style={{ marginInlineStart: 4 }}>
+                          {eventStore.groups.length}
+                        </Tag>
+                      </Space>
+                    ),
+                    children: (
+                      <div>
+                        <div style={{ marginBottom: spacing.md }}>
+                          <Space>
+                            <Button
+                              type="primary"
+                              icon={<PlusOutlined />}
+                              onClick={handleCreateGroup}
+                            >
+                              新建分组
+                            </Button>
+                            <Button
+                              icon={<ThunderboltOutlined />}
+                              onClick={() => setRandomGroupModalOpen(true)}
+                            >
+                              随机分组
+                            </Button>
+                          </Space>
+                        </div>
+                        <Table
+                          columns={groupColumns}
+                          dataSource={eventStore.groups}
+                          rowKey="id"
+                          size="small"
+                          pagination={
+                            eventStore.groups.length > 10
+                              ? {
+                                  pageSize: 10,
+                                  showSizeChanger: false,
+                                  showTotal: (t) => `共 ${t} 个分组`
+                                }
+                              : false
+                          }
+                          locale={{ emptyText: <EmptyState type="default" description="暂无分组" /> }}
+                        />
+                      </div>
+                    )
+                  },
+                  {
+                    key: 'draws',
+                    label: (
+                      <Badge count={eventSessions.length} showZero offset={[8, 0]}>
+                        <Space>
+                          <HistoryOutlined />
+                          <span>抽取结果</span>
+                        </Space>
+                      </Badge>
+                    ),
+                    children: (
+                      <EventDrawsTab
+                        eventId={selectedEvent.id}
+                        sessions={eventSessions}
+                        loading={eventSessionsLoading}
+                        onRefresh={async () => {
+                          try {
+                            setEventSessionsLoading(true);
+                            const res = await window.drawAPI.listSessions({
+                              event_id: selectedEvent.id,
+                              pageSize: 1000
+                            });
+                            if (res.success && res.data) {
+                              setEventSessions(res.data.items ?? []);
+                            }
+                          } catch {
+                            // ignore
+                          } finally {
+                            setEventSessionsLoading(false);
+                          }
+                        }}
+                      />
                     )
                   }
                 ]}
@@ -841,31 +1622,64 @@ export default function EventManage() {
         </Content>
       </Layout>
 
-      {/* 赛事编辑弹窗 */}
-      <EventEditModal
-        open={eventModalOpen}
-        event={editingEvent}
-        onOk={handleSubmitEvent}
-        onCancel={() => {
-          setEventModalOpen(false);
-          setEditingEvent(null);
+      {/* 赛事导入弹窗 */}
+      <ImportEventModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={handleImportSuccess}
+      />
+
+      {/* 新建/编辑赛事向导弹窗 */}
+      <EventWizardModal
+        open={wizardOpen}
+        event={editingWizardEvent}
+        onClose={() => {
+          setWizardOpen(false);
+          setEditingWizardEvent(null);
+        }}
+        onSuccess={async (eventId) => {
+          setWizardOpen(false);
+          setEditingWizardEvent(null);
+          await eventStore.listEvents();
+          // 同步 selectedEvent（新建选中刚创建的赛事；编辑更新当前选中）
+          const fresh = await window.eventAPI.getEvent(eventId);
+          if (fresh.success && fresh.data) {
+            setSelectedEvent(fresh.data);
+            // 编辑模式下同步 rounds/teams/groups
+            if (selectedEvent?.id === eventId) {
+              await Promise.all([
+                eventStore.listRoundsByEvent(eventId),
+                eventStore.listTeamsByEvent(eventId),
+                eventStore.fetchGroups(eventId)
+              ]);
+            }
+          }
         }}
       />
 
-      {/* 新建赛事向导弹窗 */}
-      <EventWizardModal
-        open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onSuccess={async (eventId) => {
-          setWizardOpen(false);
-          await eventStore.listEvents();
-          // 选中新创建的赛事
-          const created = eventStore.events.find((e) => e.id === eventId);
-          if (created) setSelectedEvent(created);
-          else {
-            // events 可能还没刷新完，再查一次
-            const fresh = await window.eventAPI.getEvent(eventId);
-            if (fresh.success && fresh.data) setSelectedEvent(fresh.data);
+      {/* 分组编辑弹窗 */}
+      <GroupEditModal
+        open={groupModalOpen}
+        group={editingGroup}
+        eventId={selectedEvent?.id}
+        nextSortOrder={eventStore.groups.length + 1}
+        onOk={handleSubmitGroup}
+        onCancel={() => {
+          setGroupModalOpen(false);
+          setEditingGroup(null);
+        }}
+      />
+
+      {/* 随机分组弹窗 */}
+      <RandomGroupAssignModal
+        open={randomGroupModalOpen}
+        eventId={selectedEvent?.id ?? ''}
+        onCancel={() => setRandomGroupModalOpen(false)}
+        onSuccess={() => {
+          setRandomGroupModalOpen(false);
+          if (selectedEvent) {
+            void eventStore.fetchGroups(selectedEvent.id);
+            void eventStore.listTeamsByEvent(selectedEvent.id);
           }
         }}
       />
@@ -888,6 +1702,7 @@ export default function EventManage() {
         open={teamModalOpen}
         team={editingTeam}
         eventId={selectedEvent?.id}
+        groupOptions={eventStore.groups}
         onOk={handleSubmitTeam}
         onCancel={() => {
           setTeamModalOpen(false);

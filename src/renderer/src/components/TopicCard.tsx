@@ -11,7 +11,8 @@ import {
 } from '@ant-design/icons';
 import { useState } from 'react';
 import type { Topic } from '../../../shared/types';
-import { gradient } from '../styles/tokens';
+import DimensionTag from './common/DimensionTag';
+import { gradient, gray, fontSize } from '../styles/tokens';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
   loadTagDisplayConfig,
@@ -94,6 +95,7 @@ export default function TopicCard({
     <Card
       size="small"
       hoverable
+      className="card-hover"
       style={{
         position: 'relative',
         borderColor: selected ? token.colorPrimary : token.colorBorderSecondary,
@@ -161,7 +163,7 @@ export default function TopicCard({
           <>
             {hasDimTags && (
               <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
+                {typeTag && <DimensionTag dimension="type">{typeTag}</DimensionTag>}
                 {diffTag && (
                   <Tag
                     style={{
@@ -207,10 +209,10 @@ export default function TopicCard({
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          fontSize: 12,
+          fontSize: fontSize.caption,
           color: '#999',
           paddingTop: 4,
-          borderTop: '1px solid #f0f0f0'
+          borderTop: `1px solid ${gray[100]}`
         }}
       >
         <span>{topic.source || '未知来源'}</span>
@@ -302,7 +304,7 @@ export function TopicListItem({
         alignItems: 'center',
         gap: 12,
         padding: '16px 20px',
-        borderBottom: '1px solid #f0f0f0',
+        borderBottom: `1px solid ${gray[100]}`,
         transition: 'background 0.2s ease',
         cursor: 'pointer'
       }}
@@ -311,7 +313,7 @@ export function TopicListItem({
         <div
           style={{
             fontWeight: 500,
-            fontSize: 14,
+            fontSize: fontSize.body,
             marginBottom: 4,
             textDecoration: isBlacklisted ? 'line-through' : 'none',
             color: isBlacklisted ? '#999' : 'inherit'
@@ -329,7 +331,7 @@ export function TopicListItem({
             const customTags = filterTags(cfg, topic.tags, 'custom', 'library').slice(0, 3);
             return (
               <>
-                {typeTag && <Tag color="geekblue">{typeTag}</Tag>}
+                {typeTag && <DimensionTag dimension="type">{typeTag}</DimensionTag>}
                 {diffTag && (
                   <Tag
                     style={{

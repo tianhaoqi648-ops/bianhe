@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   Steps,
@@ -8,11 +8,9 @@ import {
   Alert,
   Typography,
   Result,
-  Spin,
-  message,
-  notification,
   Tag
 } from 'antd';
+import BrandSpin from './common/BrandSpin';
 import {
   UploadOutlined,
   FileExcelOutlined,
@@ -36,6 +34,7 @@ import type { CandidateField } from '../../../shared/constants';
 import { SYSTEM_FIELD_DEFINITIONS } from '../../../shared/field-definitions';
 import { spacing } from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
+import { useToast } from '../hooks/useToast';
 import ImportFormatGuide from './import/ImportFormatGuide';
 import ValueMappingPanel from './import/ValueMappingPanel';
 import FieldMappingPanel from './import/FieldMappingPanel';
@@ -105,8 +104,7 @@ const LEVEL_LABEL: Record<WarningLevel, string> = {
 };
 
 export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTopicsModalProps) {
-  const [messageApi, contextHolder] = message.useMessage();
-  const [notificationApi, notificationHolder] = notification.useNotification();
+  const toast = useToast();
   const [step, setStep] = useState<Step>(0);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [fileType, setFileType] = useState<'xlsx' | 'csv' | 'docx' | null>(null);
@@ -122,12 +120,25 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     Record<CandidateField, string[]> | null
   >(null);
 
+  // Bug 3.1: mounted 守卫，防止异步操作完成后 setState 已卸载的组件
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Bug 5.1: 撤销按钮 loading 状态
+  const [revoking, setRevoking] = useState(false);
+
   // 弹窗打开时拉取合并后的候选值（含用户扩展），供 ValueMappingPanel 显示
   useEffect(() => {
     if (!open) return;
     window.settingsAPI
       .getCandidates()
       .then((res) => {
+        if (!mountedRef.current) return;
         if (res.success && res.data) {
           setMergedCandidates(res.data as Record<CandidateField, string[]>);
         }
@@ -143,6 +154,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     window.customFieldAPI
       .list()
       .then((res) => {
+        if (!mountedRef.current) return;
         if (res.success && res.data) {
           setCustomFields(res.data);
         }
@@ -168,6 +180,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     type: CustomFieldType
   ): Promise<CustomField> => {
     const res = await window.customFieldAPI.create(label, type);
+    if (!mountedRef.current) throw new Error('component unmounted');
     if (!res.success || !res.data) {
       throw new Error(res.error || '创建字段失败');
     }
@@ -183,6 +196,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     if (!parsed || !parsed.rawTable) return;
     try {
       const res = await window.importAPI.applyFieldMapping(parsed, m);
+      if (!mountedRef.current) return;
       if (res.success && res.data) {
         setParsed(res.data);
       }
@@ -200,19 +214,20 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   const handlePickFile = async () => {
     try {
       const picked = await window.fileAPI.pickFile(FILE_FILTERS);
-      if (!picked) return;
-      const ext = picked.toLowerCase().split('.').pop();
+      if (!picked.success || !picked.data) return;
+      const path = picked.data;
+      const ext = path.toLowerCase().split('.').pop();
       if (ext !== 'xlsx' && ext !== 'csv' && ext !== 'docx') {
-        messageApi.error('仅支持 .xlsx / .csv / .docx 文件');
+        toast.error('仅支持 .xlsx / .csv / .docx 文件');
         return;
       }
-      setFilePath(picked);
+      setFilePath(path);
       setFileType(ext);
       setStep(1);
       // 自动开始解析
-      void parseFile(picked, ext);
+      void parseFile(path, ext);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '选择文件失败');
+      toast.error(e instanceof Error ? e.message : '选择文件失败');
     }
   };
 
@@ -221,16 +236,18 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
     setParsing(true);
     try {
       const res = await window.importAPI.parseFile(path, ext);
+      if (!mountedRef.current) return;
       if (!res.success || !res.data) {
         throw new Error(res.error || '解析失败');
       }
       setParsed(res.data);
       setStep(2);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '解析失败');
+      if (!mountedRef.current) return;
+      toast.error(e instanceof Error ? e.message : '解析失败');
       setStep(1);
     } finally {
-      setParsing(false);
+      if (mountedRef.current) setParsing(false);
     }
   };
 
@@ -243,7 +260,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       const desc = invalidFields
         .map((f) => `${f.field}: "${f.value}" 未选择目标值`)
         .join('；');
-      messageApi.error(`映射不完整：${desc}`);
+      toast.error(`映射不完整：${desc}`);
       return;
     }
     setImporting(true);
@@ -258,53 +275,52 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         fileName: currentFileName,
         valueMapping
       });
+      if (!mountedRef.current) return;
       if (!res.success || !res.data) {
         throw new Error(res.error || '导入失败');
       }
       setImportResult(res.data);
       setStep(3);
-      // 导入成功 notification 带「撤销导入」按钮（仅当有 batchId 时）
+      // 导入成功 Toast 带「撤销」按钮（仅当有 batchId 时）
       if (res.data.batchId) {
         const batchId = res.data.batchId;
-        const notifKey = `import-undo-${Date.now()}`;
-        notificationApi.open({
-          key: notifKey,
-          type: 'success',
-          message: `成功导入 ${res.data.imported} 条辩题`,
-          duration: 8,
-          btn: (
-            <Button
-              size="small"
-              danger
-              onClick={async () => {
-                try {
-                  const revokeRes = await window.importAPI.revokeBatch(batchId);
-                  if (!revokeRes.success || !revokeRes.data) {
-                    throw new Error(revokeRes.error || '撤销失败');
-                  }
-                  notificationApi.destroy(notifKey);
-                  messageApi.success(
-                    `已撤销本次导入（删除 ${revokeRes.data.deletedCount} 条）`
-                  );
-                  onSuccess?.();
-                  onClose();
-                } catch (e) {
-                  messageApi.error(e instanceof Error ? e.message : '撤销失败');
-                }
-              }}
-            >
-              撤销导入
-            </Button>
-          )
-        });
+        toast.undo(
+          `成功导入 ${res.data.imported} 条辩题`,
+          async () => {
+            // Bug 5.1: 防止重复点击
+            if (revoking) return;
+            setRevoking(true);
+            try {
+              const revokeRes = await window.importAPI.revokeBatch(batchId);
+              if (!mountedRef.current) return;
+              if (!revokeRes.success || !revokeRes.data) {
+                throw new Error(revokeRes.error || '撤销失败');
+              }
+              toast.success(
+                `已撤销本次导入（删除 ${revokeRes.data.deletedCount} 条）`
+              );
+              // Bug 3.2: 撤销成功后调用 reset() 清理状态，避免残留
+              reset();
+              onSuccess?.();
+              onClose();
+            } catch (e) {
+              if (!mountedRef.current) return;
+              toast.error(e instanceof Error ? e.message : '撤销失败');
+            } finally {
+              if (mountedRef.current) setRevoking(false);
+            }
+          },
+          { duration: 8 }
+        );
       } else {
-        messageApi.success(`成功导入 ${res.data.imported} 条辩题`);
+        toast.success(`成功导入 ${res.data.imported} 条辩题`);
       }
       onSuccess?.();
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '导入失败');
+      if (!mountedRef.current) return;
+      toast.error(e instanceof Error ? e.message : '导入失败');
     } finally {
-      setImporting(false);
+      if (mountedRef.current) setImporting(false);
     }
   };
 
@@ -318,15 +334,23 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
+        // Bug 3.3: 用 try/catch 包裹，catch 中显示错误，不 throw
         if (!importResult.batchId) return;
-        const res = await window.importAPI.revokeBatch(importResult.batchId);
-        if (!res.success || !res.data) {
-          throw new Error(res.error || '撤销失败');
+        try {
+          const res = await window.importAPI.revokeBatch(importResult.batchId);
+          if (!mountedRef.current) return;
+          if (!res.success || !res.data) {
+            toast.error(res.error || '撤销失败');
+            return;
+          }
+          toast.success(`已撤销（删除 ${res.data.deletedCount} 条）`);
+          reset();
+          onSuccess?.();
+          onClose();
+        } catch (e) {
+          if (!mountedRef.current) return;
+          toast.error(e instanceof Error ? e.message : '撤销失败');
         }
-        messageApi.success(`已撤销（删除 ${res.data!.deletedCount} 条）`);
-        onSuccess?.();
-        onClose();
-        reset();
       }
     });
   };
@@ -364,8 +388,8 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
           render: (tags: string[] | null) =>
             tags && tags.length > 0 ? (
               <Space size={4} wrap>
-                {tags.map((t) => (
-                  <Tag key={t} color="blue">
+                {tags.map((t, i) => (
+                  <Tag key={`${t}-${i}`} color="blue">
                     {t}
                   </Tag>
                 ))}
@@ -397,8 +421,8 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
           if (Array.isArray(cv)) {
             return (
               <Space size={4} wrap>
-                {cv.map((t) => (
-                  <Tag key={t} color="purple">
+                {cv.map((t, i) => (
+                  <Tag key={`${t}-${i}`} color="purple">
                     {t}
                   </Tag>
                 ))}
@@ -424,9 +448,13 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
             <div style={{ marginBottom: spacing.sm }}>
               <Text strong>选择要导入的文件</Text>
             </div>
-            <Text type="secondary" style={{ display: 'block', marginBottom: spacing.lg }}>
-              支持 .xlsx / .csv / .docx 格式
-            </Text>
+            <Alert
+              message="支持 .xlsx / .csv / .docx 格式，可下载模板查看字段说明"
+              type="info"
+              showIcon
+              banner
+              style={{ marginBottom: spacing.lg, textAlign: 'left' }}
+            />
             <Space direction="vertical" size={spacing.sm} style={{ marginBottom: spacing.lg }}>
               <Button
                 size="middle"
@@ -459,7 +487,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
             </Space>
             {parsing ? (
               <div style={{ textAlign: 'center', padding: spacing.xxl }}>
-                <Spin tip="正在解析文件..." />
+                <BrandSpin tip="正在解析文件..." />
               </div>
             ) : (
               <>
@@ -469,7 +497,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                   type="error"
                   showIcon
                   action={
-                    <Button size="middle" onClick={() => setStep(0)}>
+                    <Button size="middle" onClick={() => { setParsing(false); setStep(0); }}>
                       重新选择
                     </Button>
                   }
@@ -503,7 +531,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                       {parsed.warnings.slice(0, 20).map((w, i) => {
                         const level = classifyWarning(w);
                         return (
-                          <li key={i} style={{ marginBottom: 4 }}>
+                          <li key={`${i}-${w}`} style={{ marginBottom: 4 }}>
                             <Tag color={LEVEL_COLOR[level]} style={{ marginRight: 6, fontSize: 11 }}>
                               {LEVEL_LABEL[level]}
                             </Tag>
@@ -568,7 +596,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                 <Table
                   columns={buildPreviewColumns(parsed.topics[0])}
                   dataSource={parsed.topics}
-                  rowKey={(_, i) => String(i)}
+                  rowKey={(record, i) => `${i}-${record.title}`}
                   size="small"
                   pagination={{ pageSize: 8, showSizeChanger: false }}
                   scroll={{ x: 700 }}
@@ -637,7 +665,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
           取消
         </Button>
         {step === 1 && !parsing && (
-          <Button size="middle" onClick={() => setStep(0)}>
+          <Button size="middle" onClick={() => { setParsing(false); setStep(0); }}>
             重新选择
           </Button>
         )}
@@ -660,8 +688,6 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
 
   return (
     <>
-      {contextHolder}
-      {notificationHolder}
       <Modal
         title="导入辩题"
         open={open}

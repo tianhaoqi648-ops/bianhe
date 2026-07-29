@@ -6,6 +6,7 @@ import type {
   TopicUpdateInput,
   ApiResponse
 } from '../../../shared/types';
+import { undoManager, registerStoreRefresher } from '../utils/undo-manager';
 
 interface TopicListResponse {
   items: Topic[];
@@ -65,6 +66,15 @@ function extractError<T>(res: ApiResponse<unknown>): T {
   if (res.success && res.data !== undefined) return res.data as T;
   throw new Error(res.error || '未知错误');
 }
+
+// 注册 topicStore 的刷新函数（undo 后调用，确保渲染层数据与 DB 一致）
+// 注意：需在 create store 之前注册，但因 useTopicStore 引用未定义，使用前置声明
+// 实际通过 void useTopicStore.getState().fetchList() 调用，需在文件加载完毕后才能成功
+// 这里采用 lazy 引用模式：refresher 内部访问 useTopicStore
+registerStoreRefresher('topic', () => {
+  // 触发当前 filter 下的列表重新拉取（fetchList 内部使用 get().filter）
+  void useTopicStore.getState().fetchList();
+});
 
 export const useTopicStore = create<TopicState>((set, get) => ({
   items: [],
@@ -161,42 +171,96 @@ export const useTopicStore = create<TopicState>((set, get) => ({
 
   create: async (data) => {
     const res = await window.topicAPI.create(data);
-    return extractError<Topic>(res);
+    const created = extractError<Topic>(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'create',
+      targetType: 'topic',
+      targetId: created.id,
+      label: '创建辩题',
+      logId: res._undoLogId ?? undefined
+    });
+    return created;
   },
 
   update: async (id, data) => {
     const res = await window.topicAPI.update(id, data);
-    return extractError<Topic>(res);
+    const updated = extractError<Topic>(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'update',
+      targetType: 'topic',
+      targetId: id,
+      label: `更新辩题 ${id.slice(0, 8)}`,
+      logId: res._undoLogId ?? undefined
+    });
+    return updated;
   },
 
   remove: async (id) => {
     const res = await window.topicAPI.delete(id);
     extractError(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'delete',
+      targetType: 'topic',
+      targetId: id,
+      label: '删除辩题',
+      logId: res._undoLogId ?? undefined
+    });
     return true;
   },
 
   batchRemove: async (ids) => {
     const res = await window.topicAPI.batchDelete(ids);
     extractError(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'batchDelete',
+      targetType: 'topic',
+      targetId: null,
+      label: `批量删除 ${ids.length} 条辩题`,
+      logId: res._undoLogId ?? undefined
+    });
     return true;
   },
 
   updateStatus: async (id, status) => {
     const res = await window.topicAPI.updateStatus(id, status);
     extractError(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'updateStatus',
+      targetType: 'topic',
+      targetId: id,
+      label: '修改辩题状态',
+      logId: res._undoLogId ?? undefined
+    });
     return true;
   },
 
   updateWeight: async (id, weight) => {
     const res = await window.topicAPI.updateWeight(id, weight);
     extractError(res);
+    undoManager.pushEntry({
+      storeName: 'topic',
+      action: 'updateWeight',
+      targetType: 'topic',
+      targetId: id,
+      label: '修改辩题权重',
+      logId: res._undoLogId ?? undefined
+    });
     return true;
   },
 
+  // P4-20 已知限制：使用 pageSize:100000 作为"全量"拉取的 workaround
+  // 当筛选结果超过 10 万条时，批量操作（删除/导出）将静默截断，无法覆盖剩余项
+  // 后续应提供专门的 listIds IPC（仅返回 id 数组，避免序列化全字段的开销）
   getSelectedIdsForBatchOp: async () => {
     const s = get();
     if (s.allSelectedInFilter) {
       // 拉取篮选项下全部 id，过滤 exceptIds
+      // 注：pageSize:100000 为临时方案，超大数据集下存在截断风险（见 P4-20）
       const res = await window.topicAPI.list({
         ...s.filter,
         page: 1,

@@ -1,6 +1,7 @@
 // src/renderer/src/stores/customFieldStore.ts
 import { create } from 'zustand'
 import type { CustomField, CustomFieldType, ApiResponse } from '../../../shared/types'
+import { undoManager, registerStoreRefresher } from '../utils/undo-manager'
 
 interface CustomFieldState {
   fields: CustomField[]
@@ -20,6 +21,11 @@ function extractError<T>(res: ApiResponse<unknown>): T {
   if (res.success && res.data !== undefined) return res.data as T
   throw new Error(res.error || '未知错误')
 }
+
+// 注册 customFieldStore 的刷新函数：undo 后重新拉取 fields
+registerStoreRefresher('customField', () => {
+  void useCustomFieldStore.getState().fetchAll()
+})
 
 export const useCustomFieldStore = create<CustomFieldState>((set) => ({
   fields: [],
@@ -42,6 +48,14 @@ export const useCustomFieldStore = create<CustomFieldState>((set) => ({
       const res = await window.customFieldAPI.create(label, type)
       const created = extractError<CustomField>(res)
       set((s) => ({ fields: [...s.fields, created] }))
+      undoManager.pushEntry({
+        storeName: 'customField',
+        action: 'create',
+        targetType: 'customField',
+        targetId: created.field_key,
+        label: `创建自定义字段 ${label}`,
+        logId: res._undoLogId ?? undefined
+      })
       return created
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
@@ -58,6 +72,14 @@ export const useCustomFieldStore = create<CustomFieldState>((set) => ({
           f.field_key === fieldKey ? { ...f, ...patch } : f
         )
       }))
+      undoManager.pushEntry({
+        storeName: 'customField',
+        action: 'update',
+        targetType: 'customField',
+        targetId: fieldKey,
+        label: `更新自定义字段 ${fieldKey}`,
+        logId: res._undoLogId ?? undefined
+      })
       return true
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
@@ -70,6 +92,14 @@ export const useCustomFieldStore = create<CustomFieldState>((set) => ({
       const res = await window.customFieldAPI.delete(fieldKey)
       extractError(res)
       set((s) => ({ fields: s.fields.filter((f) => f.field_key !== fieldKey) }))
+      undoManager.pushEntry({
+        storeName: 'customField',
+        action: 'delete',
+        targetType: 'customField',
+        targetId: fieldKey,
+        label: `删除自定义字段 ${fieldKey}`,
+        logId: res._undoLogId ?? undefined
+      })
       return true
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })

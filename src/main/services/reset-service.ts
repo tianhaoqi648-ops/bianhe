@@ -13,10 +13,18 @@ import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
 import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { auditRepo } from '../db/repository/audit.repo'
+import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
+import { undoLogRepo } from '../db/repository/undo-log.repo'
+import { formatRepo } from '../db/repository/format.repo'
+import { timerSessionRepo } from '../db/repository/timer-session.repo'
+import { bellAssetRepo } from '../db/repository/bell-asset.repo'
+import { getDb } from '../db'
 import { OFFICIAL_TOPIC_SETTINGS_KEYS } from '../../shared/settings-defaults'
 import type { ResetDataRequest, ResetDataResponse } from '../../shared/types'
 
 export function resetData(req: ResetDataRequest): ResetDataResponse {
+  const db = getDb()
+  return db.transaction(() => {
   const res: ResetDataResponse = {
     configDeleted: 0,
     topicsDeleted: 0,
@@ -24,6 +32,12 @@ export function resetData(req: ResetDataRequest): ResetDataResponse {
     drawSessionsDeleted: 0,
     importBatchesDeleted: 0,
     auditLogsDeleted: 0,
+    batchEditHistoryDeleted: 0,
+    undoLogDeleted: 0,
+    timerSessionsDeleted: 0,
+    timerRecordsDeleted: 0,
+    debateFormatsDeleted: 0,
+    customBellsDeleted: 0,
     officialKept: true
   }
 
@@ -64,7 +78,37 @@ export function resetData(req: ResetDataRequest): ResetDataResponse {
     res.auditLogsDeleted = auditRepo.clearLogs()
   }
 
-  // 7. 写一条审计日志记录本次重置操作（在清空 audit_logs 之后再写）
+  // 7. 批量编辑历史（主表 + 明细，CASCADE 删除）
+  if (req.dataOptions.batchEditHistory) {
+    res.batchEditHistoryDeleted = batchEditHistoryRepo.clearAll()
+  }
+
+  // 8. 撤销历史（undo_log 表）
+  if (req.dataOptions.undoLog) {
+    res.undoLogDeleted = undoLogRepo.clearAll()
+  }
+
+  // 9. 计时会话（timer_sessions 表）
+  if (req.dataOptions.timerSessions) {
+    res.timerSessionsDeleted = timerSessionRepo.clearAll()
+  }
+
+  // 10. 计时记录（timer_records 表，独立于会话可单独清空）
+  if (req.dataOptions.timerRecords) {
+    res.timerRecordsDeleted = timerSessionRepo.clearAllRecords()
+  }
+
+  // 11. 自定义赛制（仅 is_preset=0，保留内置预设）
+  if (req.dataOptions.debateFormats) {
+    res.debateFormatsDeleted = formatRepo.clearAllCustom()
+  }
+
+  // 12. 自定义铃声（bell_assets 表 + userData/bells/ 文件）
+  if (req.dataOptions.customBells) {
+    res.customBellsDeleted = bellAssetRepo.clearAll()
+  }
+
+  // 13. 写一条审计日志记录本次重置操作（在清空 audit_logs 之后再写）
   try {
     auditRepo.addLog({
       action: 'system',
@@ -73,13 +117,7 @@ export function resetData(req: ResetDataRequest): ResetDataResponse {
       operator: 'user',
       detail: {
         action: 'reset_data',
-        configDeleted: res.configDeleted,
-        topicsDeleted: res.topicsDeleted,
-        eventsDeleted: res.eventsDeleted,
-        drawSessionsDeleted: res.drawSessionsDeleted,
-        importBatchesDeleted: res.importBatchesDeleted,
-        auditLogsDeleted: res.auditLogsDeleted,
-        officialKept: res.officialKept,
+        ...res,
         timestamp: new Date().toISOString()
       }
     })
@@ -87,5 +125,6 @@ export function resetData(req: ResetDataRequest): ResetDataResponse {
     // 审计日志失败不影响主流程
   }
 
-  return res
+    return res
+  })()
 }

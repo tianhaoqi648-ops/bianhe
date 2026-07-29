@@ -6,14 +6,16 @@ import {
   Space,
   Select,
   Input,
-  Empty,
   Typography,
-  message,
-  Popconfirm
+  Popconfirm,
+  Tag
 } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import EmptyState from './common/EmptyState';
 import type { ColumnsType } from 'antd/es/table';
 import type { Team, TeamHistory, Topic } from '../../../shared/types';
+import { useToast } from '../hooks/useToast';
+import { spacing, radius, gray } from '../styles/tokens';
 
 const { Text } = Typography;
 
@@ -46,7 +48,7 @@ export default function TeamHistoryModal({
   onAdd,
   onDelete
 }: TeamHistoryModalProps) {
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
   const [adding, setAdding] = useState(false);
   const [newTopicId, setNewTopicId] = useState<string | null>(null);
   const [newEventId, setNewEventId] = useState<string | null>(null);
@@ -65,11 +67,11 @@ export default function TeamHistoryModal({
   const handleAdd = async () => {
     if (!team) return;
     if (!newTopicId) {
-      messageApi.warning('请选择辩题');
+      toast.warning('请选择辩题');
       return;
     }
     if (!newEventId) {
-      messageApi.warning('请选择赛事');
+      toast.warning('请选择赛事');
       return;
     }
     try {
@@ -79,13 +81,13 @@ export default function TeamHistoryModal({
         event_id: newEventId,
         played_at: newPlayedAt || null
       });
-      messageApi.success('已添加');
+      toast.success('已添加');
       setNewTopicId(null);
       setNewEventId(null);
       setNewPlayedAt('');
       setAdding(false);
     } catch (e) {
-      messageApi.error(e instanceof Error ? e.message : '添加失败');
+      toast.error(e instanceof Error ? e.message : '添加失败');
     }
   };
 
@@ -109,7 +111,7 @@ export default function TeamHistoryModal({
       title: '所属赛事',
       dataIndex: 'event_id',
       key: 'event',
-      width: 180,
+      width: 160,
       render: (eventId: string) => eventMap.get(eventId) ?? eventId.slice(0, 8)
     },
     {
@@ -120,6 +122,16 @@ export default function TeamHistoryModal({
       render: (v: string | null) => v ?? '-'
     },
     {
+      title: '持方',
+      dataIndex: 'stance',
+      key: 'stance',
+      width: 80,
+      render: (v: string | null) => {
+        if (!v) return <Text type="secondary">-</Text>;
+        return <Tag color={v === '正方' ? 'blue' : 'red'}>{v}</Tag>;
+      }
+    },
+    {
       title: '操作',
       key: 'action',
       width: 80,
@@ -128,7 +140,7 @@ export default function TeamHistoryModal({
           title="确认删除这条历史？"
           onConfirm={async () => {
             await onDelete(record.id);
-            messageApi.success('已删除');
+            toast.success('已删除');
           }}
         >
           <Button size="small" danger icon={<DeleteOutlined />} />
@@ -139,7 +151,6 @@ export default function TeamHistoryModal({
 
   return (
     <>
-      {contextHolder}
       <Modal
         title={`队伍历史辩题${team ? ` - ${team.name}` : ''}`}
         open={open}
@@ -152,10 +163,10 @@ export default function TeamHistoryModal({
         {adding ? (
           <div
             style={{
-              padding: 12,
-              marginBottom: 12,
-              border: '1px solid #d9d9d9',
-              borderRadius: 6
+              padding: spacing.md,
+              marginBottom: spacing.md,
+              border: `1px solid ${gray[100]}`,
+              borderRadius: radius.md
             }}
           >
             <Space style={{ display: 'flex', flexWrap: 'wrap' }} size={8}>
@@ -208,7 +219,7 @@ export default function TeamHistoryModal({
         )}
 
         {history.length === 0 ? (
-          <Empty description="暂无历史辩题记录" />
+          <EmptyState type="topic" description="暂无历史辩题记录" />
         ) : (
           <Table
             columns={columns}

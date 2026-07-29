@@ -9,7 +9,7 @@
 // ============================================================
 
 import { ipcMain, dialog } from 'electron'
-import { writeFileSync } from 'fs'
+import { writeFile } from 'fs/promises'
 import { auditRepo } from '../db/repository/audit.repo'
 import type { AuditLogFilter, AuditLogCreateInput } from '../db/repository/audit.repo'
 import {
@@ -18,15 +18,22 @@ import {
   type ExportLogsRequest,
   type ExportLogsResult
 } from '../../shared/types'
-import { getActiveWindow } from './utils'
+import { getActiveWindow, wrap, wrapWithUndo } from './utils'
+import { withUndoLog } from '../services/undo-service'
 
-function wrap<T>(fn: () => T): ApiResponse<T> {
-  try {
-    const data = fn()
-    return { success: true, data }
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) }
+/**
+ * P2-23：参数校验辅助函数。
+ * 校验失败时抛出友好错误，由 wrap/wrapWithUndo 捕获并转为 ApiResponse.error 返回前端。
+ */
+function assertParam(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message)
   }
+}
+
+/** 校验非空字符串 */
+function assertNonEmptyString(value: unknown, name: string): asserts value is string {
+  assertParam(typeof value === 'string' && value.length > 0, `参数 ${name} 必须为非空字符串`)
 }
 
 /**
@@ -66,10 +73,16 @@ export function registerAuditIpc(): void {
     wrap(() => auditRepo.listLogs(filter))
   )
   ipcMain.handle(IPC_CHANNELS.AUDIT_ADD_LOG, (_e, input: AuditLogCreateInput) =>
-    wrap(() => auditRepo.addLog(input))
+    wrap(() => {
+      assertParam(input && typeof input === 'object', '参数 input 必须为对象')
+      return auditRepo.addLog(input)
+    })
   )
   ipcMain.handle(IPC_CHANNELS.AUDIT_DELETE_LOG, (_e, id: string) =>
-    wrap(() => auditRepo.deleteLog(id))
+    wrap(() => {
+      assertNonEmptyString(id, 'id')
+      return auditRepo.deleteLog(id)
+    })
   )
   ipcMain.handle(IPC_CHANNELS.AUDIT_CLEAR_LOGS, (_e, beforeDate?: string) =>
     wrap(() => auditRepo.clearLogs(beforeDate))
@@ -80,7 +93,7 @@ export function registerAuditIpc(): void {
     IPC_CHANNELS.AUDIT_EXPORT_LOGS,
     async (_e, req: ExportLogsRequest): Promise<ApiResponse<ExportLogsResult>> => {
       try {
-        // 拉取全部匹配日志（pageSize=100000 避免分页）
+        // P3-5: pageSize=100000 作为全量拉取的 workaround（auditRepo 无 listAll 方法）
         const { items } = auditRepo.listLogs({ ...req.filter, page: 1, pageSize: 100000 })
         const win = getActiveWindow()
         if (!win) {
@@ -96,11 +109,13 @@ export function registerAuditIpc(): void {
               : [{ name: 'JSON', extensions: ['json'] }]
         })
         if (canceled || !filePath) {
-          return { success: false, error: '用户取消保存' }
+          // P3-2: 用户取消保存不是错误，返回 success:true + data:null 让前端区分取消与失败
+          return { success: true, data: null } as unknown as ApiResponse<ExportLogsResult>
         }
         const content =
           req.format === 'csv' ? logsToCsv(items) : JSON.stringify(items, null, 2)
-        writeFileSync(filePath, content, 'utf-8')
+        // P3-7: 改用 fs.promises.writeFile 异步写入，避免阻塞主进程
+        await writeFile(filePath, content, 'utf-8')
         return { success: true, data: { filePath, count: items.length } }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
@@ -110,37 +125,100 @@ export function registerAuditIpc(): void {
 
   // ---------- settings ----------
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (_e, key: string) =>
-    wrap(() => auditRepo.getSetting(key))
-  )
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_e, key: string, value: any) =>
     wrap(() => {
-      auditRepo.setSetting(key, value)
-      return true
+      assertNonEmptyString(key, 'key')
+      return auditRepo.getSetting(key)
+    })
+  )
+  // SETTINGS_SET：before = 旧值或 null，after = 新值
+  // P3-11: value 类型从 any 改为 unknown，避免类型逃逸
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_e, key: string, value: unknown) =>
+    wrapWithUndo(() => {
+      assertNonEmptyString(key, 'key')
+      assertParam(value !== undefined, '参数 value 不能为 undefined')
+      return withUndoLog({
+        storeName: 'settings',
+        action: 'set',
+        targetType: 'setting',
+        targetId: key,
+        label: `修改设置 ${key}`,
+        getBefore: () => {
+          const old = auditRepo.getSetting(key)
+          return old === undefined ? null : { key, value: old }
+        },
+        execute: () => {
+          auditRepo.setSetting(key, value)
+          return true
+        },
+        getAfter: () => ({ key, value })
+      })
     })
   )
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_ALL, () =>
     wrap(() => auditRepo.getAllSettings())
   )
+  // SETTINGS_DELETE：before = 旧值，after = { key }（key 已删除，但记录 key 名供 redo 使用）
   ipcMain.handle(IPC_CHANNELS.SETTINGS_DELETE, (_e, key: string) =>
-    wrap(() => auditRepo.deleteSetting(key))
+    wrapWithUndo(() => {
+      assertNonEmptyString(key, 'key')
+      return withUndoLog({
+        storeName: 'settings',
+        action: 'deleteKey',
+        targetType: 'setting',
+        targetId: key,
+        label: `删除设置 ${key}`,
+        getBefore: () => {
+          const old = auditRepo.getSetting(key)
+          return old === undefined ? null : { key, value: old }
+        },
+        execute: () => auditRepo.deleteSetting(key),
+        getAfter: () => ({ key })
+      })
+    })
   )
+  // SETTINGS_DELETE_BATCH：before = { entries: [{key, value}] }，after = { keys: string[] }
+  // 注意：保留原有审计日志写入逻辑
   ipcMain.handle(
     IPC_CHANNELS.SETTINGS_DELETE_BATCH,
-    async (_e, keys: string[]): Promise<ApiResponse<number>> => {
-      const deleted = auditRepo.deleteSettingsByKeys(keys);
-      // 写审计日志留痕
-      try {
-        auditRepo.addLog({
-          action: 'system',
-          target_type: 'settings',
-          target_id: 'reset',
-          operator: 'user',
-          detail: { action: 'reset_settings', keys, deletedCount: deleted }
-        });
-      } catch {
-        // 审计日志失败不影响主流程
+    (_e, keys: string[]): ApiResponse<number> => {
+      // P1: 校验 + entries 采集均放入 wrapWithUndo，确保校验失败时返回统一 ApiResponse 格式
+      const response = wrapWithUndo(() => {
+        assertParam(Array.isArray(keys), '参数 keys 必须为数组')
+        // 采集 before 快照
+        const entries = keys
+          .map((k) => {
+            const v = auditRepo.getSetting(k)
+            return v === undefined ? null : { key: k, value: v }
+          })
+          .filter((e): e is { key: string; value: unknown } => e !== null)
+
+        return withUndoLog<number>({
+          storeName: 'settings',
+          action: 'deleteBatch',
+          targetType: 'setting',
+          targetId: null,
+          label: `批量删除 ${keys.length} 项设置`,
+          getBefore: () => ({ entries }),
+          execute: () => auditRepo.deleteSettingsByKeys(keys),
+          getAfter: () => ({ keys })
+        })
+      })
+
+      // 保留原有审计日志逻辑（仅在成功时写入）
+      if (response.success && response.data !== undefined) {
+        try {
+          auditRepo.addLog({
+            action: 'system',
+            target_type: 'settings',
+            target_id: 'reset',
+            operator: 'user',
+            detail: { action: 'reset_settings', keys, deletedCount: response.data }
+          })
+        } catch {
+          /* 审计日志失败不影响主流程 */
+        }
       }
-      return { success: true, data: deleted };
+      return response
     }
   )
 }

@@ -15,7 +15,7 @@
 // 通过 onMappingChange 回传 mapping 给父组件，由父组件在执行导入前应用。
 // ============================================================
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Card,
   Tag,
@@ -85,6 +85,11 @@ export default function ValueMappingPanel({
   }>({ field: null, open: false })
   const [batchMapTarget, setBatchMapTarget] = useState<string>('')
 
+  // Bug 3.5: 当父组件显式传入新 initialMapping 时同步本地 state（防御性，当前父组件不传）
+  useEffect(() => {
+    setMapping(initialMapping)
+  }, [initialMapping])
+
   // 计算总览
   const totalValues = useMemo(
     () => unknownValues.reduce((sum, item) => sum + item.values.length, 0),
@@ -108,19 +113,28 @@ export default function ValueMappingPanel({
     onMappingChange(next)
   }
 
+  // Bug 3.4: 每次更新 mapping[field] 时创建新对象，不 mutate 原引用
+  const updateFieldMapping = (
+    field: CandidateField,
+    updater: (prev: Record<string, ValueMappingRule>) => Record<string, ValueMappingRule>
+  ): void => {
+    const prevField = mapping[field] ?? {}
+    const next: ValueMapping = { ...mapping, [field]: updater(prevField) }
+    updateMapping(next)
+  }
+
   const handleActionChange = (
     field: CandidateField,
     originValue: string,
     action: ValueMappingAction
   ) => {
-    const next: ValueMapping = { ...mapping }
-    if (!next[field]) next[field] = {}
-    const rule: ValueMappingRule = { action }
-    if (action === 'map') {
-      rule.target = candidateOptions[field][0] ?? ''
-    }
-    next[field]![originValue] = rule
-    updateMapping(next)
+    updateFieldMapping(field, (prev) => {
+      const rule: ValueMappingRule = { action }
+      if (action === 'map') {
+        rule.target = candidateOptions[field][0] ?? ''
+      }
+      return { ...prev, [originValue]: rule }
+    })
   }
 
   const handleMapTargetChange = (
@@ -128,10 +142,10 @@ export default function ValueMappingPanel({
     originValue: string,
     target: string
   ) => {
-    const next: ValueMapping = { ...mapping }
-    if (!next[field]) next[field] = {}
-    next[field]![originValue] = { action: 'map', target }
-    updateMapping(next)
+    updateFieldMapping(field, (prev) => ({
+      ...prev,
+      [originValue]: { action: 'map', target }
+    }))
   }
 
   // 批量操作
@@ -164,15 +178,25 @@ export default function ValueMappingPanel({
     values: Array<{ value: string; count: number }>
   ) => {
     const newValues = values.map((v) => v.value)
-    const recs = recommendMappings(newValues, candidateOptions[field])
+    const recs = recommendMappings(newValues, candidateOptions[field], field)
     setRecommendations((prev) => ({ ...prev, [field]: recs }))
-    // 自动应用所有推荐：用户可逐条撤销
-    const next: ValueMapping = { ...mapping }
-    if (!next[field]) next[field] = {}
-    for (const r of recs) {
-      next[field]![r.originValue] = { action: 'map', target: r.recommendedTarget }
-    }
-    updateMapping(next)
+    // Bug 5.6: 自动应用所有推荐时，仅覆盖未设置或 action='keep' 的项，
+    // 不覆盖用户已设置的 'map' 或 'add'，避免破坏已有配置
+    // 未匹配项（reason='no-match'）自动设为 'keep'，UI 显示「推荐保留」标签
+    updateFieldMapping(field, (prev) => {
+      const next = { ...prev }
+      for (const r of recs) {
+        const existing = next[r.originValue]
+        if (!existing || existing.action === 'keep') {
+          if (r.reason === 'no-match') {
+            next[r.originValue] = { action: 'keep' }
+          } else {
+            next[r.originValue] = { action: 'map', target: r.recommendedTarget }
+          }
+        }
+      }
+      return next
+    })
   }
 
   const handleBatchMap = (field: CandidateField) => {
@@ -187,21 +211,29 @@ export default function ValueMappingPanel({
     const field = batchMapModal.field
     const selected = selectedValues[field]
     if (!selected) return
-    const next: ValueMapping = { ...mapping }
-    if (!next[field]) next[field] = {}
-    for (const v of selected) {
-      next[field]![v] = { action: 'map', target: batchMapTarget }
-    }
-    updateMapping(next)
+    updateFieldMapping(field, (prev) => {
+      const next = { ...prev }
+      for (const v of selected) {
+        next[v] = { action: 'map', target: batchMapTarget }
+      }
+      return next
+    })
     setSelectedValues((prev) => ({ ...prev, [field]: new Set() }))
     setBatchMapModal({ field: null, open: false })
   }
 
   const handleApplySingleRecommend = (field: CandidateField, rec: Recommendation) => {
-    const next: ValueMapping = { ...mapping }
-    if (!next[field]) next[field] = {}
-    next[field]![rec.originValue] = { action: 'map', target: rec.recommendedTarget }
-    updateMapping(next)
+    updateFieldMapping(field, (prev) => ({
+      ...prev,
+      [rec.originValue]: { action: 'map', target: rec.recommendedTarget }
+    }))
+  }
+
+  const handleApplyNoMatchRecommend = (field: CandidateField, rec: Recommendation) => {
+    updateFieldMapping(field, (prev) => ({
+      ...prev,
+      [rec.originValue]: { action: 'keep' }
+    }))
   }
 
   if (unknownValues.length === 0) return null
@@ -223,12 +255,34 @@ export default function ValueMappingPanel({
         style={{ marginBottom: 8, fontSize: 12 }}
         message="导入文件中存在部分字段值不在系统候选内（如新赛事、新难度），可在导入前批量处理："
         description={
-          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
-            <li><b>保留</b>：原样入库（后续在筛选面板可能选不到该值）</li>
-            <li><b>映射到...</b>：改写为已有候选值（如把&quot;入门&quot;改为&quot;入门级&quot;）</li>
-            <li><b>加入候选</b>：原样入库 + 永久加入系统候选（重启后仍可用）</li>
-            <li><b>智能推荐</b>：基于相似度自动推荐映射（可逐条撤销）</li>
-          </ul>
+          <div style={{ fontSize: 12 }}>
+            <ul style={{ margin: '0 0 6px 0', paddingLeft: 16 }}>
+              <li>
+                <b>保留</b>：原样入库，但候选值列表不变
+                <Text type="secondary" style={{ marginLeft: 4 }}>
+                  （下次导入同值仍会提示；筛选面板可能选不到该值）
+                </Text>
+              </li>
+              <li>
+                <b>映射到...</b>：改写为已有候选值入库
+                <Text type="secondary" style={{ marginLeft: 4 }}>
+                  （如把 &quot;1-入门&quot; 改为 &quot;入门级&quot;，便于统一筛选）
+                </Text>
+              </li>
+              <li>
+                <b>加入候选</b>：原样入库 + 永久写入系统候选
+                <Text type="secondary" style={{ marginLeft: 4 }}>
+                  （重启后仍可用，筛选面板能选到该值，下次导入不再提示）
+                </Text>
+              </li>
+              <li>
+                <b>智能推荐</b>：基于相似度自动推荐映射，可逐条撤销
+              </li>
+            </ul>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              提示：「保留」适合临时放行，「加入候选」适合长期使用自有分级体系。
+            </Text>
+          </div>
         }
       />
       {unknownValues.map((item) => (
@@ -238,14 +292,14 @@ export default function ValueMappingPanel({
               {FIELD_LABEL[item.field]}（{item.values.length} 个新值）
             </Text>
           </Divider>
-          {item.values.map(({ value, count }) => {
+          {item.values.map(({ value, count }, idx) => {
             const rule = mapping[item.field]?.[value]
             const action = rule?.action ?? 'keep'
             const isSelected = selectedValues[item.field]?.has(value) ?? false
             const rec = recommendations[item.field]?.find((r) => r.originValue === value)
             return (
               <div
-                key={`${item.field}-${value}`}
+                key={`${item.field}-${idx}-${value}`}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -264,7 +318,7 @@ export default function ValueMappingPanel({
                   {value}
                 </Tag>
                 <Text type="secondary" style={{ fontSize: 11 }}>×{count}</Text>
-                {rec && (
+                {rec && rec.reason !== 'no-match' && (
                   <Tooltip title={`推荐匹配度 ${(rec.score * 100).toFixed(0)}%`}>
                     <Tag
                       color="gold"
@@ -274,6 +328,26 @@ export default function ValueMappingPanel({
                       <ThunderboltOutlined /> 推荐→{rec.recommendedTarget}
                     </Tag>
                   </Tooltip>
+                )}
+                {rec && rec.reason === 'no-match' && (
+                  <Tooltip title="未找到匹配的已有候选值，推荐保留原值">
+                    <Tag
+                      color="default"
+                      style={{ cursor: 'pointer', fontSize: 11 }}
+                      onClick={() => handleApplyNoMatchRecommend(item.field, rec)}
+                    >
+                      <ThunderboltOutlined /> 推荐保留
+                    </Tag>
+                  </Tooltip>
+                )}
+                {rec && rule && (
+                  // 用户已设 'map' 或 'add'，且不是推荐自动应用的匹配项
+                  (rule.action === 'map' || rule.action === 'add') &&
+                  !(rec.reason !== 'no-match' && rule.action === 'map' && rule.target === rec.recommendedTarget)
+                ) && (
+                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                    （已设置，跳过）
+                  </Text>
                 )}
                 <Text type="secondary" style={{ fontSize: 12 }}>→</Text>
                 <Select

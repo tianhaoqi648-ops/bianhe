@@ -27,6 +27,12 @@ const FAKE_RESET_RESPONSE: ResetDataResponse = {
   drawSessionsDeleted: 10,
   importBatchesDeleted: 5,
   auditLogsDeleted: 100,
+  batchEditHistoryDeleted: 0,
+  undoLogDeleted: 0,
+  timerSessionsDeleted: 0,
+  timerRecordsDeleted: 0,
+  debateFormatsDeleted: 0,
+  customBellsDeleted: 0,
   officialKept: true
 };
 
@@ -263,6 +269,12 @@ describe('settingsStore resetAll', () => {
         drawSessionsDeleted: 0,
         importBatchesDeleted: 0,
         auditLogsDeleted: 0,
+        batchEditHistoryDeleted: 0,
+        undoLogDeleted: 0,
+        timerSessionsDeleted: 0,
+        timerRecordsDeleted: 0,
+        debateFormatsDeleted: 0,
+        customBellsDeleted: 0,
         officialKept: true
       }
     });

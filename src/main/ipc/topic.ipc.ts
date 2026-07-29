@@ -16,19 +16,9 @@ import {
   type TopicUpdateInput,
   type CountableDimension
 } from '../db/repository/topic.repo'
-import { IPC_CHANNELS, type ApiResponse } from '../../shared/types'
-
-/**
- * 统一包装：捕获异常，返回 ApiResponse。
- */
-function wrap<T>(fn: () => T): ApiResponse<T> {
-  try {
-    const data = fn()
-    return { success: true, data }
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) }
-  }
-}
+import { IPC_CHANNELS } from '../../shared/types'
+import { withUndoLog } from '../services/undo-service'
+import { wrap, wrapWithUndo } from './utils'
 
 export function registerTopicIpc(): void {
   ipcMain.handle(IPC_CHANNELS.TOPIC_LIST, (_e, filter?: TopicFilter) =>
@@ -40,28 +30,104 @@ export function registerTopicIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.TOPIC_CREATE, (_e, data: TopicCreateInput) =>
-    wrap(() => topicRepo.createTopic(data))
+    wrapWithUndo(() =>
+      withUndoLog({
+        storeName: 'topic',
+        action: 'create',
+        targetType: 'topic',
+        targetId: null, // id 在 execute 后才知道
+        label: `创建辩题`,
+        getBefore: () => null,
+        execute: () => topicRepo.createTopic(data),
+        getAfter: (result) => result // execute 返回值即 after
+      })
+    )
   )
 
   ipcMain.handle(
     IPC_CHANNELS.TOPIC_UPDATE,
-    (_e, id: string, data: TopicUpdateInput) => wrap(() => topicRepo.updateTopic(id, data))
+    (_e, id: string, data: TopicUpdateInput) =>
+      wrapWithUndo(() =>
+        withUndoLog({
+          storeName: 'topic',
+          action: 'update',
+          targetType: 'topic',
+          targetId: id,
+          label: `更新辩题 ${id.slice(0, 8)}`,
+          getBefore: () => topicRepo.getTopicById(id) ?? null,
+          execute: () => topicRepo.updateTopic(id, data),
+          getAfter: () => topicRepo.getTopicById(id) ?? null
+        })
+      )
   )
 
   ipcMain.handle(IPC_CHANNELS.TOPIC_DELETE, (_e, id: string) =>
-    wrap(() => topicRepo.deleteTopic(id))
+    wrapWithUndo(() => {
+      const before = topicRepo.getTopicById(id)
+      return withUndoLog({
+        storeName: 'topic',
+        action: 'delete',
+        targetType: 'topic',
+        targetId: id,
+        label: `删除辩题 ${before?.title ?? id.slice(0, 8)}`,
+        getBefore: () => before,
+        execute: () => topicRepo.deleteTopic(id),
+        getAfter: () => null
+      })
+    })
   )
 
   ipcMain.handle(IPC_CHANNELS.TOPIC_BATCH_DELETE, (_e, ids: string[]) =>
-    wrap(() => topicRepo.batchDeleteTopics(ids))
+    wrapWithUndo(() => {
+      // 采集 before 快照（删除前的所有 topic）
+      const beforeTopics = ids
+        .map((id) => topicRepo.getTopicById(id))
+        .filter((t): t is NonNullable<typeof t> => t !== undefined)
+      return withUndoLog({
+        storeName: 'topic',
+        action: 'batchDelete',
+        targetType: 'topic',
+        targetId: null,
+        label: `批量删除 ${ids.length} 条辩题`,
+        getBefore: () => ({ topics: beforeTopics }),
+        execute: () => topicRepo.batchDeleteTopics(ids),
+        getAfter: () => null
+      })
+    })
   )
 
-  ipcMain.handle(IPC_CHANNELS.TOPIC_UPDATE_STATUS, (_e, id: string, status: string) =>
-    wrap(() => topicRepo.updateStatus(id, status))
+  ipcMain.handle(
+    IPC_CHANNELS.TOPIC_UPDATE_STATUS,
+    (_e, id: string, status: string) =>
+      wrapWithUndo(() =>
+        withUndoLog({
+          storeName: 'topic',
+          action: 'updateStatus',
+          targetType: 'topic',
+          targetId: id,
+          label: `修改辩题状态`,
+          getBefore: () => topicRepo.getTopicById(id) ?? null,
+          execute: () => topicRepo.updateStatus(id, status),
+          getAfter: () => topicRepo.getTopicById(id) ?? null
+        })
+      )
   )
 
-  ipcMain.handle(IPC_CHANNELS.TOPIC_UPDATE_WEIGHT, (_e, id: string, weight: number) =>
-    wrap(() => topicRepo.updateWeight(id, weight))
+  ipcMain.handle(
+    IPC_CHANNELS.TOPIC_UPDATE_WEIGHT,
+    (_e, id: string, weight: number) =>
+      wrapWithUndo(() =>
+        withUndoLog({
+          storeName: 'topic',
+          action: 'updateWeight',
+          targetType: 'topic',
+          targetId: id,
+          label: `修改辩题权重`,
+          getBefore: () => topicRepo.getTopicById(id) ?? null,
+          execute: () => topicRepo.updateWeight(id, weight),
+          getAfter: () => topicRepo.getTopicById(id) ?? null
+        })
+      )
   )
 
   ipcMain.handle(IPC_CHANNELS.TOPIC_COUNT, (_e, filter?: TopicFilter) =>

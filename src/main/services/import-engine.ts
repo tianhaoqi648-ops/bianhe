@@ -450,16 +450,23 @@ function detectEncoding(buffer: Buffer): string {
  */
 function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
   let workbook: XLSX.WorkBook
-  if (fileType === 'csv') {
-    // CSV：buffer → 自动检测编码 → iconv-lite 解码 → 字符串传给 XLSX
-    const buffer = fs.readFileSync(filePath)
-    const encoding = detectEncoding(buffer)
-    const text = iconv.decode(buffer, encoding)
-    workbook = XLSX.read(text, { type: 'string' })
-  } else {
-    // XLSX：fs 读 buffer 后交给 XLSX.read，规避 ESM 下 readFile 命名导出丢失
-    const buffer = fs.readFileSync(filePath)
-    workbook = XLSX.read(buffer, { type: 'buffer' })
+  try {
+    if (fileType === 'csv') {
+      // CSV：buffer → 自动检测编码 → iconv-lite 解码 → 字符串传给 XLSX
+      const buffer = fs.readFileSync(filePath)
+      const encoding = detectEncoding(buffer)
+      const text = iconv.decode(buffer, encoding)
+      workbook = XLSX.read(text, { type: 'string' })
+    } else {
+      // XLSX：fs 读 buffer 后交给 XLSX.read，规避 ESM 下 readFile 命名导出丢失
+      const buffer = fs.readFileSync(filePath)
+      workbook = XLSX.read(buffer, { type: 'buffer' })
+    }
+  } catch (e) {
+    // P2-32: 加密/损坏文件友好错误提示
+    throw new Error(
+      `文件解析失败，文件可能已损坏或已加密：${fileType.toUpperCase()} 文件无法读取。${e instanceof Error ? e.message : ''}`
+    )
   }
   const firstSheetName = workbook.SheetNames[0]
   if (!firstSheetName) {
@@ -572,7 +579,15 @@ function parseHtmlTable(html: string): string[][] | null {
  *   3. 纯文本段落 → 按空行分段解析 title
  */
 async function parseDocx(filePath: string): Promise<ParsedResult> {
-  const result = await mammoth.convertToHtml({ path: filePath })
+  let result
+  try {
+    result = await mammoth.convertToHtml({ path: filePath })
+  } catch (e) {
+    // P2-32: 加密/损坏文件友好错误提示
+    throw new Error(
+      `文件解析失败，文件可能已损坏或已加密：DOCX 文件无法读取。${e instanceof Error ? e.message : ''}`
+    )
+  }
   const html = result.value || ''
 
   // 1. 检测表格
@@ -618,6 +633,8 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
         topics,
         mapping: { [headers[0]]: 'title' },
         warnings: topics.length === 0 ? [] : ['表格无标准表头，按第一列作为 title 解析'],
+        // P2-31: 兜底分支也返回 rawTable，供 applyFieldMapping 重新解析
+        rawTable: { headers, rows: tableRows },
         unknownValues: []
       }
     }
@@ -702,6 +719,13 @@ async function parseDocx(filePath: string): Promise<ParsedResult> {
  * @param filePath 文件绝对路径
  * @param fileType 文件类型：'xlsx' | 'csv' | 'docx'
  * @throws 文件不存在、类型不支持
+ *
+ * TODO(P4-17): N+1 查询优化评估结论——
+ *   本文件为纯文件解析与内存映射，不直接访问数据库，无 N+1 DB 查询。
+ *   去重比对由调用方（import.ipc.ts IMPORT_EXECUTE）批量拉取库内 existing 题库后
+ *   一次性传入 dedup-engine.findDuplicates，已实现批量查询模式。
+ *   applyFieldMapping 重新解析时直接复用 parsed.rawTable 内存数据，不重复读文件/查库。
+ *   未来若在解析阶段需要查询库内已有字段候选值等，需保持批量获取而非逐条查询。
  */
 export async function parseFile(filePath: string, fileType: FileType): Promise<ParsedResult> {
   // 校验文件存在

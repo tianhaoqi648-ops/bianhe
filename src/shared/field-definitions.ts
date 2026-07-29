@@ -78,10 +78,11 @@ export const SYSTEM_FIELD_DEFINITIONS: FieldDefinition[] = [
   {
     key: 'weight',
     label: '权重',
-    type: 'string',
-    aliases: ['权重', 'weight'],
+    type: 'number',
+    aliases: ['权重', '权值', 'weight', 'Weight', 'WEIGHT'],
     isSystem: true,
-    isCountable: false
+    isCountable: false,
+    description: '辩题权重，影响抽取概率'
   }
 ]
 

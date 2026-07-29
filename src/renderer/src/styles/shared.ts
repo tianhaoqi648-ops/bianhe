@@ -5,12 +5,17 @@
 // 所有常量均为 React.CSSProperties，可直接展开使用。
 // ============================================================
 
-import { shadow, spacing, radius, gradient } from './tokens'
+import { shadow, spacing, radius, gradient, colorGold, colorPurple, colorPrimary, fontSize, gray } from './tokens'
 
-/** 页面容器（每个页面根 div） */
+/** 页面容器（每个页面根 div）
+ *
+ * 设计要点（refine-ui-v2）：
+ * - 不使用 `height: '100%'`：避免父容器隐式高度链路导致的 overflow 失效
+ * - 仅约束 `minHeight`，允许内容超出时 body 自然滚动
+ * - padding 使用 `clamp()` 在桌面 24 / 移动 16 之间自适应
+ */
 export const pageContainerStyle: React.CSSProperties = {
-  padding: spacing.xl,
-  height: '100%',
+  padding: 'clamp(16px, 2vw, 24px)',
   minHeight: 'calc(100vh - 56px)'
 }
 
@@ -24,7 +29,7 @@ export const toolbarStyle: React.CSSProperties = {
   padding: `${spacing.md} ${spacing.lg}`,
   background: '#fff',
   borderRadius: radius.lg,
-  border: '1px solid #f0f0f0',
+  border: `1px solid ${gray[100]}`,
   boxShadow: shadow.sm,
   marginBottom: spacing.lg
 }
@@ -41,7 +46,7 @@ export const statCardStyle = (color: string): React.CSSProperties => ({
   overflow: 'hidden',
   position: 'relative',
   background: '#fff',
-  border: '1px solid #f0f0f0',
+  border: `1px solid ${gray[100]}`,
   boxShadow: shadow.sm,
   borderLeft: `4px solid ${color}`
 })
@@ -56,16 +61,48 @@ export const statCardDecoration = (color: string): React.CSSProperties => ({
   background: color
 })
 
-/** 卡片 hover 效果（需在 CSS 中实现，这里给出基础样式） */
+/**
+ * 卡片 hover 抬升动画基础样式
+ *
+ * 仅声明过渡属性，具体的 boxShadow / transform 由组件通过 hover 状态切换
+ * （配合 shadow.cardRest → shadow.cardHover 实现「抬升」效果）。
+ */
 export const cardHoverStyle: React.CSSProperties = {
-  transition: 'all 0.2s ease',
-  cursor: 'pointer'
+  transition: 'box-shadow 0.2s ease, transform 0.2s ease'
+}
+
+/**
+ * 卡片左侧色条装饰类型
+ * - gold：赛事工作区（DrawPage / TopicLibrary / EventManage / History）
+ * - purple：比赛工具区（TimerPage）
+ * - primary：系统区（Settings）
+ * - none：无装饰
+ */
+export type CardAccent = 'gold' | 'purple' | 'primary' | 'none'
+
+/**
+ * 根据强调色返回卡片左侧色条样式（工厂函数）
+ *
+ * @param accent 强调色类型，默认 'none'（不渲染色条）
+ * @returns React.CSSProperties，可直接展开到 Card 的 style 中
+ */
+export function getCardAccentStyle(accent: CardAccent = 'none'): React.CSSProperties {
+  if (accent === 'none') return {}
+  const color =
+    accent === 'gold'
+      ? colorGold
+      : accent === 'purple'
+        ? colorPurple
+        : colorPrimary
+  return {
+    borderLeft: `3px solid ${color}`
+  }
 }
 
 /** 选中态样式（题卡 / 列表项） */
 export const selectedStyle: React.CSSProperties = {
   boxShadow: shadow.selected,
-  borderColor: '#1677ff',
+  borderColor: colorPrimary,
   borderWidth: 1,
   borderStyle: 'solid'
 }
@@ -74,14 +111,14 @@ export const selectedStyle: React.CSSProperties = {
 export const primaryButtonStyle: React.CSSProperties = {
   borderRadius: radius.lg,
   height: 44,
-  fontSize: 16,
+  fontSize: fontSize.h4,
   fontWeight: 600,
   boxShadow: shadow.primary
 }
 
 /** 标题左侧蓝色竖条装饰 */
 export const titleBarStyle: React.CSSProperties = {
-  borderLeft: '4px solid #1677ff',
+  borderLeft: `4px solid ${colorPrimary}`,
   paddingLeft: spacing.sm,
   display: 'flex',
   alignItems: 'center',
@@ -96,7 +133,7 @@ export const paginationStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.85)',
   backdropFilter: 'blur(8px)',
   WebkitBackdropFilter: 'blur(8px)',
-  borderTop: '1px solid #f0f0f0',
+  borderTop: `1px solid ${gray[100]}`,
   borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`,
   display: 'flex',
   justifyContent: 'flex-end',
@@ -104,10 +141,14 @@ export const paginationStyle: React.CSSProperties = {
   zIndex: 10
 }
 
-/** 内容区背景渐变 */
+/** 内容区背景渐变
+ *
+ * 设计要点（refine-ui-v2）：
+ * - 不再约束 `minHeight`：已由 pageContainerStyle 承担，避免双重约束
+ * - 仅保留 background 渐变，暗色模式由 App.tsx 动态覆盖
+ */
 export const contentBgStyle: React.CSSProperties = {
-  background: gradient.contentBg,
-  minHeight: 'calc(100vh - 56px)'
+  background: gradient.contentBg
 }
 
 /** Sider 阴影 */
@@ -125,7 +166,7 @@ export const logoContainerStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   color: '#fff',
-  fontSize: 18,
+  fontSize: fontSize.h3,
   flexShrink: 0
 }
 
@@ -134,7 +175,7 @@ export const headerStyle: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.85)',
   backdropFilter: 'blur(8px)',
   WebkitBackdropFilter: 'blur(8px)',
-  borderBottom: '1px solid #f0f0f0',
+  borderBottom: `1px solid ${gray[100]}`,
   padding: `0 ${spacing.xxl}`,
   display: 'flex',
   alignItems: 'center',
@@ -178,7 +219,7 @@ export const kbdStyle: React.CSSProperties = {
   border: '1px solid rgba(255, 255, 255, 0.25)',
   borderRadius: radius.sm,
   fontFamily: 'monospace',
-  fontSize: 12,
+  fontSize: fontSize.caption,
   color: '#fff',
   margin: '0 4px'
 }

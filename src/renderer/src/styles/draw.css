@@ -78,32 +78,24 @@
   color: #fff;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: clamp(16px, 3vw, 40px);
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* 大屏辩题大字 */
 .bigscreen-topic-title {
-  font-size: 56px;
+  font-size: clamp(28px, 5vw, 64px);
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.3;
   text-align: center;
-  margin: 40px 0;
+  margin: clamp(12px, 2vw, 24px) 0;
   text-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  max-width: 1200px;
-}
-
-@media (max-width: 1200px) {
-  .bigscreen-topic-title {
-    font-size: 40px;
-  }
-}
-
-@media (max-width: 768px) {
-  .bigscreen-topic-title {
-    font-size: 28px;
-  }
+  max-width: 90vw;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 /* 大屏队伍对阵 */
@@ -111,29 +103,30 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(24px, 5vw, 60px);
-  font-size: 32px;
+  flex-wrap: wrap;
+  gap: clamp(16px, 4vw, 60px);
+  font-size: clamp(24px, 4vw, 40px);
   font-weight: 500;
-  margin: 30px 0;
+  margin: clamp(12px, 2vw, 24px) 0;
 }
 
 .bigscreen-team {
-  padding: 20px 40px;
+  padding: clamp(12px, 2vw, 24px) clamp(20px, 3vw, 40px);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
-  min-width: 240px;
+  min-width: clamp(180px, 20vw, 280px);
   text-align: center;
 }
 
 .bigscreen-stance {
-  font-size: 18px;
+  font-size: clamp(14px, 1.5vw, 20px);
   color: rgba(255, 255, 255, 0.7);
   margin-bottom: 8px;
 }
 
 .bigscreen-vs {
-  font-size: 40px;
+  font-size: clamp(28px, 4vw, 48px);
   font-weight: 700;
   color: #ffd666;
 }
@@ -143,12 +136,248 @@
   animation: fade-up 0.6s ease-out forwards;
 }
 
-/* 抽取按钮脉冲 */
+/* 抽取按钮脉冲
+ *
+ * 注意：index.css 中 .ant-btn-primary 的 box-shadow 使用了 !important，
+ * 会覆盖 @keyframes 中的 box-shadow（!important 优先级高于动画）。
+ * 因此改用 ::before 伪元素实现脉冲环，避免与按钮自身阴影冲突。
+ */
 @keyframes pulse-primary {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0.7); }
-  50% { box-shadow: 0 0 0 12px rgba(22, 119, 255, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(22, 119, 255, 0); }
 }
 
 .pulse-primary {
-  animation: pulse-primary 2s infinite;
+  position: relative;
+  isolation: isolate;
 }
+
+.pulse-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: -1;
+  animation: pulse-primary 2s infinite;
+  pointer-events: none;
+}
+
+/* ============================================================
+ * 计时器大屏专用样式（对齐抽辩题大屏视觉风格）
+ * ============================================================ */
+
+/* 环节序号大字水印（响应式 clamp + vw） */
+.bigscreen-stage-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(120px, 22vw, 320px);
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.04);
+  pointer-events: none;
+  z-index: 0;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: -8px;
+  white-space: nowrap;
+}
+
+/* 环节进度圆点指示器容器 */
+.bigscreen-stage-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+/* 单个圆点 */
+.bigscreen-stage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 214, 102, 0.4);
+  background: transparent;
+  transition: all 0.3s ease;
+}
+
+/* 已完成环节：实心金色 */
+.bigscreen-stage-dot.completed {
+  background: #ffd666;
+  border-color: #ffd666;
+}
+
+/* 当前环节：放大 + 金色发光 */
+.bigscreen-stage-dot.current {
+  width: 14px;
+  height: 14px;
+  background: #ffd666;
+  border-color: #ffd666;
+  box-shadow: 0 0 10px rgba(255, 214, 102, 0.6);
+}
+
+/* 倒计时数字样式 */
+.bigscreen-timer-digits {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* 队伍框内嵌的小计时器（自由辩论双方独立计时） */
+.bigscreen-team-timer {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(48px, 8vw, 96px);
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 8px;
+}
+
+/* 大屏主按钮（金色渐变 + pulse 动画） */
+.bigscreen-primary-btn {
+  min-width: clamp(160px, 18vw, 240px);
+  height: clamp(48px, 5vw, 64px);
+  font-size: clamp(16px, 1.8vw, 22px);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ffd666 0%, #faad14 100%);
+  border: none;
+  box-shadow: 0 4px 16px rgba(255, 214, 102, 0.5);
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.bigscreen-primary-btn:hover {
+  background: linear-gradient(135deg, #ffe699 0%, #ffc53d 100%);
+  box-shadow: 0 6px 20px rgba(255, 214, 102, 0.7);
+}
+
+/* ============================================================
+ * 环节切换补充动画（与 animations.css 的 slide-in-from-right / slide-out-left 配对）
+ * ============================================================ */
+
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-100px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.slide-in-from-left {
+  animation: slideInFromLeft 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes slideOutRight {
+  to {
+    opacity: 0;
+    transform: translateX(100px);
+  }
+}
+
+.slide-out-right {
+  animation: slideOutRight 0.3s ease-in forwards;
+}
+
+/* ============================================================
+ * 大屏抽题三幕动画（Task 1）
+ * ============================================================ */
+
+/* 第一幕：粒子向中心收拢（父容器 rotate 控制角度，translateX 控制半径） */
+@keyframes converge-particle {
+  0% {
+    transform: translateX(220px) scale(0.4);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* 第二幕：环形炸开 */
+@keyframes burst-ring {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+ * Task 7：抽取结果多风格展示
+ * ============================================================ */
+
+/* ----- 紧凑表格（CompactDrawTable）样式 ----- */
+
+/* 表头深色背景白字（覆盖 antd 默认表头色） */
+.compact-draw-table .ant-table-thead > tr > th {
+  background: #1466e0 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+/* 斑马纹：隔行浅灰背景 */
+.compact-draw-table .ant-table-tbody > tr.compact-row-even > td {
+  background: #fafafa;
+}
+
+/* 行 hover 高亮：淡蓝背景 */
+.compact-draw-table .ant-table-tbody > tr:hover > td {
+  background: #f0f7ff !important;
+}
+
+/* ----- 打印样式（@media print） ----- */
+/* 打印时隐藏所有元素，仅保留对阵表（.matchup-print-target） */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .matchup-print-target,
+  .matchup-print-target * {
+    visibility: visible;
+  }
+
+  /* 打印按钮本身隐藏 */
+  .matchup-no-print {
+    visibility: hidden !important;
+  }
+
+  /* 工具栏隐藏 */
+  .draw-result-no-print,
+  .compact-draw-no-print {
+    display: none !important;
+  }
+
+  /* 对阵表定位到页面左上角，全宽 */
+  .matchup-print-target {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  /* 打印时表格边框加深 */
+  .matchup-print-target table {
+    border: 2px solid #333 !important;
+  }
+
+  .matchup-print-target th {
+    background: #1466e0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+

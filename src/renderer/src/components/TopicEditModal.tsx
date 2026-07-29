@@ -1,4 +1,4 @@
-import { Modal, Form, Input, Select, InputNumber, Tag, Space, Divider, message } from 'antd';
+import { Modal, Form, Input, Select, InputNumber, Tag, Space, Divider } from 'antd';
 import type {
   Topic,
   TopicCreateInput,
@@ -13,6 +13,7 @@ import {
   SOURCE_OPTIONS,
   SOURCE_TYPE_OPTIONS
 } from './FilterPanel';
+import { useToast } from '../hooks/useToast';
 import { spacing } from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
 
@@ -96,7 +97,7 @@ export default function TopicEditModal({
 }: TopicEditModalProps) {
   const [form] = Form.useForm();
   const isEdit = !!topic;
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
 
   // 不再需要 useEffect 设置字段值
   // Form 通过 key={topic?.id ?? 'new-topic'} 强制重新挂载
@@ -145,16 +146,15 @@ export default function TopicEditModal({
       await onOk(payload, isEdit);
     } catch (e: any) {
       if (e?.errorFields) {
-        messageApi.error('请完善必填字段');
+        toast.error('请完善必填字段');
       } else {
-        messageApi.error(e instanceof Error ? e.message : '保存失败');
+        toast.error(e instanceof Error ? e.message : '保存失败');
       }
     }
   };
 
   return (
     <>
-      {contextHolder}
       <Modal
         title={isEdit ? '编辑辩题' : '新增辩题'}
         open={open}

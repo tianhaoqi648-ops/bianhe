@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layout,
   Tree,
   Input,
   Button,
   Space,
-  Segmented,
   Pagination,
-  Empty,
-  Spin,
   Dropdown,
-  message,
   Modal,
   Typography,
   theme,
@@ -19,12 +15,24 @@ import {
   Breadcrumb,
   Alert,
   Checkbox,
-  Tooltip
+  Tooltip,
+  Table,
+  Row,
+  Col,
+  Radio,
+  Select
 } from 'antd';
 import type { MenuProps } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { useNavigate } from 'react-router-dom';
+import BrandSpin from '../components/common/BrandSpin';
+import AccentCard from '../components/common/AccentCard';
+import EmptyState from '../components/common/EmptyState';
+import PageHeader from '../components/common/PageHeader';
+import KbdHint from '../components/common/KbdHint';
+import { safeIpc } from '../lib/ipc';
 import {
   AppstoreOutlined,
-  BarsOutlined,
   PlusOutlined,
   ReloadOutlined,
   DeleteOutlined,
@@ -40,21 +48,30 @@ import {
   FilterOutlined,
   UploadOutlined,
   SafetyCertificateOutlined,
-  DatabaseFilled,
   HistoryOutlined,
   FileOutlined,
-  StarOutlined
+  StarOutlined,
+  EditOutlined,
+  TableOutlined,
+  CopyOutlined,
+  DownloadOutlined,
+  EyeOutlined,
+  MoreOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
+import type { InputRef } from 'antd';
 import { useTopicStore } from '../stores/topicStore';
 import type {
   Topic,
   TopicCreateInput,
   TopicUpdateInput,
   ImportBatch,
-  CustomField
+  CustomField,
+  BatchEditFieldAction
 } from '../../../shared/types';
-import TopicCard, { TopicListItem } from '../components/TopicCard';
+import TopicCard from '../components/TopicCard';
+import DimensionTag from '../components/common/DimensionTag';
 import FilterPanel, {
   TYPE_OPTIONS,
   DIFFICULTY_OPTIONS
@@ -63,17 +80,108 @@ import TopicEditModal from '../components/TopicEditModal';
 import ImportTopicsModal from '../components/ImportTopicsModal';
 import ImportHistoryModal from '../components/ImportHistoryModal';
 import DedupResultModal from '../components/DedupResultModal';
+import BatchEditModal from '../components/BatchEditModal';
+import BatchEditHistoryModal from '../components/BatchEditHistoryModal';
+import { useBatchEditStore } from '../stores/batchEditStore';
 import {
   paginationStyle,
   floatActionBarStyle,
   pageContainerStyle,
   toolbarStyle,
-  emptyStateStyle
+  emptyStateStyle,
+  cardStyle
 } from '../styles/shared';
-import { spacing } from '../styles/tokens';
+import { spacing, colorGold, fontSize, radius } from '../styles/tokens';
+import { useHotkeys, useHotkeyScope } from '../hooks/useHotkeys';
+import { useToast } from '../hooks/useToast';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
+
+// ============================================================
+// 视图模式 / 密度 持久化 key
+// ============================================================
+const VIEW_MODE_STORAGE_KEY = 'bianhe-topic-view-mode';
+const DENSITY_STORAGE_KEY = 'bianhe-topic-density';
+
+type ViewMode = 'table' | 'card';
+type TableDensity = 'compact' | 'standard' | 'comfortable';
+
+// 从 localStorage 读取视图模式（容错：异常时回退默认值 'table'）
+function loadViewMode(): ViewMode {
+  try {
+    const v = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    if (v === 'table' || v === 'card') return v;
+  } catch {
+    // 忽略 localStorage 不可用的情况
+  }
+  return 'table';
+}
+
+// 从 localStorage 读取表格密度（容错：异常时回退默认值 'compact'）
+function loadDensity(): TableDensity {
+  try {
+    const v = window.localStorage.getItem(DENSITY_STORAGE_KEY);
+    if (v === 'compact' || v === 'standard' || v === 'comfortable') return v;
+  } catch {
+    // 忽略 localStorage 不可用的情况
+  }
+  return 'compact';
+}
+
+// ============================================================
+// 列配置持久化（SubTask 5.3）
+// ============================================================
+const COLUMN_CONFIG_STORAGE_KEY = 'topic-library-columns';
+
+/** 可配置列定义（操作列始终显示，不在此列表中） */
+const CONFIGURABLE_COLUMNS: { key: string; title: string }[] = [
+  { key: 'title', title: '题干' },
+  { key: 'type', title: '类型' },
+  { key: 'difficulty', title: '难度' },
+  { key: 'domain', title: '领域' },
+  { key: 'status', title: '状态' },
+  { key: 'tags', title: '标签' }
+];
+
+/** 从 localStorage 读取隐藏列 key 集合（容错：异常时回退空集，即全部显示） */
+function loadHiddenColumns(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLUMN_CONFIG_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // 兼容两种存储格式：字符串数组（隐藏 key）或对象数组（含 visible）
+        const hidden = parsed
+          .map((item: unknown) => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object' && 'key' in item && 'visible' in item) {
+              return (item as { key: string; visible: boolean }).visible ? null : (item as { key: string }).key;
+            }
+            return null;
+          })
+          .filter((k: string | null): k is string => k !== null);
+        return new Set(hidden);
+      }
+    }
+  } catch {
+    // 忽略 localStorage 不可用或 JSON 解析失败
+  }
+  return new Set();
+}
+
+/** 持久化隐藏列 key 集合到 localStorage */
+function saveHiddenColumns(hiddenKeys: Set<string>): void {
+  try {
+    window.localStorage.setItem(
+      COLUMN_CONFIG_STORAGE_KEY,
+      JSON.stringify(Array.from(hiddenKeys))
+    );
+  } catch {
+    // 忽略 localStorage 不可用
+  }
+}
 
 // ============================================================
 // 8 维分类维度定义 + 动态自定义字段维度
@@ -135,7 +243,44 @@ interface DimensionItem {
 export default function TopicLibrary() {
   const { token } = theme.useToken();
   const store = useTopicStore();
-  const [messageApi, contextHolder] = message.useMessage();
+  const toast = useToast();
+  const navigate = useNavigate();
+  // 搜索框 ref（供 Ctrl+K / / 快捷键聚焦）
+  const searchInputRef = useRef<InputRef>(null);
+
+  // 移动端断点（<768px）—— SubTask 21.2：表格 fixed 列移动端处理
+  const isMobile = useMediaQuery('(max-width: 767px)');
+
+  // 视图模式：表格 / 卡片（默认表格，从 localStorage 恢复）
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadViewMode());
+  // 表格密度：紧凑 / 标准 / 宽松（默认紧凑，从 localStorage 恢复）
+  const [density, setDensity] = useState<TableDensity>(() => loadDensity());
+
+  // ====== 右键上下文菜单（SubTask 5.2） ======
+  // 当前右键的行记录（用于构建菜单项），同时用 ref 保证同步读取
+  const [contextTopic, setContextTopic] = useState<Topic | null>(null);
+  const contextTopicRef = useRef<Topic | null>(null);
+
+  // ====== 列配置面板（SubTask 5.3） ======
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useState<Set<string>>(() => loadHiddenColumns());
+
+  // 视图模式 / 密度 持久化到 localStorage
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+      // 忽略 localStorage 不可用
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DENSITY_STORAGE_KEY, density);
+    } catch {
+      // 忽略 localStorage 不可用
+    }
+  }, [density]);
 
   // 当前分类维度
   const [dimension, setDimension] = useState<DimensionKey>('type');
@@ -153,6 +298,9 @@ export default function TopicLibrary() {
   const [importOpen, setImportOpen] = useState(false);
   const [importHistoryOpen, setImportHistoryOpen] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
+  // 批量编辑
+  const batchEditStore = useBatchEditStore();
+  const [batchEditSubmitting, setBatchEditSubmitting] = useState(false);
   // 8 维分类树数据（全库分布，不随分页变化）
   const [dimensionData, setDimensionData] = useState<DimensionItem[]>([]);
   const [dimensionLoading, setDimensionLoading] = useState(false);
@@ -378,7 +526,7 @@ export default function TopicLibrary() {
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
         title={dim?.key === 'batch_id' ? dimensionBatchNames[key] : displayLabel}
       >
-        <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{dim?.icon}</span>
+        <span style={{ color: token.colorTextSecondary, fontSize: fontSize.body }}>{dim?.icon}</span>
         <span
           style={{
             maxWidth: 140,
@@ -559,10 +707,10 @@ export default function TopicLibrary() {
   const handleEditSubmit = async (data: TopicCreateInput | TopicUpdateInput, isEdit: boolean) => {
     if (isEdit && editingTopic) {
       await store.update(editingTopic.id, data as TopicUpdateInput);
-      messageApi.success('已更新');
+      toast.success('已更新');
     } else {
       await store.create(data as TopicCreateInput);
-      messageApi.success('已新增');
+      toast.success('已新增');
     }
     setEditModalOpen(false);
     setEditingTopic(null);
@@ -579,7 +727,7 @@ export default function TopicLibrary() {
       cancelText: '取消',
       onOk: async () => {
         await store.remove(id);
-        messageApi.success('已删除');
+        toast.success('已删除');
         store.fetchList();
       }
     });
@@ -587,18 +735,137 @@ export default function TopicLibrary() {
 
   const handleToggleStatus = async (id: string, status: string) => {
     await store.updateStatus(id, status);
-    messageApi.success('状态已更新');
+    toast.success('状态已更新');
     store.fetchList();
   };
 
   const handleWeightChange = async (id: string, weight: number) => {
     await store.updateWeight(id, weight);
-    messageApi.success('权重已更新');
+    toast.success('权重已更新');
     store.fetchList();
+  };
+
+  // ====== 单项操作（SubTask 5.2 上下文菜单扩展） ======
+  // 复制（创建副本）
+  const handleCopy = async (topic: Topic) => {
+    try {
+      await store.create({
+        title: `${topic.title}（副本）`,
+        type: topic.type,
+        domain: topic.domain,
+        difficulty: topic.difficulty,
+        source: topic.source,
+        source_type: topic.source_type,
+        tags: topic.tags,
+        weight: topic.weight,
+        status: 'active',
+        custom_data: topic.custom_data
+      });
+      toast.success('已复制');
+      store.fetchList();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '复制失败');
+    }
+  };
+
+  // 导出选中（客户端 JSON 下载，兼容单选与多选）
+  const handleExportSelected = async (onlyTopic?: Topic) => {
+    try {
+      let topicsToExport: Topic[];
+      if (onlyTopic) {
+        topicsToExport = [onlyTopic];
+      } else {
+        const ids = await store.getSelectedIdsForBatchOp();
+        if (ids.length === 0) {
+          toast.warning('没有可导出的项');
+          return;
+        }
+        const idSet = new Set(ids);
+        // P3.4 Task 19：用 safeIpc 包装 IPC 调用，统一错误 Toast
+        const data = await safeIpc(
+          window.topicAPI.list({
+            ...store.filter,
+            page: 1,
+            pageSize: 100000
+          }),
+          { items: [] as Topic[], total: 0 }
+        );
+        if (data.items.length === 0) {
+          toast.error('导出失败：无法获取辩题数据');
+          return;
+        }
+        topicsToExport = data.items.filter((t) => idSet.has(t.id));
+      }
+      const blob = new Blob([JSON.stringify(topicsToExport, null, 2)], {
+        type: 'application/json'
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `topics-export-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`已导出 ${topicsToExport.length} 条辩题`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导出失败');
+    }
+  };
+
+  // 查看历史（跳转到历史页）
+  const handleViewHistory = (topic: Topic) => {
+    navigate('/history');
+    toast.info(`查看「${topic.title.slice(0, 20)}${topic.title.length > 20 ? '…' : ''}」的相关历史`);
   };
 
   // ====== 批量操作 ======
   const hasSelection = store.allSelectedInFilter || store.selectedIds.length > 0;
+
+  // 题库管理快捷键：Ctrl+K / / 聚焦搜索，Ctrl+A 全选筛选，Delete 删除选中
+  useHotkeyScope('topic-library');
+  useHotkeys([
+    {
+      combo: 'ctrl+k',
+      description: '聚焦搜索框',
+      scope: 'topic-library',
+      handler: () => {
+        searchInputRef.current?.focus();
+      }
+    },
+    {
+      combo: '/',
+      description: '聚焦搜索框',
+      scope: 'topic-library',
+      handler: () => {
+        searchInputRef.current?.focus();
+      }
+    },
+    {
+      combo: 'ctrl+a',
+      description: '全选当前筛选结果',
+      scope: 'topic-library',
+      handler: () => {
+        store.selectAllInFilter();
+      }
+    },
+    {
+      combo: 'delete',
+      description: '删除选中辩题',
+      scope: 'topic-library',
+      handler: () => {
+        if (hasSelection) handleBatchDelete();
+      },
+      enabled: hasSelection
+    },
+    {
+      combo: 'ctrl+b',
+      description: '打开批量编辑弹窗',
+      scope: 'topic-library',
+      handler: () => {
+        if (hasSelection) handleOpenBatchEdit();
+      },
+      enabled: hasSelection
+    }
+  ]);
 
   const handleBatchDelete = () => {
     if (!hasSelection) return;
@@ -620,11 +887,11 @@ export default function TopicLibrary() {
       onOk: async () => {
         const ids = await store.getSelectedIdsForBatchOp();
         if (ids.length === 0) {
-          messageApi.warning('没有可删除的项');
+          toast.warning('没有可删除的项');
           return;
         }
         await store.batchRemove(ids);
-        messageApi.success(`已删除 ${ids.length} 条`);
+        toast.success(`已删除 ${ids.length} 条`);
         store.clearSelection();
         store.fetchList();
       }
@@ -633,7 +900,7 @@ export default function TopicLibrary() {
 
   const handleBatchAddTag = async () => {
     if (!batchTagValue.trim() || !hasSelection) return;
-    messageApi.loading({ content: '处理中...', key: 'batchTag', duration: 0 });
+    toast.loading('处理中...', { key: 'batchTag' });
     try {
       const ids = await store.getSelectedIdsForBatchOp();
       // 拉取选中项完整 topic 数据（跨页模式下 store.items 仅有当前页）
@@ -655,64 +922,99 @@ export default function TopicLibrary() {
         const newTags = Array.from(new Set([...(t.tags ?? []), batchTagValue.trim()]));
         await store.update(t.id, { tags: newTags });
       }
-      messageApi.success({
-        content: `已批量打标签（${toUpdate.length} 条）`,
-        key: 'batchTag'
-      });
+      toast.success(`已批量打标签（${toUpdate.length} 条）`, { key: 'batchTag' });
       setBatchTagInput(false);
       setBatchTagValue('');
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      messageApi.error({ content: e instanceof Error ? e.message : '失败', key: 'batchTag' });
+      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchTag' });
     }
   };
 
   const handleBatchChangeType = async (newType: string) => {
     if (!hasSelection) return;
-    messageApi.loading({ content: '处理中...', key: 'batchType', duration: 0 });
+    toast.loading('处理中...', { key: 'batchType' });
     try {
       const ids = await store.getSelectedIdsForBatchOp();
       for (const id of ids) {
         await store.update(id, { type: newType });
       }
-      messageApi.success({
-        content: `已批量修改类型（${ids.length} 条）`,
-        key: 'batchType'
-      });
+      toast.success(`已批量修改类型（${ids.length} 条）`, { key: 'batchType' });
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      messageApi.error({
-        content: e instanceof Error ? e.message : '失败',
-        key: 'batchType'
-      });
+      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchType' });
     }
   };
 
   const handleBatchChangeDifficulty = async (newDiff: string) => {
     if (!hasSelection) return;
-    messageApi.loading({ content: '处理中...', key: 'batchDiff', duration: 0 });
+    toast.loading('处理中...', { key: 'batchDiff' });
     try {
       const ids = await store.getSelectedIdsForBatchOp();
       for (const id of ids) {
         await store.update(id, { difficulty: newDiff });
       }
-      messageApi.success({
-        content: `已批量修改难度（${ids.length} 条）`,
-        key: 'batchDiff'
-      });
+      toast.success(`已批量修改难度（${ids.length} 条）`, { key: 'batchDiff' });
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      messageApi.error({
-        content: e instanceof Error ? e.message : '失败',
-        key: 'batchDiff'
-      });
+      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchDiff' });
+    }
+  };
+
+  // ====== 批量编辑（弹窗） ======
+  const handleOpenBatchEdit = () => {
+    if (!hasSelection) {
+      toast.warning('请先选择辩题');
+      return;
+    }
+    batchEditStore.openModal();
+  };
+
+  const handleBatchEditSubmit = async (actions: BatchEditFieldAction[]) => {
+    setBatchEditSubmitting(true);
+    try {
+      const ids = await store.getSelectedIdsForBatchOp();
+      if (ids.length === 0) {
+        toast.warning('没有可编辑的项');
+        return;
+      }
+      const result = await batchEditStore.execute({ topicIds: ids, actions });
+      if (!result) {
+        throw new Error('批量编辑失败：未获取到结果');
+      }
+      // 仪式感 Toast：成功 + 撤销按钮（3s 内可回滚）
+      toast.undo(
+        `已批量编辑 ${result.affectedCount} 条辩题（${result.fieldCount} 个字段）`,
+        async () => {
+          try {
+            await batchEditStore.revert(result.historyId);
+            toast.success('已撤销批量编辑');
+            store.fetchList();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : '撤销失败');
+          }
+        }
+      );
+      batchEditStore.closeModal();
+      store.clearSelection();
+      store.fetchList();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '批量编辑失败');
+    } finally {
+      setBatchEditSubmitting(false);
     }
   };
 
   const batchMenuItems: MenuProps['items'] = [
+    {
+      key: 'batchEdit',
+      icon: <EditOutlined />,
+      label: '批量编辑（多字段）',
+      onClick: handleOpenBatchEdit
+    },
     {
       key: 'addTag',
       icon: <TagOutlined />,
@@ -749,40 +1051,252 @@ export default function TopicLibrary() {
     }
   ];
 
+  // ====== 右键上下文菜单项（SubTask 5.2） ======
+  // 多选时（≥2 项已选）显示批量操作菜单；否则显示单项操作菜单
+  const contextMenuItems: MenuProps['items'] = useMemo(() => {
+    const topic = contextTopicRef.current;
+    const selectedCount = store.allSelectedInFilter
+      ? store.total - store.exceptIds.length
+      : store.selectedIds.length;
+    const isMultiSelect = selectedCount >= 2;
+
+    if (isMultiSelect) {
+      // 批量操作菜单
+      return [
+        {
+          key: 'batchEdit',
+          icon: <EditOutlined />,
+          label: '批量编辑',
+          onClick: handleOpenBatchEdit
+        },
+        {
+          key: 'batchDelete',
+          icon: <DeleteOutlined />,
+          label: '批量删除',
+          danger: true,
+          onClick: handleBatchDelete
+        },
+        { type: 'divider' as const },
+        {
+          key: 'batchExport',
+          icon: <DownloadOutlined />,
+          label: `批量导出（${selectedCount} 项）`,
+          onClick: () => void handleExportSelected()
+        }
+      ];
+    }
+
+    // 单项操作菜单（默认对右键的行操作）
+    if (!topic) return [];
+    return [
+      {
+        key: 'edit',
+        icon: <EditOutlined />,
+        label: '编辑',
+        onClick: () => handleEdit(topic)
+      },
+      {
+        key: 'copy',
+        icon: <CopyOutlined />,
+        label: '复制',
+        onClick: () => void handleCopy(topic)
+      },
+      {
+        key: 'delete',
+        icon: <DeleteOutlined />,
+        label: '删除',
+        danger: true,
+        onClick: () => handleDelete(topic.id)
+      },
+      { type: 'divider' as const },
+      {
+        key: 'export',
+        icon: <DownloadOutlined />,
+        label: '导出选中',
+        onClick: () => void handleExportSelected(topic)
+      },
+      {
+        key: 'viewHistory',
+        icon: <EyeOutlined />,
+        label: '查看历史',
+        onClick: () => handleViewHistory(topic)
+      }
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextTopic, store.selectedIds, store.allSelectedInFilter, store.total, store.exceptIds.length]);
+
+  // ====== 表格视图列定义（SubTask 9.2 + 9.4） ======
+  // 题干（ellipsis）/ 类型 / 难度 / 领域 / 状态 / 标签 / 操作
+  // 各维度 Tag 使用 DimensionTag 组件按 dimension 着色
+  const tableColumns: ColumnsType<Topic> = useMemo(
+    () => [
+      {
+        title: '题干',
+        dataIndex: 'title',
+        key: 'title',
+        ellipsis: { showTitle: true },
+        width: '32%',
+        render: (_: unknown, record: Topic) => {
+          const isFavorited = record.status === 'favorited';
+          const isBlacklisted = record.status === 'blacklisted';
+          return (
+            <span
+              style={{
+                fontWeight: 500,
+                textDecoration: isBlacklisted ? 'line-through' : 'none',
+                color: isBlacklisted ? token.colorTextSecondary : token.colorText
+              }}
+            >
+              {isFavorited && <StarOutlined style={{ color: '#faad14', marginRight: 6 }} />}
+              {record.title}
+            </span>
+          );
+        }
+      },
+      {
+        title: '类型',
+        dataIndex: 'type',
+        key: 'type',
+        width: 90,
+        render: (v: string | null) =>
+          v ? <DimensionTag dimension="type">{v}</DimensionTag> : <Text type="secondary">-</Text>
+      },
+      {
+        title: '难度',
+        dataIndex: 'difficulty',
+        key: 'difficulty',
+        width: 90,
+        render: (v: string | null) =>
+          v ? <DimensionTag dimension="difficulty">{v}</DimensionTag> : <Text type="secondary">-</Text>
+      },
+      {
+        title: '领域',
+        dataIndex: 'domain',
+        key: 'domain',
+        width: 110,
+        ellipsis: true,
+        render: (v: string | null) =>
+          v ? <DimensionTag dimension="domain">{v}</DimensionTag> : <Text type="secondary">-</Text>
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        key: 'status',
+        width: 90,
+        render: (v: string) => {
+          const label =
+            v === 'favorited' ? '收藏' : v === 'blacklisted' ? '黑名单' : '正常';
+          return <DimensionTag dimension="status">{label}</DimensionTag>;
+        }
+      },
+      {
+        title: '标签',
+        dataIndex: 'tags',
+        key: 'tags',
+        width: 180,
+        render: (tags: string[] | null) => {
+          if (!tags || tags.length === 0) return <Text type="secondary">-</Text>;
+          const visible = tags.slice(0, 3);
+          return (
+            <Space size={4} wrap>
+              {visible.map((t) => (
+                <DimensionTag key={t} dimension="tags">#{t}</DimensionTag>
+              ))}
+              {tags.length > 3 && <Text type="secondary">+{tags.length - 3}</Text>}
+            </Space>
+          );
+        }
+      },
+      {
+        title: '操作',
+        key: 'action',
+        width: 140,
+        fixed: 'right' as const,
+        render: (_: unknown, record: Topic) => (
+          <Space size={4}>
+            <Button
+              size="small"
+              type="link"
+              icon={<EditOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEdit(record);
+              }}
+            >
+              编辑
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete(record.id);
+              }}
+            >
+              删除
+            </Button>
+          </Space>
+        )
+      }
+    ],
+    // 依赖 token 颜色、handleEdit、handleDelete（这两个 handler 通过 useCallback 闭包稳定）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [token.colorText, token.colorTextSecondary]
+  );
+
+  // ====== 可见列过滤（SubTask 5.3 + 21.2） ======
+  // 操作列（key='action'）桌面端始终显示，移动端隐藏（操作改由行点击 + 长按菜单触发）
+  // 其余列根据 hiddenColumnKeys 过滤
+  const visibleColumns = useMemo(
+    () =>
+      tableColumns.filter((col) => {
+        if (col.key === 'action') return !isMobile;
+        return !hiddenColumnKeys.has(col.key as string);
+      }),
+    [tableColumns, hiddenColumnKeys, isMobile]
+  );
+
   // ====== 渲染 ======
   return (
     <>
-      {contextHolder}
-      <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
+      <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 56px)' }}>
         {/* 左侧：分类树 */}
         <Sider
-          width={220}
+          width={240}
           theme="light"
           style={{
             background: token.colorBgContainer,
             borderRight: `1px solid ${token.colorBorderSecondary}`,
-            padding: 12,
+            padding: spacing.md,
+            position: 'sticky',
+            top: 0,
+            height: 'calc(100vh - 56px)',
             overflow: 'auto'
           }}
         >
           {/* 分类维度标题区 */}
-          <div style={{ marginBottom: 8, padding: '4px 4px 8px' }}>
+          <div style={{ marginBottom: spacing.sm, padding: '4px 4px 8px' }}>
             <Text strong>分类维度</Text>
           </div>
-          {/* 维度切换：图标按钮组 + Tooltip */}
-          <Space size={2} style={{ marginBottom: 12, display: 'flex', flexWrap: 'nowrap' }}>
+          {/* 维度切换：图标按钮组 + Tooltip（SubTask 21.1：可达性改造，触摸目标 ≥44px） */}
+          <Space size={2} style={{ marginBottom: spacing.md, display: 'flex', flexWrap: 'nowrap' }}>
             {DIMENSIONS.map((d) => (
               <Tooltip key={d.key} title={d.label}>
                 <Button
                   type={dimension === d.key ? 'primary' : 'text'}
                   size="small"
                   icon={d.icon}
+                  aria-label={d.label}
                   onClick={() => handleDimensionChange(d.key)}
+                  className="dimension-icon-btn"
                   style={{
-                    width: 22,
-                    minWidth: 22,
+                    width: 36,
+                    minWidth: 36,
+                    height: 44,
                     padding: 0,
-                    flex: '0 0 22px',
+                    flex: '0 0 36px',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center'
@@ -792,8 +1306,8 @@ export default function TopicLibrary() {
             ))}
           </Space>
           {/* 面包屑导航 */}
-          <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 8, fontSize: 12 }} />
-          <Spin spinning={dimensionLoading} size="small">
+          <Breadcrumb items={breadcrumbItems} style={{ marginBottom: spacing.sm, fontSize: fontSize.caption }} />
+          <BrandSpin spinning={dimensionLoading} size="small">
             <Tree
               treeData={treeData}
               selectedKeys={[selectedCategory]}
@@ -805,111 +1319,176 @@ export default function TopicLibrary() {
               showLine
               blockNode
             />
-          </Spin>
+          </BrandSpin>
         </Sider>
 
         {/* 主区域 */}
-        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
-          {/* 顶部工具栏 */}
+        <Content style={{ ...pageContainerStyle, padding: `0 ${spacing.lg} ${spacing.lg}` }}>
+          <PageHeader title="题库管理" subtitle="维护辩题库，支持批量导入与编辑" />
+          {/* 顶部工具栏（SubTask 20.2：拆分为两行） */}
           <div
             style={{
               ...toolbarStyle,
-              marginBottom: 12
+              marginBottom: spacing.md,
+              flexDirection: 'column',
+              alignItems: 'stretch',
+              gap: 0
             }}
           >
-            <Space size={8}>
-              <Input
-                allowClear
-                size="middle"
-                placeholder="搜索辩题标题关键词 (Ctrl+K)"
-                prefix={<SearchOutlined />}
-                addonAfter={
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    Ctrl+K
-                  </Text>
-                }
-                value={store.filter.keyword ?? ''}
-                onChange={(e) =>
-                  store.setFilter({ keyword: e.target.value || undefined })
-                }
-                style={{ width: 320 }}
-              />
-              <Button
-                icon={<FilterOutlined />}
-                onClick={() => setFilterOpen((v) => !v)}
-                type={filterOpen ? 'primary' : 'default'}
-              >
-                筛选
-              </Button>
-              {hasFilterPanelActive && (
-                <Button
-                  icon={<CloseCircleOutlined />}
-                  onClick={handleResetFilterPanel}
-                >
-                  重置筛选
-                </Button>
-              )}
-              <Button icon={<ReloadOutlined />} onClick={() => store.fetchList()}>
-                刷新
-              </Button>
-              {store.items.length > 0 && (
-                <Checkbox
-                  checked={currentPageAllSelected}
-                  indeterminate={
-                    !currentPageAllSelected &&
-                    store.items.some((t) => store.isSelected(t.id))
+            {/* 第一行：搜索 + 视图切换 + 密度切换 + 其他常用按钮（始终显示） */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: spacing.sm
+              }}
+            >
+              <Space size={8} wrap>
+                <Input
+                  ref={searchInputRef}
+                  allowClear
+                  size="middle"
+                  placeholder="搜索辩题标题关键词 (Ctrl+K 或 /)"
+                  prefix={<SearchOutlined />}
+                  addonAfter={
+                    <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                      Ctrl+K
+                    </Text>
                   }
-                  onChange={handleToggleSelectAllOnPage}
-                >
-                  全选当前页
-                </Checkbox>
-              )}
-            </Space>
+                  value={store.filter.keyword ?? ''}
+                  onChange={(e) =>
+                    store.setFilter({ keyword: e.target.value || undefined })
+                  }
+                  style={{ width: 320 }}
+                />
+                <Button icon={<ReloadOutlined />} onClick={() => store.fetchList()}>
+                  刷新
+                </Button>
+                {store.items.length > 0 && (
+                  <Checkbox
+                    checked={currentPageAllSelected}
+                    indeterminate={
+                      !currentPageAllSelected &&
+                      store.items.some((t) => store.isSelected(t.id))
+                    }
+                    onChange={handleToggleSelectAllOnPage}
+                  >
+                    全选当前页
+                  </Checkbox>
+                )}
+              </Space>
 
-            <Space size={8}>
-              {hasSelection && (
-                <>
+              <Space size={8} wrap>
+                <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+                  导入
+                </Button>
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: 'dedup',
+                        label: '去重检查',
+                        icon: <SafetyCertificateOutlined />,
+                        onClick: () => setDedupOpen(true)
+                      },
+                      {
+                        key: 'import-history',
+                        label: '导入历史',
+                        icon: <HistoryOutlined />,
+                        onClick: () => setImportHistoryOpen(true)
+                      },
+                      {
+                        key: 'batch-edit-history',
+                        label: '批量编辑历史',
+                        icon: <HistoryOutlined />,
+                        onClick: () => batchEditStore.openHistory()
+                      }
+                    ]
+                  }}
+                >
+                  <Button icon={<MoreOutlined />}>更多</Button>
+                </Dropdown>
+                {/* 视图切换：表格 / 卡片（SubTask 9.1） */}
+                <Radio.Group
+                  value={viewMode}
+                  onChange={(e) => setViewMode(e.target.value as ViewMode)}
+                  size="small"
+                  optionType="button"
+                  buttonStyle="solid"
+                >
+                  <Radio.Button value="table">
+                    <TableOutlined /> 表格
+                  </Radio.Button>
+                  <Radio.Button value="card">
+                    <AppstoreOutlined /> 卡片
+                  </Radio.Button>
+                </Radio.Group>
+                {/* 表格密度切换器：紧邻视图切换器右侧（SubTask 9.2） */}
+                <Select
+                  size="small"
+                  value={density}
+                  onChange={setDensity}
+                  style={{ width: 90 }}
+                  options={[
+                    { value: 'compact', label: '紧凑' },
+                    { value: 'standard', label: '标准' },
+                    { value: 'comfortable', label: '宽松' }
+                  ]}
+                />
+                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+                  新增辩题
+                </Button>
+              </Space>
+            </div>
+
+            {/* 第二行：筛选 + 重置 + 批量操作（仅选中时显示） */}
+            {hasSelection && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: spacing.sm,
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
+                  paddingTop: spacing.sm,
+                  marginTop: spacing.sm
+                }}
+              >
+                <Space size={8} wrap>
+                  <Button
+                    icon={<FilterOutlined />}
+                    onClick={() => setFilterOpen((v) => !v)}
+                    type={filterOpen ? 'primary' : 'default'}
+                  >
+                    筛选
+                  </Button>
+                  {hasFilterPanelActive && (
+                    <Button
+                      icon={<CloseCircleOutlined />}
+                      onClick={handleResetFilterPanel}
+                    >
+                      重置筛选
+                    </Button>
+                  )}
                   <Text type="secondary">
                     {store.allSelectedInFilter
                       ? `已选全部 ${store.total} 条（取消 ${store.exceptIds.length} 条）`
                       : `已选 ${store.selectedIds.length} 项`}
                   </Text>
+                </Space>
+                <Space size={8} wrap>
                   <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
                     <Button>批量操作</Button>
                   </Dropdown>
                   <Button type="link" onClick={() => store.clearSelection()}>
                     取消选择
                   </Button>
-                </>
-              )}
-              <Button
-                icon={<SafetyCertificateOutlined />}
-                onClick={() => setDedupOpen(true)}
-              >
-                去重检查
-              </Button>
-              <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
-                导入
-              </Button>
-              <Button
-                icon={<HistoryOutlined />}
-                onClick={() => setImportHistoryOpen(true)}
-              >
-                导入历史
-              </Button>
-              <Segmented
-                size="small"
-                value={store.viewMode}
-                onChange={(v) => store.setViewMode(v as 'list' | 'grid')}
-                options={[
-                  { label: '网格', value: 'grid', icon: <AppstoreOutlined /> },
-                  { label: '列表', value: 'list', icon: <BarsOutlined /> }
-                ]}
-              />
-              <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                新增辩题
-              </Button>
-            </Space>
+                </Space>
+              </div>
+            )}
           </div>
 
           {/* 跨页全选提示 Alert */}
@@ -919,7 +1498,7 @@ export default function TopicLibrary() {
               <Alert
                 type="info"
                 showIcon
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: spacing.md }}
                 message={`已选当前页 ${store.items.length} 条，还有 ${
                   store.total - store.items.length
                 } 条未选中`}
@@ -939,7 +1518,7 @@ export default function TopicLibrary() {
             <Alert
               type="success"
               showIcon
-              style={{ marginBottom: 12 }}
+              style={{ marginBottom: spacing.md }}
               message={`已选中全部 ${store.total} 条（已取消 ${store.exceptIds.length} 条）`}
               action={
                 <Button size="small" onClick={() => store.clearSelection()}>
@@ -951,7 +1530,7 @@ export default function TopicLibrary() {
 
           {/* 抽屉式筛选面板（折叠展开） */}
           {filterOpen && (
-            <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: spacing.md }}>
               <FilterPanel
                 filter={store.filter}
                 onChange={(f) => store.setFilter(f)}
@@ -967,14 +1546,14 @@ export default function TopicLibrary() {
           {batchTagInput && (
             <div
               style={{
-                marginBottom: 12,
-                padding: 12,
+                marginBottom: spacing.md,
+                padding: spacing.md,
                 background: token.colorBgContainer,
-                borderRadius: 8,
+                borderRadius: radius.lg,
                 border: `1px solid ${token.colorBorderSecondary}`,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 8
+                gap: spacing.sm
               }}
             >
               <Text>
@@ -1008,106 +1587,192 @@ export default function TopicLibrary() {
             </div>
           )}
 
+          {/* P1-14 修复：订阅 topicStore.error，加载失败时显示 Alert 并提供重试按钮 */}
+          {store.error && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: spacing.md }}
+              message="加载辩题列表失败"
+              description={store.error}
+              action={
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => store.fetchList()}
+                >
+                  重试
+                </Button>
+              }
+            />
+          )}
+
           {/* 列表区域 */}
-          <Spin spinning={store.loading}>
+          <AccentCard
+            size="small"
+            style={{ background: token.colorBgContainer, ...cardStyle }}
+            title={
+              <Space>
+                <Text strong>辩题列表</Text>
+                <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                  共 {store.total} 条
+                </Text>
+              </Space>
+            }
+          >
+          <BrandSpin spinning={store.loading}>
             {store.items.length === 0 ? (
               <div style={emptyStateStyle}>
-                <Empty
+                <EmptyState
+                  type="topic"
                   description={store.error ? `加载失败：${store.error}` : '暂无辩题'}
-                >
-                  <Space>
-                    <Button
-                      type="primary"
-                      icon={<DatabaseFilled />}
-                      onClick={() => setImportOpen(true)}
-                    >
-                      导入官方题库
-                    </Button>
-                    <Button icon={<PlusOutlined />} onClick={handleCreate}>
-                      新建第一道辩题
-                    </Button>
-                  </Space>
-                </Empty>
+                  cta={
+                    store.error
+                      ? undefined
+                      : [
+                          {
+                            text: '导入辩题',
+                            icon: <UploadOutlined />,
+                            onClick: () => setImportOpen(true)
+                          },
+                          {
+                            text: '新建辩题',
+                            icon: <PlusOutlined />,
+                            onClick: handleCreate
+                          }
+                        ]
+                  }
+                />
               </div>
-            ) : store.viewMode === 'grid' ? (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-                  gap: 16
-                }}
-              >
-                {store.items.map((t) => (
-                  <TopicCard
-                    key={t.id}
-                    topic={t}
-                    selected={store.isSelected(t.id)}
-                    onSelect={(id, sel) =>
-                      sel ? store.select(id) : store.deselect(id)
+            ) : viewMode === 'table' ? (
+              <>
+                {/* 表格视图（SubTask 9.2 + 20.3）：antd Table + 选中态行高亮 */}
+                {/* 密度通过 size 属性切换：compact→small / standard→middle / comfortable→large */}
+                {/* SubTask 5.1：行双击打开编辑 Modal；SubTask 5.2：行右键上下文菜单；SubTask 5.3：表头右键列配置 */}
+                <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']}>
+                  <Table<Topic>
+                    dataSource={store.items}
+                    columns={visibleColumns}
+                    rowKey="id"
+                    size={
+                      density === 'compact'
+                        ? 'small'
+                        : density === 'standard'
+                          ? 'middle'
+                          : 'large'
                     }
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onToggleStatus={handleToggleStatus}
-                    onWeightChange={handleWeightChange}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div
-                style={{
-                  background: token.colorBgContainer,
-                  borderRadius: 8,
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                  overflow: 'hidden'
-                }}
-              >
-                {store.items.map((t) => {
-                  const isSelected = store.isSelected(t.id);
-                  return (
-                    <div
-                      key={t.id}
-                      style={{
-                        position: 'relative',
-                        background: isSelected
-                          ? token.colorPrimaryBg
-                          : 'transparent',
+                    pagination={false}
+                    locale={{ emptyText: '暂无辩题' }}
+                    scroll={{ x: 1000 }}
+                    rowSelection={{
+                      selectedRowKeys: store.items
+                        .filter((t) => store.isSelected(t.id))
+                        .map((t) => t.id),
+                      onChange: (keys) => {
+                        // 同步当前页选中状态到 store（兼容跨页全选模式）
+                        const newSet = new Set(keys as string[]);
+                        for (const t of store.items) {
+                          const wasSelected = store.isSelected(t.id);
+                          const nowSelected = newSet.has(t.id);
+                          if (nowSelected && !wasSelected) {
+                            store.select(t.id);
+                          } else if (!nowSelected && wasSelected) {
+                            store.deselect(t.id);
+                          }
+                        }
+                      }
+                    }}
+                    onRow={(record) => ({
+                      onClick: (e) => {
+                        // 跳过 checkbox / 按钮 / 链接等可点击元素的点击，避免与 rowSelection 双触发
+                        if (
+                          (e.target as HTMLElement).closest(
+                            '.ant-checkbox-wrapper, .ant-checkbox, button, a, .ant-dropdown'
+                          )
+                        ) {
+                          return;
+                        }
+                        // SubTask 21.2：移动端行点击进入详情（编辑 Modal）；
+                        // 桌面端行点击切换选中态
+                        if (isMobile) {
+                          handleEdit(record);
+                          return;
+                        }
+                        store.toggleSelect(record.id);
+                      },
+                      onDoubleClick: (e) => {
+                        // SubTask 5.1：双击行打开编辑 Modal（跳过 checkbox / 按钮 / 链接）
+                        if (
+                          (e.target as HTMLElement).closest(
+                            '.ant-checkbox-wrapper, .ant-checkbox, button, a, .ant-dropdown'
+                          )
+                        ) {
+                          return;
+                        }
+                        handleEdit(record);
+                      },
+                      onContextMenu: () => {
+                        // SubTask 5.2：记录右键的行，供 Dropdown 菜单项使用
+                        contextTopicRef.current = record;
+                        setContextTopic(record);
+                      },
+                      style: {
                         cursor: 'pointer',
-                        transition: 'background 0.2s ease'
+                        background: store.isSelected(record.id)
+                          ? token.colorPrimaryBg
+                          : undefined
+                      }
+                    })}
+                    onHeaderRow={() => ({
+                      onContextMenu: (e) => {
+                        // SubTask 5.3：表头右键打开列配置面板
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setColumnConfigOpen(true);
+                      }
+                    })}
+                  />
+                </Dropdown>
+              </>
+            ) : (
+              /* 卡片视图（SubTask 9.3 + 20.4）：响应式 Row/Col + 金色色条
+                 响应式断点：移动 <768px → 2 列 (xs=12) / 平板 768-1023px → 3 列 (md=8) / 桌面 ≥1024px → 4 列 (lg=6)
+                 保留 Task 14 添加的 staggered 进入动画 */
+              <Row gutter={[16, 16]}>
+                {store.items.map((t, index) => (
+                  <Col key={t.id} xs={12} sm={12} md={8} lg={6}>
+                    <div
+                      className={index < 8 ? 'fade-in-up-staggered' : undefined}
+                      style={{
+                        ...(index < 8 ? ({ '--i': index } as React.CSSProperties) : {}),
+                        borderLeft: `3px solid ${colorGold}`
                       }}
-                      onClick={() => store.toggleSelect(t.id)}
                     >
-                      {isSelected && (
-                        <span
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: 3,
-                            background: token.colorPrimary,
-                            zIndex: 1
-                          }}
-                        />
-                      )}
-                      <TopicListItem
+                      <TopicCard
                         topic={t}
+                        selected={store.isSelected(t.id)}
+                        onSelect={(id, sel) =>
+                          sel ? store.select(id) : store.deselect(id)
+                        }
                         onEdit={handleEdit}
                         onDelete={handleDelete}
                         onToggleStatus={handleToggleStatus}
+                        onWeightChange={handleWeightChange}
                       />
                     </div>
-                  );
-                })}
-              </div>
+                  </Col>
+                ))}
+              </Row>
             )}
-          </Spin>
+          </BrandSpin>
+          </AccentCard>
 
           {/* 分页 */}
           {store.items.length > 0 && (
             <div
               style={{
                 ...paginationStyle,
-                marginTop: 16,
+                marginTop: spacing.lg,
                 justifyContent: 'space-between',
                 borderTop: `1px solid ${token.colorBorderSecondary}`,
                 border: `1px solid ${token.colorBorderSecondary}`,
@@ -1149,13 +1814,23 @@ export default function TopicLibrary() {
             <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
               <Button icon={<TagOutlined />}>批量操作</Button>
             </Dropdown>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={handleBatchDelete}
-            >
-              批量删除
-            </Button>
+            <KbdHint kbd="Delete" description="删除选中辩题">
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={handleBatchDelete}
+              >
+                批量删除
+              </Button>
+            </KbdHint>
+            <KbdHint kbd="Ctrl+B" description="打开批量编辑弹窗">
+              <Button
+                icon={<EditOutlined />}
+                onClick={handleOpenBatchEdit}
+              >
+                批量编辑
+              </Button>
+            </KbdHint>
             <Button
               icon={<TagOutlined />}
               onClick={() => setBatchTagInput(true)}
@@ -1205,6 +1880,77 @@ export default function TopicLibrary() {
         onClose={() => setDedupOpen(false)}
         onRerun={() => store.fetchList()}
       />
+
+      {/* 批量编辑弹窗 */}
+      <BatchEditModal
+        open={batchEditStore.modalOpen}
+        onClose={() => batchEditStore.closeModal()}
+        targetCount={
+          store.allSelectedInFilter
+            ? store.total - store.exceptIds.length
+            : store.selectedIds.length
+        }
+        isCrossPage={store.allSelectedInFilter}
+        customFields={customFields}
+        customFieldOptions={customFieldOptions}
+        onSubmit={handleBatchEditSubmit}
+        submitting={batchEditSubmitting}
+      />
+
+      {/* 批量编辑历史弹窗 */}
+      <BatchEditHistoryModal
+        open={batchEditStore.historyOpen}
+        onClose={() => batchEditStore.closeHistory()}
+        onSuccess={() => store.fetchList()}
+      />
+
+      {/* 列配置面板（SubTask 5.3）：表头右键打开，可勾选显示/隐藏列 */}
+      <Modal
+        title={
+          <Space size={6}>
+            <SettingOutlined />
+            <span>列配置</span>
+          </Space>
+        }
+        open={columnConfigOpen}
+        onCancel={() => setColumnConfigOpen(false)}
+        footer={null}
+        width={280}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, padding: `${spacing.sm} 0` }}>
+          {CONFIGURABLE_COLUMNS.map((col) => (
+            <Checkbox
+              key={col.key}
+              checked={!hiddenColumnKeys.has(col.key)}
+              onChange={(e) => {
+                const next = new Set(hiddenColumnKeys);
+                if (e.target.checked) {
+                  next.delete(col.key);
+                } else {
+                  next.add(col.key);
+                }
+                setHiddenColumnKeys(next);
+                saveHiddenColumns(next);
+              }}
+            >
+              {col.title}
+            </Checkbox>
+          ))}
+          <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, marginTop: spacing.xs, paddingTop: spacing.sm }}>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => {
+                const empty = new Set<string>();
+                setHiddenColumnKeys(empty);
+                saveHiddenColumns(empty);
+              }}
+            >
+              重置为默认（全部显示）
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
-import type { AuditLogDetail } from '../../../shared/types'
+import type { AuditLogDetail, BackupImportStrategy } from '../../../shared/types'
+import { bulkInsert } from './utils'
 
 // ============================================================
 // 类型定义
@@ -57,11 +58,21 @@ export type AuditLogCreateInput = {
 /**
  * 反序列化：DB row -> AuditLog
  * - detail: JSON 字符串 -> 对象
+ *
+ * 容错：detail 字段损坏时返回 null，避免单条坏数据导致整列查询失败。
  */
 function rowToAuditLog(row: AuditLogRow): AuditLog {
+  let detail: AuditLogDetail | null = null
+  if (row.detail) {
+    try {
+      detail = JSON.parse(row.detail)
+    } catch {
+      detail = null
+    }
+  }
   return {
     ...row,
-    detail: row.detail ? JSON.parse(row.detail) : null
+    detail
   }
 }
 
@@ -210,6 +221,8 @@ function clearLogs(beforeDate?: string): number {
  *
  * - 找到：返回 JSON.parse(value)
  * - 未找到：返回 undefined
+ *
+ * 容错：value 损坏时返回 undefined，避免抛错中断调用方。
  */
 function getSetting(key: string): any | undefined {
   const db = getDb()
@@ -218,7 +231,12 @@ function getSetting(key: string): any | undefined {
   if (!row) {
     return undefined
   }
-  return JSON.parse(row.value)
+  try {
+    return JSON.parse(row.value)
+  } catch {
+    // P2-4: value 损坏，回退 undefined
+    return undefined
+  }
 }
 
 /**
@@ -235,6 +253,8 @@ function setSetting(key: string, value: any): void {
 
 /**
  * 读取全部配置项，组装成 { key: value } 对象。每个 value 都 JSON.parse。
+ *
+ * 容错：单条 value 损坏时跳过该 key，不影响其他配置项。
  */
 function getAllSettings(): Record<string, any> {
   const db = getDb()
@@ -242,7 +262,11 @@ function getAllSettings(): Record<string, any> {
   const rows = stmt.all() as Array<{ key: string; value: string }>
   const result: Record<string, any> = {}
   for (const row of rows) {
-    result[row.key] = JSON.parse(row.value)
+    try {
+      result[row.key] = JSON.parse(row.value)
+    } catch {
+      // P2-4: value 损坏，跳过该 key
+    }
   }
   return result
 }
@@ -276,6 +300,38 @@ function deleteSettingsByKeys(keys: string[]): number {
 }
 
 // ============================================================
+// 备份与恢复（全量数据导入导出）
+// ============================================================
+
+/**
+ * 备份用：一次性返回 audit_log + settings 两张表的全部行（DB 原始格式）。
+ *
+ * 注意：此方法同时被 `audit_history` 类别（audit_log）和 `settings` 类别（settings）使用，
+ * 调用方按需取用对应字段。
+ */
+function findAllForBackup(): {
+  audit_log: Record<string, unknown>[]
+  settings: Record<string, unknown>[]
+} {
+  const db = getDb()
+  return {
+    audit_log: db.prepare('SELECT * FROM audit_log').all() as Record<string, unknown>[],
+    settings: db.prepare('SELECT * FROM settings').all() as Record<string, unknown>[]
+  }
+}
+
+/**
+ * 批量恢复 audit_log / settings 表。调用方需在外层事务内执行。
+ */
+function bulkRestore(
+  table: 'audit_log' | 'settings',
+  rows: Array<Record<string, unknown>>,
+  strategy: BackupImportStrategy
+): number {
+  return bulkInsert(table, rows, strategy)
+}
+
+// ============================================================
 // 导出
 // ============================================================
 
@@ -290,5 +346,8 @@ export const auditRepo = {
   setSetting,
   getAllSettings,
   deleteSetting,
-  deleteSettingsByKeys
+  deleteSettingsByKeys,
+  // 备份与恢复
+  findAllForBackup,
+  bulkRestore
 }

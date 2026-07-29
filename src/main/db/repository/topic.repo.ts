@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
-import type { CustomFieldValue } from '../../../shared/types'
+import type { BatchEditFieldAction, CustomFieldValue, BackupImportStrategy } from '../../../shared/types'
+import { bulkInsert } from './utils'
 
 /**
  * 转义 SQL LIKE 模式中的特殊字符（%、_、\），使其作为字面量匹配。
@@ -31,6 +32,12 @@ const SYSTEM_COUNTABLE_DIMENSIONS = new Set<string>([
   'status',
   'batch_id'
 ])
+
+/**
+ * Bug 4.16: 用于 filter 中表示"未设置"语义的魔法值，翻译为 IS NULL。
+ * 抽为常量并加注释，避免散落在代码各处。
+ */
+export const UNSET_VALUE = '__unset__'
 
 // ============================================================
 // 类型定义
@@ -127,7 +134,15 @@ function rowToTopic(row: TopicRow): Topic {
   }
   return {
     ...row,
-    tags: row.tags ? JSON.parse(row.tags) : null,
+    // Bug 2.6: tags 解析添加 try-catch，损坏的 JSON 不会导致列表加载失败
+    tags: (() => {
+      if (!row.tags) return null
+      try {
+        return JSON.parse(row.tags)
+      } catch {
+        return null
+      }
+    })(),
     custom_data: customData,
     weight: row.weight ?? 1.0,
     status: row.status ?? 'active',
@@ -187,24 +202,24 @@ export function buildWhereClause(filter?: TopicFilter): { where: string; params:
     if (column === 'domain' && filter.domains?.length) continue
     if (column === 'difficulty' && filter.difficulties?.length) continue
     const value = filter[key]
-    if (value !== undefined) {
-      // '__unset__' 翻译为 IS NULL，用于「(未设置)」节点筛选
-      if (value === '__unset__') {
-        conditions.push(`${column} IS NULL`)
-      } else {
-        conditions.push(`${column} = ?`)
-        params.push(value)
-      }
+    // Bug 4.17: null 时跳过，避免静默返回空结果
+    if (value === undefined || value === null) continue
+    // Bug 4.16: 使用 UNSET_VALUE 常量替代魔法字符串
+    if (value === UNSET_VALUE) {
+      conditions.push(`${column} IS NULL`)
+    } else {
+      conditions.push(`${column} = ?`)
+      params.push(value)
     }
   }
 
+  // Bug 4.15: 改用 json_each 精确匹配标签，避免 LIKE 对含双引号标签失效
   if (filter.tags && filter.tags.length > 0) {
-    const tagConditions = filter.tags.map(() => "tags LIKE ? ESCAPE '\\'")
-    conditions.push(`(${tagConditions.join(' OR ')})`)
-    for (const tag of filter.tags) {
-      const escapedTag = escapeLike(tag)
-      params.push(`%"${escapedTag}"%`)
-    }
+    const placeholders = filter.tags.map(() => '?').join(',')
+    conditions.push(
+      `EXISTS (SELECT 1 FROM json_each(topics.tags) WHERE value IN (${placeholders}))`
+    )
+    params.push(...filter.tags)
   }
 
   if (filter.keyword !== undefined && filter.keyword !== '') {
@@ -292,6 +307,9 @@ function createTopic(data: TopicCreateInput): Topic {
  * - 所有题使用同一个 created_at/updated_at 时间戳
  * - 返回成功插入的 Topic 列表（与入参顺序一致）
  *
+ * Bug 4.21: 直接用 data + 生成的 id + now 拼装返回的 Topic 对象，
+ * 避免 N+1 查询（原实现每条插入后都 getTopicById 一次）。
+ *
  * 性能：相比逐条 createTopic，减少 N-1 次 prepare + 事务边界开销。
  */
 function createMany(items: TopicCreateInput[]): Topic[] {
@@ -312,6 +330,7 @@ function createMany(items: TopicCreateInput[]): Topic[] {
       const id = uuidv4()
       const weight = data.weight ?? 1.0
       const status = data.status ?? 'active'
+      const batchId = data.batch_id ?? null
       const tagsJson = data.tags ? JSON.stringify(data.tags) : null
       const customDataJson =
         data.custom_data && Object.keys(data.custom_data).length > 0
@@ -328,13 +347,28 @@ function createMany(items: TopicCreateInput[]): Topic[] {
         tagsJson,
         weight,
         status,
-        data.batch_id ?? null,
+        batchId,
         now,
         now,
         customDataJson
       )
-      const created = getTopicById(id)
-      if (created) results.push(created)
+      // Bug 4.21: 直接拼装返回对象，避免 N+1 查询
+      results.push({
+        id,
+        title: data.title,
+        type: data.type ?? null,
+        domain: data.domain ?? null,
+        difficulty: data.difficulty ?? null,
+        source: data.source ?? null,
+        source_type: data.source_type ?? null,
+        tags: data.tags ? [...data.tags] : null,
+        weight,
+        status,
+        batch_id: batchId,
+        created_at: now,
+        updated_at: now,
+        custom_data: data.custom_data ? { ...data.custom_data } : null
+      })
     }
     return results
   })
@@ -361,7 +395,9 @@ function listTopics(filter?: TopicFilter): { items: Topic[]; total: number } {
   const { where, params } = buildWhereClause(filter)
 
   const page = filter?.page && filter.page > 0 ? filter.page : 1
-  const pageSize = filter?.pageSize && filter.pageSize > 0 ? filter.pageSize : 20
+  // Bug 4.20: pageSize 增加硬上限，避免无限制查询
+  const rawPageSize = filter?.pageSize && filter.pageSize > 0 ? filter.pageSize : 20
+  const pageSize = Math.min(rawPageSize, 100000)
   const offset = (page - 1) * pageSize
 
   const listStmt = db.prepare(`
@@ -400,7 +436,9 @@ function updateTopic(id: string, data: TopicUpdateInput): Topic | undefined {
     'source',
     'source_type',
     'weight',
-    'status'
+    'status',
+    // Bug 4.22: 支持 batch_id 更新（用于批次撤销后迁移辩题等场景）
+    'batch_id'
   ]
 
   for (const key of scalarKeys) {
@@ -540,6 +578,15 @@ function countByDimension(
   if (!isValidIdentifier(dimension)) {
     throw new Error(`[topicRepo] countByDimension: 非法字段名 "${dimension}"`)
   }
+  // Bug 4.18: tags 维度不能用此方法（数组字段需拆 JSON），重定向到 listAllTags
+  // Bug 5.32: weight 维度同样不适合（数值字段无意义分组）
+  if (dimension === 'tags' || dimension === 'weight') {
+    throw new Error(
+      `[topicRepo] countByDimension 不支持 '${dimension}'，请使用 ${
+        dimension === 'tags' ? 'listAllTags()' : '其他统计方式'
+      }`
+    )
+  }
   const db = getDb()
 
   let rows: Array<{ value: string | null; count: number }>
@@ -601,6 +648,289 @@ function listAllTags(): Array<{ value: string; count: number }> {
     .sort((a, b) => b.count - a.count)
 }
 
+// ============================================================
+// 批量编辑（多字段 + 事务 + 快照采集）
+// ============================================================
+
+/**
+ * 系统字段白名单：允许批量编辑的系统字段。
+ * 其他字段（id/title/created_at/updated_at/batch_id）不允许批量改。
+ */
+const SYSTEM_BATCH_FIELDS = new Set([
+  'type',
+  'domain',
+  'difficulty',
+  'source',
+  'source_type',
+  'status',
+  'weight',
+  'tags'
+])
+
+/**
+ * 对单个 topic 应用一组字段动作，返回 before/after 快照。
+ * - before: 该 topic 在这些字段上的原始值
+ * - after: 应用动作后的新值
+ *
+ * 注意：本函数仅计算新值，不写库。写库由 batchUpdateTopics 在事务内统一执行。
+ *
+ * 快照 key 约定：
+ * - 系统字段：直接字段名（'type'、'tags' 等）
+ * - 自定义字段：'custom_data.<fieldKey>'
+ */
+function computeBatchSnapshot(
+  topic: Topic,
+  actions: BatchEditFieldAction[]
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const before: Record<string, unknown> = {}
+  const after: Record<string, unknown> = {}
+
+  for (const action of actions) {
+    const isSystem = SYSTEM_BATCH_FIELDS.has(action.field)
+    const snapshotKey = isSystem ? action.field : `custom_data.${action.field}`
+
+    if (isSystem) {
+      // 系统字段
+      before[snapshotKey] = (topic as unknown as Record<string, unknown>)[action.field] ?? null
+
+      if (action.mode === 'clear') {
+        after[snapshotKey] = null
+      } else if (action.field === 'tags') {
+        // tags 字段：append 模式追加去重，replace 模式替换
+        const currentTags = topic.tags ?? []
+        if (action.mode === 'append') {
+          const newTags = Array.isArray(action.value)
+            ? action.value
+            : action.value !== undefined
+              ? [String(action.value)]
+              : []
+          after[snapshotKey] = Array.from(new Set([...currentTags, ...newTags]))
+        } else {
+          // replace
+          after[snapshotKey] = Array.isArray(action.value)
+            ? action.value
+            : action.value !== undefined
+              ? [String(action.value)]
+              : []
+        }
+      } else if (action.field === 'weight') {
+        after[snapshotKey] = action.mode === 'replace' ? Number(action.value) : null
+      } else {
+        // 标量字符串字段
+        after[snapshotKey] =
+          action.mode === 'replace'
+            ? action.value === undefined
+              ? ''
+              : String(action.value)
+            : null
+      }
+    } else {
+      // 自定义字段：从 custom_data 取原值
+      const customData = topic.custom_data ?? {}
+      before[snapshotKey] = (customData as Record<string, unknown>)[action.field] ?? null
+
+      if (action.mode === 'clear') {
+        after[snapshotKey] = null
+      } else if (action.mode === 'append') {
+        // append 仅对 tags 类型自定义字段有意义；对 string 类型退化为 replace
+        const oldVal = (customData as Record<string, unknown>)[action.field]
+        const oldArr = Array.isArray(oldVal)
+          ? oldVal
+          : oldVal !== null && oldVal !== undefined
+            ? [String(oldVal)]
+            : []
+        const newArr = Array.isArray(action.value)
+          ? action.value
+          : action.value !== undefined
+            ? [String(action.value)]
+            : []
+        after[snapshotKey] = Array.from(new Set([...oldArr, ...newArr]))
+      } else {
+        // replace
+        if (Array.isArray(action.value)) {
+          after[snapshotKey] = action.value
+        } else if (action.value !== undefined) {
+          after[snapshotKey] = action.value
+        } else {
+          after[snapshotKey] = null
+        }
+      }
+    }
+  }
+
+  return { before, after }
+}
+
+/**
+ * 将 after 快照应用到 topic，生成 TopicUpdateInput。
+ * 系统字段直接映射；custom_data 字段需合并到现有 custom_data（避免整体覆盖）。
+ */
+function applySnapshotToUpdate(
+  topic: Topic,
+  after: Record<string, unknown>
+): TopicUpdateInput {
+  const update: TopicUpdateInput = {}
+  const customDataPatch: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(after)) {
+    if (key.startsWith('custom_data.')) {
+      const fieldKey = key.slice('custom_data.'.length)
+      if (value === null) {
+        // 清空自定义字段：标记为 undefined 在合并时剔除
+        customDataPatch[fieldKey] = undefined
+      } else {
+        customDataPatch[fieldKey] = value
+      }
+    } else if (SYSTEM_BATCH_FIELDS.has(key)) {
+      // 系统字段
+      if (key === 'tags') {
+        update.tags = (value as string[] | null) ?? null
+      } else if (key === 'weight') {
+        update.weight = value as number
+      } else if (key === 'type') {
+        update.type = value as string | null
+      } else if (key === 'domain') {
+        update.domain = value as string | null
+      } else if (key === 'difficulty') {
+        update.difficulty = value as string | null
+      } else if (key === 'source') {
+        update.source = value as string | null
+      } else if (key === 'source_type') {
+        update.source_type = value as string | null
+      } else if (key === 'status') {
+        update.status = value as string
+      }
+    }
+  }
+
+  // 合并 custom_data：保留原 custom_data 中未变更的字段
+  if (Object.keys(customDataPatch).length > 0) {
+    const merged: Record<string, CustomFieldValue> = { ...(topic.custom_data ?? {}) }
+    for (const [k, v] of Object.entries(customDataPatch)) {
+      if (v === undefined) {
+        delete merged[k]
+      } else {
+        merged[k] = v as CustomFieldValue
+      }
+    }
+    update.custom_data = Object.keys(merged).length > 0 ? merged : null
+  }
+
+  return update
+}
+
+/**
+ * 批量更新辩题，使用事务包装。
+ * - 逐条应用 actions，采集 before/after 快照
+ * - 单条失败整批回滚
+ * - 返回每条 topic 的快照（用于撤销）
+ *
+ * @param ids 目标 topic id 列表
+ * @param actions 字段动作列表
+ * @returns { affectedCount, fieldCount, snapshots }
+ *          snapshots[topicId] = { before, after }
+ */
+function batchUpdateTopics(
+  ids: string[],
+  actions: BatchEditFieldAction[]
+): {
+  affectedCount: number
+  fieldCount: number
+  snapshots: Array<{
+    topicId: string
+    before: Record<string, unknown>
+    after: Record<string, unknown>
+  }>
+} {
+  if (ids.length === 0 || actions.length === 0) {
+    return { affectedCount: 0, fieldCount: 0, snapshots: [] }
+  }
+
+  const db = getDb()
+  const now = new Date().toISOString()
+
+  // 预编译 update 语句（一次性更新所有可批量编辑列）
+  const updateScalarStmt = db.prepare(`
+    UPDATE topics
+    SET type = ?, domain = ?, difficulty = ?, source = ?, source_type = ?,
+        status = ?, weight = ?, tags = ?, custom_data = ?, updated_at = ?
+    WHERE id = ?
+  `)
+
+  const getByIdStmt = db.prepare('SELECT * FROM topics WHERE id = ?')
+
+  const fn = db.transaction(() => {
+    const snapshots: Array<{
+      topicId: string
+      before: Record<string, unknown>
+      after: Record<string, unknown>
+    }> = []
+    let affected = 0
+
+    for (const id of ids) {
+      const row = getByIdStmt.get(id) as TopicRow | undefined
+      if (!row) continue // topic 已删除，跳过
+
+      const topic = rowToTopic(row)
+      const { before, after } = computeBatchSnapshot(topic, actions)
+
+      // 若所有 after 值与 before 相同，跳过（无变化）
+      const hasChange = Object.keys(after).some((k) => {
+        const b = JSON.stringify(before[k] ?? null)
+        const a = JSON.stringify(after[k] ?? null)
+        return b !== a
+      })
+      if (!hasChange) continue
+
+      const update = applySnapshotToUpdate(topic, after)
+
+      // 构造 UPDATE 参数：未在 update 中的字段保留原值
+      const tagsJson =
+        update.tags !== undefined
+          ? update.tags
+            ? JSON.stringify(update.tags)
+            : null
+          : topic.tags
+            ? JSON.stringify(topic.tags)
+            : null
+      const customDataJson =
+        update.custom_data !== undefined
+          ? update.custom_data && Object.keys(update.custom_data).length > 0
+            ? JSON.stringify(update.custom_data)
+            : null
+          : topic.custom_data && Object.keys(topic.custom_data).length > 0
+            ? JSON.stringify(topic.custom_data)
+            : null
+
+      updateScalarStmt.run(
+        update.type !== undefined ? update.type : topic.type,
+        update.domain !== undefined ? update.domain : topic.domain,
+        update.difficulty !== undefined ? update.difficulty : topic.difficulty,
+        update.source !== undefined ? update.source : topic.source,
+        update.source_type !== undefined ? update.source_type : topic.source_type,
+        update.status !== undefined ? update.status : topic.status,
+        update.weight !== undefined ? update.weight : topic.weight,
+        tagsJson,
+        customDataJson,
+        now,
+        id
+      )
+
+      snapshots.push({ topicId: id, before, after })
+      affected++
+    }
+
+    return { affected, snapshots }
+  })
+
+  const result = fn()
+  return {
+    affectedCount: result.affected,
+    fieldCount: actions.length,
+    snapshots: result.snapshots
+  }
+}
+
 /**
  * 清空题库表。
  * @param options.keepOfficial true=仅删除 source_type != '官方' 的题；false=清空全部
@@ -645,7 +975,8 @@ function listDistinctValues(
          ORDER BY count DESC`
       )
       .all() as Array<{ value: string | null; count: number }>
-    result[f] = rows.map((r) => ({ value: r.value ?? '', count: Number(r.count) }))
+    // Bug 4.19: SQL 已过滤 NULL 和空字符串，r.value 不会为 null，移除 ?? '' 死代码
+    result[f] = rows.map((r) => ({ value: r.value as string, count: Number(r.count) }))
   }
   return result
 }
@@ -702,6 +1033,47 @@ function listCustomFieldTags(
 }
 
 // ============================================================
+// 备份与恢复（全量数据导入导出）
+// ============================================================
+
+/**
+ * 备份用：返回所有 topics 行（DB 原始格式，含 blacklisted，tags/custom_data 为 JSON 字符串）。
+ * 与 rowToTopic 反序列化结果不同，此处保留 DB 原始字符串以便导出后还原。
+ */
+function findAllForBackup(): Record<string, unknown>[] {
+  return getDb().prepare('SELECT * FROM topics').all() as Record<string, unknown>[]
+}
+
+/**
+ * 备份用：返回所有 topic_custom_fields 行（DB 原始格式）。
+ */
+function findAllCustomFieldsForBackup(): Record<string, unknown>[] {
+  return getDb().prepare('SELECT * FROM topic_custom_fields').all() as Record<string, unknown>[]
+}
+
+/**
+ * 批量恢复 topics（按 strategy 走 INSERT OR IGNORE / REPLACE / INSERT）。
+ * 调用方需在外层事务内执行。
+ * @returns 受影响行数
+ */
+function bulkRestoreTopics(
+  rows: Array<Record<string, unknown>>,
+  strategy: BackupImportStrategy
+): number {
+  return bulkInsert('topics', rows, strategy)
+}
+
+/**
+ * 批量恢复 topic_custom_fields。
+ */
+function bulkRestoreCustomFields(
+  rows: Array<Record<string, unknown>>,
+  strategy: BackupImportStrategy
+): number {
+  return bulkInsert('topic_custom_fields', rows, strategy)
+}
+
+// ============================================================
 // 导出
 // ============================================================
 
@@ -721,5 +1093,11 @@ export const topicRepo = {
   listAllTags,
   listDistinctValues,
   listCustomFieldTags,
-  clearAll
+  clearAll,
+  batchUpdateTopics,
+  // 备份与恢复
+  findAllForBackup,
+  findAllCustomFieldsForBackup,
+  bulkRestoreTopics,
+  bulkRestoreCustomFields
 }
