@@ -50,10 +50,11 @@ function delay(ms: number): Promise<void> {
  *   - 仍失败或其他错误（SQLITE_CORRUPT 等）：降级为内存数据库
  *   - 通知渲染进程当前模式（persistent / memory）
  *
- * userData 已被 src/main/index.ts 重定向到
- *   <项目根>/.electron-userdata
- * 因此数据库文件最终位于：
- *   <项目根>/.electron-userdata/debate-drawer.db
+ * userData 使用 Electron 默认路径（未重定向）：
+ *   - Windows: %APPDATA%/辩盒/（即 C:\Users\<用户名>\AppData\Roaming\辩盒\）
+ *   - macOS:   ~/Library/Application Support/辩盒/
+ *   - Linux:   ~/.config/辩盒/
+ * 因此数据库文件最终位于上述目录下的 debate-drawer.db
  */
 export async function initDatabase(): Promise<Database.Database> {
   if (db) return db
