@@ -22,7 +22,7 @@ const { Text, Link, Paragraph } = Typography
 export const APP_META = {
   name: '辩盒',
   englishName: 'Debate Box',
-  version: '1.2.0',
+  version: '1.2.1',
   description: '辩盒是一款辩论赛题抽取与计时工具，提供题库管理、队伍/赛事管理、辩题抽取、计时器、赛制编辑等全流程能力。',
   feedbackEmail: 'muyun648@qq.com',
   githubUrl: 'https://github.com/tianhaoqi648-ops/bianhe'

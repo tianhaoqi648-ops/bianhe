@@ -31,7 +31,6 @@ import DrawResultList from '../components/draw/DrawResultList';
 import InsufficientTopicsModal from '../components/draw/InsufficientTopicsModal';
 import BigScreen from '../components/draw/BigScreen';
 import DrawAnimation from '../components/draw/DrawAnimation';
-import EmptyState from '../components/common/EmptyState';
 import { safeIpc } from '../lib/ipc';
 import { emptyStateStyle, kbdStyle } from '../styles/shared';
 import { spacing, shadow, gradient, colorGold, zIndex, fontSize, radius, gray } from '../styles/tokens';
@@ -798,29 +797,7 @@ export default function DrawPage() {
               </div>
             </>
           ) : (
-            <>
-              <GuideSteps />
-              {(eventStore.events.length === 0 || topicStore.items.length === 0) && (
-                <EmptyState
-                  type="default"
-                  description={
-                    eventStore.events.length === 0 && topicStore.items.length === 0
-                      ? '暂无赛事和辩题，请先添加'
-                      : eventStore.events.length === 0
-                        ? '暂无赛事，请先创建'
-                        : '暂无辩题，请先添加'
-                  }
-                  cta={[
-                    ...(topicStore.items.length === 0
-                      ? [{ text: '去题库添加辩题', onClick: () => navigate('/topics') }]
-                      : []),
-                    ...(eventStore.events.length === 0
-                      ? [{ text: '去赛事创建', onClick: () => navigate('/events') }]
-                      : [])
-                  ]}
-                />
-              )}
-            </>
+            <GuideSteps />
           )}
         </div>
       </div>
