@@ -12,6 +12,9 @@
 // ============================================================
 
 import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'fs'
+import { rm } from 'fs/promises'
+import { join } from 'path'
 import { getDb } from './db'
 import type { UpdateStatusPayload, UpdateInfo } from '../shared/types'
 import { createRequire } from 'module'
@@ -85,13 +88,46 @@ function buildReleaseUrl(version?: string): string {
 }
 
 /**
+ * 清理上次更新残留的 pending 安装包。
+ *
+ * electron-updater 下载的安装包存放在：
+ *   userData/Caches/<appName>/updater/pending/
+ * 更新完成后不会自动清理，每次更新残留 ~400MB。
+ * 此函数在启动时调用，递归删除该目录，失败仅记录日志不抛错。
+ */
+async function cleanupPendingUpdateFiles(): Promise<void> {
+  const appName = app.getName()
+  const pendingDir = join(
+    app.getPath('userData'),
+    'Caches',
+    appName,
+    'updater',
+    'pending'
+  )
+
+  try {
+    if (!existsSync(pendingDir)) {
+      return
+    }
+    await rm(pendingDir, { recursive: true, force: true })
+    console.log('[updater] Cleaned pending update files:', pendingDir)
+  } catch (error) {
+    console.error(
+      '[updater] Failed to clean pending:',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+}
+
+/**
  * 初始化自动更新模块。
  * 必须在数据库初始化成功 + IPC 注册完成之后调用。
  *
  * 行为：
- * 1. 配置 autoUpdater 参数
- * 2. 绑定事件监听器
- * 3. 读取 auto_update_check 设置，若为 true 则延迟 15 秒自动检查
+ * 1. 清理上次更新残留的 pending 安装包
+ * 2. 配置 autoUpdater 参数
+ * 3. 绑定事件监听器
+ * 4. 读取 auto_update_check 设置，若为 true 则延迟 15 秒自动检查
  */
 export function initUpdater(): void {
   if (initialized) {
@@ -99,6 +135,11 @@ export function initUpdater(): void {
     return
   }
   initialized = true
+
+  // 清理上次更新残留的安装包（异步、非阻塞，不阻断应用启动）
+  cleanupPendingUpdateFiles().catch((err) =>
+    console.warn('[updater] cleanup failed:', err)
+  )
 
   // 配置 autoUpdater
   autoUpdater.autoDownload = false

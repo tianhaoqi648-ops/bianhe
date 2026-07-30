@@ -31,6 +31,7 @@ import {
   glassSidebarBgDark
 } from '../../styles/tokens'
 import { useThemeMode } from '../../hooks/useThemeMode'
+import { APP_META } from '../AboutModal'
 
 const { Sider } = Layout
 
@@ -269,7 +270,7 @@ function AppSidebar({ selectedKey, collapsed, onNavigate }: AppSidebarProps) {
       </div>
 
       {/* 底部版本号区 */}
-      <div style={footerStyle(collapsed)}>{collapsed ? null : 'v1.0.0'}</div>
+      <div style={footerStyle(collapsed)}>{collapsed ? null : `v${APP_META.version}`}</div>
     </Sider>
   )
 }
