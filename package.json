@@ -1,6 +1,6 @@
 {
   "name": "debate-topic-drawer",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "productName": "辩盒",
   "description": "辩盒 — 辩论赛题抽取与计时工具",
   "main": "./out/main/index.js",
@@ -31,6 +31,7 @@
     "antd": "^5.29.3",
     "better-sqlite3": "^12.11.1",
     "diff-match-patch": "^1.0.5",
+    "electron-updater": "^6.8.9",
     "iconv-lite": "^0.7.3",
     "mammoth": "^1.11.0",
     "react-router-dom": "^7.18.1",

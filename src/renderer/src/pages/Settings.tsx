@@ -69,6 +69,7 @@ import BellManager from '../components/BellManager';
 import BackupManageModal from '../components/BackupManageModal';
 import BackupExportModal from '../components/settings/BackupExportModal';
 import BackupImportModal from '../components/settings/BackupImportModal';
+import UpdateCard from '../components/settings/UpdateCard';
 import { statCardStyle, cardStyle } from '../styles/shared';
 import { spacing, fontSize, radius } from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
@@ -1042,6 +1043,9 @@ export default function Settings() {
           </Space>
         </Space>
       </Card>
+
+      {/* 应用更新检查 */}
+      <UpdateCard />
 
       <Card
         size="small"

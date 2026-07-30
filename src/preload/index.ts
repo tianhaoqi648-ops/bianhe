@@ -81,7 +81,8 @@ import {
   type ImportExecuteResult,
   type ExportResult,
   type ExportLogsResult,
-  type DedupRunResult
+  type DedupRunResult,
+  type UpdateStatusPayload
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 
@@ -461,6 +462,39 @@ const backgroundAPI = {
 }
 
 // ============================================================
+// 应用内自动更新 API（electron-updater）
+//
+// macOS 平台 download 会走 shell.openExternal 降级路径（主进程 IPC 层处理），
+// 渲染进程无需关心平台差异，只需在 UI 上根据 isMacos 调整按钮文案。
+// ============================================================
+const updaterAPI = {
+  /** 检查更新（主进程查询 GitHub Releases，结果通过 onStatusChange 广播） */
+  check(): Promise<ApiResponse<void>> {
+    return invoke<ApiResponse<void>>(IPC_CHANNELS.UPDATER_CHECK)
+  },
+  /** 下载更新（macOS 走 shell.openExternal 打开浏览器，Windows/Linux 后台下载） */
+  download(releaseUrl?: string): Promise<ApiResponse<void>> {
+    return invoke<ApiResponse<void>>(IPC_CHANNELS.UPDATER_DOWNLOAD, releaseUrl)
+  },
+  /** 退出并安装更新（仅 Windows/Linux 有效） */
+  install(): Promise<ApiResponse<void>> {
+    return invoke<ApiResponse<void>>(IPC_CHANNELS.UPDATER_INSTALL)
+  },
+  /** 设置启动时自动检查开关（持久化到 settings 表） */
+  setAutoCheck(value: boolean): Promise<ApiResponse<{ ok: true }>> {
+    return invoke<ApiResponse<{ ok: true }>>(IPC_CHANNELS.UPDATER_SET_AUTO_CHECK, value)
+  },
+  /** 订阅状态变更（主进程通过 webContents.send 推送），返回取消订阅函数 */
+  onStatusChange(cb: (payload: UpdateStatusPayload) => void): () => void {
+    const listener = (_: unknown, payload: UpdateStatusPayload): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.UPDATER_STATUS_CHANGE, listener)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATER_STATUS_CHANGE, listener)
+    }
+  }
+}
+
+// ============================================================
 // P3.4 稳定性扩展：db:status / logs / backup
 //
 // 这些 API 通过 contextBridge.exposeInMainWorld('electron', extendedElectronAPI)
@@ -563,6 +597,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('timerAPI', timerAPI)
     contextBridge.exposeInMainWorld('bellAPI', bellAPI)
     contextBridge.exposeInMainWorld('backgroundAPI', backgroundAPI)
+    contextBridge.exposeInMainWorld('updaterAPI', updaterAPI)
   } catch (error) {
     console.error(error)
   }
@@ -590,6 +625,7 @@ if (process.contextIsolated) {
     timerAPI: typeof timerAPI
     bellAPI: typeof bellAPI
     backgroundAPI: typeof backgroundAPI
+    updaterAPI: typeof updaterAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = extendedElectronAPI
@@ -610,4 +646,5 @@ if (process.contextIsolated) {
   w.timerAPI = timerAPI
   w.bellAPI = bellAPI
   w.backgroundAPI = backgroundAPI
+  w.updaterAPI = updaterAPI
 }

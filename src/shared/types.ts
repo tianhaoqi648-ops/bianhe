@@ -793,7 +793,13 @@ export const IPC_CHANNELS = {
   // db 状态与错误日志
   DB_STATUS: 'db:status',
   DB_GET_MODE: 'db:get-mode',
-  DB_LOGS_WRITE: 'logs:write'
+  DB_LOGS_WRITE: 'logs:write',
+  // updater（应用内自动更新）
+  UPDATER_CHECK: 'updater:check',
+  UPDATER_DOWNLOAD: 'updater:download',
+  UPDATER_INSTALL: 'updater:install',
+  UPDATER_SET_AUTO_CHECK: 'updater:setAutoCheck',
+  UPDATER_STATUS_CHANGE: 'updater:statusChange'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -1252,4 +1258,46 @@ export interface TimerState {
    *  用于 prevStage 完全保留策略。
    *  自由辩论环节下，value 为 { aff, neg } 双方独立时间；其他环节为 number */
   stageRemainingMsCache?: Record<number, StageCacheValue>
+}
+
+// ---------- 应用内自动更新（electron-updater） ----------
+
+/** 更新检查状态 */
+export type UpdateStatus =
+  | 'idle' // 空闲（初始/未检查）
+  | 'checking' // 检查中
+  | 'available' // 发现新版本
+  | 'not-available' // 已是最新版本
+  | 'downloading' // 下载中
+  | 'downloaded' // 下载完成
+  | 'error' // 错误
+
+/** 新版本元信息 */
+export interface UpdateInfo {
+  /** 新版本号，如 "1.2.0" */
+  version: string
+  /** Release Notes（可能为 markdown 字符串） */
+  releaseNotes: string
+  /** GitHub Release 页面 URL */
+  releaseUrl: string
+}
+
+/** 下载进度 */
+export interface UpdateProgress {
+  /** 进度百分比 0-100 */
+  percent: number
+  /** 已下载字节数 */
+  transferred: number
+  /** 总字节数 */
+  total: number
+  /** 下载速度（字节/秒） */
+  bytesPerSecond: number
+}
+
+/** 状态变更广播 payload */
+export interface UpdateStatusPayload {
+  status: UpdateStatus
+  info?: UpdateInfo
+  progress?: UpdateProgress
+  error?: string
 }

@@ -22,6 +22,7 @@ import { registerBellPlayIpc } from './bell-play.ipc'
 import { registerTimerThemeIpc } from './timer-theme.ipc'
 import { registerBackgroundIpc } from './background.ipc'
 import { registerBackupIpc } from './backup.ipc'
+import { registerUpdaterIpc } from './updater.ipc'
 
 export function registerAllIpc(): void {
   registerSystemIpc()
@@ -42,5 +43,6 @@ export function registerAllIpc(): void {
   registerTimerThemeIpc()
   registerBackgroundIpc()
   registerBackupIpc()
+  registerUpdaterIpc()
   console.log('[main] All IPC handlers registered')
 }
