@@ -9,6 +9,7 @@ import { ensureBackgroundsDir } from './services/background-storage'
 import { registerAllIpc } from './ipc'
 import { writeErrorLog } from './logs'
 import { runBackupIfNeeded } from './backup'
+import { initUpdater } from './updater'
 
 // 使用 Electron 默认 userData 路径（%APPDATA%/辩盒/），
 // 而非 app.getAppPath() + '.electron-userdata'，因为：
@@ -112,6 +113,14 @@ app.whenReady().then(async () => {
 
     // 注册 IPC handlers（必须在 createWindow 之前完成）
     registerAllIpc()
+
+    // 初始化应用内自动更新（检查 electron-updater，启动后 15s 自动检查）
+    try {
+      initUpdater()
+      console.log('[main] Updater initialized')
+    } catch (e) {
+      console.error('[main] Updater init failed:', e)
+    }
 
     // 启动时检查并执行数据自动备份（距上次 >24h 触发）
     // 备份在后台进行，失败不影响启动

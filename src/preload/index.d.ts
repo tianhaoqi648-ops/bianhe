@@ -72,7 +72,8 @@ import type {
   DebateFormatData,
   TimerSession,
   TimerRecord,
-  BackgroundFile
+  BackgroundFile,
+  UpdateStatusPayload
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 
@@ -362,6 +363,19 @@ export interface BackgroundAPI {
   delete: (id: string) => Promise<ApiResponse<void>>
 }
 
+export interface UpdaterAPI {
+  /** 检查更新（结果通过 onStatusChange 广播） */
+  check: () => Promise<ApiResponse<void>>
+  /** 下载更新（macOS 走 shell.openExternal，Windows/Linux 后台下载） */
+  download: (releaseUrl?: string) => Promise<ApiResponse<void>>
+  /** 退出并安装（仅 Windows/Linux） */
+  install: () => Promise<ApiResponse<void>>
+  /** 设置启动时自动检查开关 */
+  setAutoCheck: (value: boolean) => Promise<ApiResponse<{ ok: true }>>
+  /** 订阅状态变更，返回取消订阅函数 */
+  onStatusChange: (cb: (payload: UpdateStatusPayload) => void) => () => void
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -382,6 +396,7 @@ declare global {
     timerAPI: TimerAPI
     bellAPI: BellAPI
     backgroundAPI: BackgroundAPI
+    updaterAPI: UpdaterAPI
   }
 }
 
