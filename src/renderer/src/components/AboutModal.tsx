@@ -18,11 +18,13 @@ import type { ModalProps } from 'antd'
 
 const { Text, Link, Paragraph } = Typography
 
-/** 应用元信息（统一管理，便于后续从 package.json 注入） */
+declare const __APP_VERSION__: string
+
+/** 由 Vite define 从 package.json 自动注入 */
 export const APP_META = {
   name: '辩盒',
   englishName: 'Debate Box',
-  version: '1.2.1',
+  version: __APP_VERSION__,
   description: '辩盒是一款辩论赛题抽取与计时工具，提供题库管理、队伍/赛事管理、辩题抽取、计时器、赛制编辑等全流程能力。',
   feedbackEmail: 'muyun648@qq.com',
   githubUrl: 'https://github.com/tianhaoqi648-ops/bianhe'
