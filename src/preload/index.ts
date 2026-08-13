@@ -85,6 +85,17 @@ import {
   type UpdateStatusPayload
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
+import type {
+  ChatRequest,
+  ChatEvent,
+  AgentAPI,
+  AgentSession,
+  AgentMessageRecord,
+  ToolConfirmRule,
+  ToolConfirmResult,
+  TestConnectionResult,
+  LLMConfig
+} from '../shared/agent-types'
 
 /**
  * 通用 invoke 封装：自动展开参数。
@@ -495,6 +506,139 @@ const updaterAPI = {
 }
 
 // ============================================================
+// Agent 对话 API（AI Agent v1.3.0）
+//
+// 流式事件通过 IPC 'agent:event' 通道推送，onEvent 回调转发给渲染进程。
+// chat 返回取消函数：移除事件监听 + 发送 cancel 信号。
+//
+// SubTask 30.4：扩展 session 与 config 命名空间，
+// 支持多会话持久化与工具确认规则配置。
+// ============================================================
+const agentAPI: AgentAPI = {
+  /**
+   * 发起 Agent 对话
+   * @param request 对话请求
+   * @param onEvent 流式事件回调
+   * @returns 取消函数（调用后取消订阅事件 + 发送 cancel 信号）
+   */
+  chat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void {
+    const handler = (_event: unknown, data: ChatEvent): void => onEvent(data)
+    // 防御性：注册新 handler 前移除所有旧的 'agent:event' 监听器，
+    // 确保同一时刻只有一个 handler 监听该通道。
+    // 正常情况下 agentStore 会在 done/error 时调用 cancelFn 清理，
+    // 此处作为防御层，避免任何残留 handler 导致 delta 事件被重复处理（字符双写）。
+    ipcRenderer.removeAllListeners('agent:event')
+    ipcRenderer.on('agent:event', handler)
+    // 异步发起调用，不阻塞
+    ipcRenderer.invoke('agent:chat', request).catch((err) => {
+      onEvent({ type: 'error', code: 'unknown', message: err?.message ?? String(err) })
+    })
+    // 返回取消函数
+    return () => {
+      ipcRenderer.removeListener('agent:event', handler)
+      ipcRenderer.send('agent:cancel')
+    }
+  },
+  /**
+   * 测试 LLM 连接（不进入 agent 循环）。
+   * 主进程通过 agent:test-connection handler 直接调用 chat 一次最小请求。
+   * @param config LLM 连接配置
+   * @returns 测试结果
+   */
+  testConnection(config: LLMConfig): Promise<TestConnectionResult> {
+    return ipcRenderer.invoke('agent:test-connection', config)
+  },
+  /** 取消当前进行中的对话 */
+  cancel(): Promise<void> {
+    return ipcRenderer.invoke('agent:cancel')
+  },
+  /**
+   * 回传工具人工确认结果（Task 32 / 41.4）。
+   * 主进程 agent-loop.ts 内已注册 'agent:confirm-result' IPC handler，
+   * 调用后会从 pendingConfirms Map 中取出对应 Promise 并 resolve。
+   */
+  confirmResult(result: ToolConfirmResult): Promise<void> {
+    return ipcRenderer.invoke('agent:confirm-result', result).then(() => undefined)
+  },
+  /**
+   * 导出指定会话为 Markdown / JSON 文件（Task 46）。
+   * 主进程 'agent:export-session' handler 内调用 dialog.showSaveDialog 让用户选路径，
+   * 用户取消保存时返回 { success: true, data: null }，前端据此区分取消与失败。
+   */
+  exportSession(payload: {
+    sessionId: string
+    format: 'markdown' | 'json'
+  }): Promise<ApiResponse<{ filePath: string; size: number } | null>> {
+    return invoke<ApiResponse<{ filePath: string; size: number } | null>>(
+      'agent:export-session',
+      payload
+    )
+  },
+  // ---------- 会话管理（SubTask 30.4 / Task 41.3） ----------
+  session: {
+    /** 列出全部会话（按 updatedAt DESC） */
+    list(): Promise<ApiResponse<AgentSession[]>> {
+      return invoke('agent:session:list')
+    },
+    /** 创建新会话 */
+    create(title: string): Promise<ApiResponse<AgentSession>> {
+      return invoke('agent:session:create', { title })
+    },
+    /** 重命名会话 */
+    rename(id: string, title: string): Promise<ApiResponse<boolean>> {
+      return invoke('agent:session:rename', { id, title })
+    },
+    /** 删除会话（事务级联清理消息） */
+    delete(id: string): Promise<ApiResponse<boolean>> {
+      return invoke('agent:session:delete', { id })
+    },
+    /** 清空全部会话（事务级联清理全部消息，不可恢复） */
+    clearAll(): Promise<ApiResponse<boolean>> {
+      return invoke('agent:session:clear-all')
+    },
+    /** 加载会话详情（session + messages） */
+    load(
+      id: string
+    ): Promise<ApiResponse<{ session: AgentSession; messages: AgentMessageRecord[] }>> {
+      return invoke('agent:session:load', { id })
+    },
+    /** 跨会话搜索（title / lastMessageText） */
+    search(keyword: string): Promise<ApiResponse<AgentSession[]>> {
+      return invoke('agent:session:search', { keyword })
+    },
+    /**
+     * 追加一条消息到指定会话（Task 41.3）。
+     * 主进程 agent-session.ipc.ts 内注册 'agent:session:add-message' handler，
+     * 调用 agentMessageRepo.add 写入 agent_messages 表。
+     */
+    addMessage(
+      sessionId: string,
+      message: Omit<AgentMessageRecord, 'id' | 'createdAt' | 'seq' | 'sessionId'>
+    ): Promise<ApiResponse<AgentMessageRecord>> {
+      return invoke('agent:session:add-message', { sessionId, message })
+    },
+    /**
+     * 更新会话最近一条消息的预览文本与时间（Task 41.3）。
+     * 同步刷新 updatedAt，保证会话列表按最新活动排序。
+     */
+    updateLastMessage(sessionId: string, text: string): Promise<ApiResponse<boolean>> {
+      return invoke('agent:session:update-last-message', { sessionId, text })
+    }
+  },
+  // ---------- Agent 配置（SubTask 30.4） ----------
+  config: {
+    /** 读取工具确认规则（无配置时返回默认规则） */
+    getConfirmRules(): Promise<ApiResponse<ToolConfirmRule[]>> {
+      return invoke('agent:config:get-confirm-rules')
+    },
+    /** 保存工具确认规则到 settings 表 */
+    setConfirmRules(rules: ToolConfirmRule[]): Promise<ApiResponse<boolean>> {
+      return invoke('agent:config:set-confirm-rules', { rules })
+    }
+  }
+}
+
+// ============================================================
 // P3.4 稳定性扩展：db:status / logs / backup
 //
 // 这些 API 通过 contextBridge.exposeInMainWorld('electron', extendedElectronAPI)
@@ -598,6 +742,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('bellAPI', bellAPI)
     contextBridge.exposeInMainWorld('backgroundAPI', backgroundAPI)
     contextBridge.exposeInMainWorld('updaterAPI', updaterAPI)
+    contextBridge.exposeInMainWorld('agent', agentAPI)
   } catch (error) {
     console.error(error)
   }
@@ -626,6 +771,7 @@ if (process.contextIsolated) {
     bellAPI: typeof bellAPI
     backgroundAPI: typeof backgroundAPI
     updaterAPI: typeof updaterAPI
+    agent: typeof agentAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = extendedElectronAPI
@@ -647,4 +793,5 @@ if (process.contextIsolated) {
   w.bellAPI = bellAPI
   w.backgroundAPI = backgroundAPI
   w.updaterAPI = updaterAPI
+  w.agent = agentAPI
 }

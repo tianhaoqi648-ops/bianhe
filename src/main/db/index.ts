@@ -8,6 +8,8 @@ import schemaSql from './schema.sql?raw'
 import { runMigrations } from './migrations'
 import { ALL_PRESETS } from '../../shared/debate-formats/presets'
 import { formatRepo } from './repository/format.repo'
+import { initAgentSessionTable } from './repository/agent-session.repo'
+import { initAgentMessageTable } from './repository/agent-message.repo'
 
 let db: Database.Database | null = null
 
@@ -168,6 +170,13 @@ function configureAndSeed(database: Database.Database): void {
 
   // 执行增量迁移（ALTER TABLE / 新表）
   runMigrations(database)
+
+  // 初始化 Agent 会话表（Task 28）
+  initAgentSessionTable(database)
+
+  // 初始化 Agent 消息表（Task 29）
+  // 位于 initAgentSessionTable 之后，因 agent_messages.session_id 外键引用 agent_sessions.id
+  initAgentMessageTable(database)
 
   // Seed debate format presets
   try {

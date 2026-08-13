@@ -1,0 +1,449 @@
+// ============================================================
+// Agent 共享类型定义（AI Agent v1.3.0）
+//
+// 此文件不依赖 main 或 renderer 任何模块，确保两侧都能安全引用。
+// 定义 Agent 功能所需的全部共享类型：工具、消息、对话请求、流式事件、
+// LLM 配置、业务上下文，以及 preload 暴露给渲染进程的 AgentAPI。
+//
+// 设计要点：
+// - 通过 OpenAI 兼容协议调用 LLM，支持 Function Calling
+// - 流式响应通过 IPC webContents.send('agent:event', ...) 推送，
+//   preload 通过 ipcRenderer.on('agent:event', onEvent) 监听
+// - 严格使用 TypeScript，避免 any（用 unknown 替代）
+// ============================================================
+
+import type { ApiResponse } from './types'
+
+// ---------- 1. 工具相关类型（SubTask 1.1） ----------
+
+/** 工具参数 JSON Schema（OpenAI Function Calling 格式） */
+export interface ToolSchema {
+  type: 'object'
+  properties: Record<
+    string,
+    {
+      type: string
+      description: string
+      enum?: string[]
+      default?: unknown
+      /** 当 type='array' 时，描述数组元素的 schema（OpenAI JSON Schema 标准） */
+      items?: {
+        type: string
+        description?: string
+        enum?: string[]
+      }
+    }
+  >
+  required?: string[]
+}
+
+/** 工具元数据（不含 execute 函数，用于 IPC 与 UI 显示） */
+export interface ToolMeta {
+  /** 工具唯一名（与 LLM function name 对齐） */
+  name: string
+  /** 工具描述（LLM 据此决定是否调用） */
+  description: string
+  /** 参数 JSON Schema */
+  parameters: ToolSchema
+  /** 风险等级（用于决定是否需要人工确认；ToolDefinition 通过继承获得该字段） */
+  riskLevel: ToolRiskLevel
+}
+
+/**
+ * 完整工具定义（主进程内部使用，含 execute）。
+ * - TArgs：工具参数类型，默认 Record<string, unknown>
+ * - TResult：工具返回值类型，默认 unknown
+ */
+export interface ToolDefinition<
+  TArgs = Record<string, unknown>,
+  TResult = unknown
+> extends ToolMeta {
+  /** 工具执行函数（主进程内调用，IPC 边界不传输） */
+  execute: (args: TArgs) => Promise<TResult>
+}
+
+// ---------- 2. 消息相关类型（SubTask 1.2） ----------
+
+/** 用户消息 */
+export interface UserMessage {
+  role: 'user'
+  content: string
+}
+
+/** 助手消息（含可选 tool_calls） */
+export interface AssistantMessage {
+  role: 'assistant'
+  content: string | null
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
+}
+
+/** 工具结果消息 */
+export interface ToolResultMessage {
+  role: 'tool'
+  tool_call_id: string
+  content: string
+}
+
+/** 系统消息 */
+export interface SystemMessage {
+  role: 'system'
+  content: string
+}
+
+/** OpenAI Chat Completions 消息联合类型 */
+export type Message =
+  | UserMessage
+  | AssistantMessage
+  | ToolResultMessage
+  | SystemMessage
+
+// ---------- 3. 对话请求类型（SubTask 1.3） ----------
+
+export interface ChatRequest {
+  /** 用户本次输入的文本 */
+  message: string
+  /** 当前业务上下文（如选中的辩题/赛事） */
+  context?: AgentContext
+  /** 是否流式响应（默认 true） */
+  stream?: boolean
+  /**
+   * LLM 连接配置（由渲染进程从 settingsStore.aiConfig 传入）。
+   * 主进程不持有渲染进程状态，因此配置随请求一并下发；
+   * handler 内会校验 apiKey 非空（Task 17.1）。
+   */
+  config: LLMConfig
+}
+
+// ---------- 4. 流式事件类型（SubTask 1.4） ----------
+
+/** 文本增量事件（assistant 输出 token 流） */
+export interface DeltaEvent {
+  type: 'delta'
+  text: string
+}
+
+/** 工具调用开始事件（主进程即将执行工具） */
+export interface ToolCallStartEvent {
+  type: 'tool_call_start'
+  toolCallId: string
+  toolName: string
+  args: Record<string, unknown>
+}
+
+/** 工具调用结果事件（主进程执行工具后回传） */
+export interface ToolCallResultEvent {
+  type: 'tool_call_result'
+  toolCallId: string
+  toolName: string
+  success: boolean
+  result?: unknown
+  error?: string
+}
+
+/** 工具调用人工确认事件（高风险工具执行前由主进程推送，渲染进程弹出确认框） */
+export interface ToolCallConfirmEvent {
+  type: 'tool_call_confirm'
+  toolCallId: string
+  toolName: string
+  args: Record<string, unknown>
+  /** 工具的人类可读说明文案 */
+  description: string
+}
+
+/** 对话完成事件 */
+export interface DoneEvent {
+  type: 'done'
+}
+
+/** 错误事件 */
+export interface ErrorEvent {
+  type: 'error'
+  code: 'no_api_key' | 'invalid_api_key' | 'rate_limit' | 'network' | 'tool_error' | 'unknown'
+  message: string
+}
+
+/** 通过 IPC 推送的流式事件联合类型 */
+export type ChatEvent =
+  | DeltaEvent
+  | ToolCallStartEvent
+  | ToolCallResultEvent
+  | ToolCallConfirmEvent
+  | DoneEvent
+  | ErrorEvent
+
+/** 测试连接结果 */
+export interface TestConnectionResult {
+  /** 是否连接成功 */
+  success: boolean
+  /** 错误码（success=true 时为 undefined） */
+  code?:
+    | 'no_api_key'
+    | 'invalid_api_key'
+    | 'rate_limit'
+    | 'network'
+    | 'timeout'
+    | 'invalid_baseURL'
+    | 'invalid_model'
+    | 'unknown'
+  /** 错误信息（success=true 时为 undefined） */
+  message?: string
+  /** HTTP 状态码（如 401/429，仅在网络请求返回 HTTP 响应时存在） */
+  statusCode?: number
+  /** 请求耗时（毫秒，success=true 时返回） */
+  latencyMs?: number
+}
+
+// ---------- 5. LLM 配置类型（SubTask 1.5） ----------
+
+/** LLM 服务商标识（用于设置页预填与运行时分支） */
+export type LLMProvider = 'openai' | 'qwen' | 'kimi' | 'zhipu' | 'deepseek' | 'custom'
+
+/** LLM 连接配置（存储于 settings 表 key='agent.llm'） */
+export interface LLMConfig {
+  /** 服务商标识 */
+  provider: LLMProvider
+  /** OpenAI 兼容 API base URL */
+  baseURL: string
+  /** API Key（敏感数据，仅主进程持有） */
+  apiKey: string
+  /** 模型名 */
+  model: string
+}
+
+/**
+ * 服务商预设常量（设置页预填使用）。
+ * - custom：baseURL 与 model 留空，由用户手动填写
+ */
+export const LLM_PROVIDER_PRESETS: Record<
+  LLMProvider,
+  { baseURL: string; model: string; label: string }
+> = {
+  openai: { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini', label: 'OpenAI' },
+  qwen: {
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    model: 'qwen-plus',
+    label: '通义千问'
+  },
+  kimi: { baseURL: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', label: 'Kimi' },
+  zhipu: {
+    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-4-flash',
+    label: '智谱清言'
+  },
+  deepseek: { baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', label: 'DeepSeek' },
+  custom: { baseURL: '', model: '', label: '自定义' }
+}
+
+// ---------- 6. 业务上下文类型（SubTask 1.6） ----------
+
+/**
+ * Agent 业务上下文（渲染进程在发起对话时填充）。
+ * 用于 system prompt 注入当前选中的辩题/赛事/页面，让 LLM 感知业务状态。
+ */
+export interface AgentContext {
+  /** 当前选中的辩题（用户在 TopicLibrary 选中时填充） */
+  currentTopic?: { id: string; title: string } | null
+  /** 当前选中的赛事 */
+  currentEvent?: { id: string; name: string } | null
+  /** 当前所在页面 */
+  currentPage?: string
+  /**
+   * 上下文是否锁定（Week 6 Task 33 引入）。
+   * - 默认 undefined / falsy：setContext 走正常覆盖合并逻辑
+   * - true：setContext 仅追加当前不存在的字段，已存在字段保持不变
+   * 通过 contextManager.lock() / unlock() 切换。
+   */
+  locked?: boolean
+}
+
+// ---------- 7. Agent API（SubTask 1.7 / 30.4） ----------
+
+/**
+ * Agent 会话管理 API（SubTask 30.4 / Task 41.3）。
+ * 提供多会话列表、创建、重命名、删除、加载详情与搜索能力，
+ * 以及单条消息持久化与最近消息预览更新能力。
+ */
+export interface AgentSessionAPI {
+  /** 列出全部会话（按 updatedAt DESC） */
+  list(): Promise<ApiResponse<AgentSession[]>>
+  /** 创建新会话 */
+  create(title: string): Promise<ApiResponse<AgentSession>>
+  /** 重命名会话 */
+  rename(id: string, title: string): Promise<ApiResponse<boolean>>
+  /** 删除会话（事务级联清理消息） */
+  delete(id: string): Promise<ApiResponse<boolean>>
+  /** 清空全部会话（事务级联清理全部消息，不可恢复） */
+  clearAll(): Promise<ApiResponse<boolean>>
+  /** 加载会话详情（session + messages） */
+  load(id: string): Promise<ApiResponse<{ session: AgentSession; messages: AgentMessageRecord[] }>>
+  /** 跨会话搜索（title / lastMessageText） */
+  search(keyword: string): Promise<ApiResponse<AgentSession[]>>
+  /**
+   * 追加一条消息到指定会话（Task 41.3）。
+   * 用于 sendMessage 流程中将用户/assistant 消息持久化到 agent_messages 表。
+   * @param sessionId 目标会话 id
+   * @param message   消息内容（不含 id / createdAt / seq，由主进程自动填充）
+   */
+  addMessage(
+    sessionId: string,
+    message: Omit<AgentMessageRecord, 'id' | 'createdAt' | 'seq' | 'sessionId'>
+  ): Promise<ApiResponse<AgentMessageRecord>>
+  /**
+   * 更新会话最近一条消息的预览文本与时间（Task 41.3）。
+   * 同步刷新 updatedAt，保证会话列表按最新活动排序。
+   */
+  updateLastMessage(sessionId: string, text: string): Promise<ApiResponse<boolean>>
+}
+
+/**
+ * Agent 配置 API（SubTask 30.4）。
+ * 提供工具人工确认规则的读取与保存能力。
+ */
+export interface AgentConfigAPI {
+  /** 读取工具确认规则（无配置时返回默认规则） */
+  getConfirmRules(): Promise<ApiResponse<ToolConfirmRule[]>>
+  /** 保存工具确认规则到 settings 表 */
+  setConfirmRules(rules: ToolConfirmRule[]): Promise<ApiResponse<boolean>>
+}
+
+/**
+ * preload 暴露给渲染进程的 Agent API。
+ *
+ * 通过 contextBridge.exposeInMainWorld 挂载到 window.electron.agent。
+ * 流式事件通过 IPC 'agent:event' 通道推送，preload 内部转发给 onEvent 回调。
+ *
+ * SubTask 30.4：扩展 session 与 config 命名空间，支持多会话持久化与工具确认规则配置。
+ */
+export interface AgentAPI {
+  /**
+   * 发起 Agent 对话。
+   * @param request 对话请求
+   * @param onEvent 流式事件回调
+   * @returns 取消函数，调用后终止当前对话
+   */
+  chat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void
+  /**
+   * 测试 LLM 连接（不进入 agent 循环，不写入会话历史）。
+   * @param config LLM 连接配置
+   * @returns 测试结果（含成功/失败、错误码、耗时）
+   */
+  testConnection(config: LLMConfig): Promise<TestConnectionResult>
+  /** 取消当前进行中的对话 */
+  cancel(): Promise<void>
+  /**
+   * 回传工具人工确认结果（Task 32 / 41.4）。
+   * 渲染进程在 ToolConfirmModal 中点击「确认/取消」后调用本方法，
+   * 主进程 agent-loop.ts 内通过 'agent:confirm-result' IPC handler 解析对应 Promise。
+   * @param result 确认结果（含 toolCallId / confirmed / 可选 modifiedArgs）
+   */
+  confirmResult(result: ToolConfirmResult): Promise<void>
+  /**
+   * 导出指定会话为 Markdown / JSON 文件（Task 46 主进程实现 / Task 45 渲染进程调用）。
+   * 主进程通过 dialog.showSaveDialog 让用户选择保存路径；
+   * 用户取消保存时返回 { success: true, data: null }，前端据此区分取消与失败。
+   *
+   * @param payload { sessionId, format }
+   * @returns 成功：{ filePath, size }；用户取消：null；失败：success=false + error
+   */
+  exportSession(payload: {
+    sessionId: string
+    format: 'markdown' | 'json'
+  }): Promise<ApiResponse<{ filePath: string; size: number } | null>>
+  /** 会话管理（多会话持久化） */
+  session: AgentSessionAPI
+  /** Agent 配置（工具确认规则等） */
+  config: AgentConfigAPI
+}
+
+// ---------- 8. 会话与消息持久化类型（SubTask 27.1 / 27.2） ----------
+
+/**
+ * Agent 会话记录（多会话持久化使用）。
+ * 用于会话列表展示与恢复，对应数据库 sessions 表。
+ */
+export interface AgentSession {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  /** 最近一条消息的预览文本（列表展示用） */
+  lastMessageText: string
+  lastMessageAt: string
+  /** 会话绑定的业务上下文（恢复时复用） */
+  context?: AgentContext
+}
+
+/**
+ * Agent 消息持久化记录（单条消息）。
+ * 对应数据库 messages 表，按 sessionId 关联会话。
+ * role 在原 Message 联合基础上扩展 tool_call / tool_result，便于落库查询。
+ */
+export interface AgentMessageRecord {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'system'
+  content: string
+  /** 助手消息附带的工具调用（沿用 AssistantMessage.tool_calls 结构） */
+  toolCalls?: AssistantMessage['tool_calls']
+  /** 工具结果附带的执行详情 */
+  toolResults?: Array<{
+    toolCallId: string
+    success: boolean
+    result?: unknown
+    error?: string
+  }>
+  createdAt: string
+}
+
+// ---------- 9. 工具人工确认类型（SubTask 27.3 / 27.5 / 27.7） ----------
+
+/** 工具风险等级（用于决定是否需要人工确认） */
+export type ToolRiskLevel = 'high' | 'medium' | 'low'
+
+/**
+ * 工具人工确认规则。
+ * 主进程在执行工具前根据此规则判断是否需要暂停并推送 ToolCallConfirmEvent。
+ */
+export interface ToolConfirmRule {
+  toolName: string
+  requireConfirm: boolean
+}
+
+/**
+ * 工具确认结果（渲染进程回传给主进程）。
+ * - confirmed=false 表示用户拒绝执行
+ * - modifiedArgs 用于用户在确认框中修改参数后回传
+ */
+export interface ToolConfirmResult {
+  toolCallId: string
+  confirmed: boolean
+  /** 用户在确认框中修改后的参数（可选，未修改则不传） */
+  modifiedArgs?: Record<string, unknown>
+}
+
+// ---------- 10. 赛程类型（SubTask 27.4） ----------
+
+/**
+ * 赛程单场比赛。
+ * - homeTeamId / awayTeamId 为 null 表示该队本轮轮空（bye）
+ */
+export interface ScheduleMatch {
+  matchIndex: number
+  /** 主队 ID，null 表示轮空 */
+  homeTeamId: string | null
+  /** 客队 ID，null 表示轮空 */
+  awayTeamId: string | null
+  /** 比赛日期（ISO 日期字符串） */
+  date: string
+}
+
+/** 赛程单轮（roundIndex 从 1 开始） */
+export interface ScheduleRound {
+  /** 轮次序号，从 1 开始 */
+  roundIndex: number
+  matches: ScheduleMatch[]
+}

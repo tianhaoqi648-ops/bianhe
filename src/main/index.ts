@@ -4,9 +4,15 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase, currentDbMode } from './db'
 import { seedOfficialTopics } from './db/seed'
 import { auditRepo } from './db/repository/audit.repo'
+import { agentSessionRepo } from './db/repository/agent-session.repo'
 import { clearUndoLogOnStartup } from './services/undo-service'
 import { ensureBackgroundsDir } from './services/background-storage'
 import { registerAllIpc } from './ipc'
+import { registerAgentIpc } from './ipc/agent.ipc'
+import { registerAgentSessionIpc } from './ipc/agent-session.ipc'
+import { registerAgentConfigIpc } from './ipc/agent-config.ipc'
+import { registerExportSessionIpc } from './ipc/export-session.ipc'
+import { registerAllTools } from './agent/register-tools'
 import { writeErrorLog } from './logs'
 import { runBackupIfNeeded } from './backup'
 import { initUpdater } from './updater'
@@ -111,8 +117,26 @@ app.whenReady().then(async () => {
       console.error('[main] Failed to record startup log:', e)
     }
 
+    // 迁移 v1.3.0 单会话模式的孤儿消息为「默认会话」（v1.3.0 + v1.4.0 合并版兼容）
+    // 位于 initDatabase（内部已建表）之后、registerAgentIpc 之前
+    try {
+      agentSessionRepo.migrateLegacySessions()
+    } catch (e) {
+      console.error('[main] Failed to migrate legacy agent sessions:', e)
+    }
+
     // 注册 IPC handlers（必须在 createWindow 之前完成）
     registerAllIpc()
+
+    // 注册 Agent 工具与 IPC（AI Agent v1.3.0 Week 3 Task 16.5）
+    // registerAllTools 必须在 registerAgentIpc 之前：agent-loop 依赖已注册的工具
+    registerAllTools()
+    registerAgentIpc()
+    // 注册 Agent 会话持久化与配置 IPC（AI Agent v1.3.0 Week 5 Task 30）
+    registerAgentSessionIpc()
+    registerAgentConfigIpc()
+    // 注册 Agent 会话导出 IPC（AI Agent v1.3.0 Week 7 Task 46）
+    registerExportSessionIpc()
 
     // 初始化应用内自动更新（检查 electron-updater，启动后 15s 自动检查）
     try {

@@ -8,6 +8,7 @@
 
 import type { CandidateField } from './constants'
 import type { DebateFormatData, StageSide, TimerTheme } from './debate-formats/types'
+import type { AgentAPI } from './agent-types'
 
 // ---------- 自定义字段相关类型 ----------
 
@@ -544,6 +545,8 @@ declare module '@electron-toolkit/preload' {
     dbStatus?: DbStatusAPI
     logs?: LogsAPI
     backup?: BackupAPI
+    /** Agent 对话 API（AI Agent v1.3.0，通过 'agent:event' 通道推送流式事件） */
+    agent?: AgentAPI
   }
 }
 
