@@ -167,6 +167,14 @@ const MIGRATIONS: Migration[] = [
           theme_snapshot      TEXT,
           label               TEXT,
           created_at          TEXT NOT NULL,
+          -- 以下三列必须在建表时一并定义：
+          -- 迁移 20260727_add_stage_remaining_cache_to_timer_sessions 的 id 排序在
+          -- 本迁移之前，会对尚不存在的 timer_sessions 执行 ALTER 并失败（被空 catch
+          -- 吞掉后仍标记已应用），若此处不建列，全新安装的库将永久缺失这些列，
+          -- 导致 20260902 重建表时 SELECT stage_remaining_cache 报 "no such column"。
+          stage_remaining_cache TEXT,
+          aff_remaining_ms      INTEGER,
+          neg_remaining_ms      INTEGER,
           FOREIGN KEY (format_id) REFERENCES debate_formats(id)
         );
 
