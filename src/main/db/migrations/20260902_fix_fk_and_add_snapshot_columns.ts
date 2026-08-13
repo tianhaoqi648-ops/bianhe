@@ -130,10 +130,36 @@ function rebuildDrawSessionItems(db: Database): void {
  *   1. format_id: NOT NULL → 可空 + ON DELETE SET NULL（Bug P1-17）
  *   2. 新增 event_name / team_aff_name / team_neg_name / topic_title 快照列（Bug P2-44）
  *   3. 从关联表回填现有记录的快照值
+ *
+ * 防御性迁移（v1.2.2 引入）：旧表可能缺少 stage_remaining_cache / aff_remaining_ms /
+ * neg_remaining_ms 列（即使相关迁移标记为已应用，ALTER TABLE 也可能因各种原因实际未生效，
+ * 如迁移排序导致 ALTER 先于建表执行而失败被吞）。动态检查旧表列，缺失的列在 SELECT 中
+ * 用 NULL 替代，避免"no such column"错误。
  */
 function rebuildTimerSessions(db: Database): void {
   // 幂等：event_name 列已存在说明已修复
   if (hasColumn(db, 'timer_sessions', 'event_name')) return
+
+  // 检查旧表有哪些新增列，缺失的列用 NULL 填充
+  const baseColumns = [
+    'id', 'event_id', 'round_id', 'team_aff_id', 'team_neg_id', 'topic_id',
+    'format_id', 'format_snapshot', 'status', 'started_at', 'ended_at',
+    'current_stage_index', 'current_side', 'remaining_ms', 'theme_snapshot',
+    'label', 'created_at'
+  ]
+  const optionalColumns = [
+    'stage_remaining_cache',
+    'aff_remaining_ms',
+    'neg_remaining_ms'
+  ]
+
+  const oldCols = new Set(getTableColumns(db, 'timer_sessions').map((c) => c.name))
+  const selectColumns = [
+    ...baseColumns,
+    ...optionalColumns.map((c) => (oldCols.has(c) ? c : 'NULL AS ' + c))
+  ]
+
+  const newColumns = [...baseColumns, ...optionalColumns]
 
   const tx = db.transaction(() => {
     db.exec(`
@@ -165,16 +191,8 @@ function rebuildTimerSessions(db: Database): void {
         FOREIGN KEY (format_id) REFERENCES debate_formats(id) ON DELETE SET NULL ON UPDATE CASCADE
       );
 
-      INSERT INTO timer_sessions_new
-        (id, event_id, round_id, team_aff_id, team_neg_id, topic_id,
-         format_id, format_snapshot, status, started_at, ended_at,
-         current_stage_index, current_side, remaining_ms, theme_snapshot, label, created_at,
-         stage_remaining_cache, aff_remaining_ms, neg_remaining_ms)
-      SELECT
-        id, event_id, round_id, team_aff_id, team_neg_id, topic_id,
-        format_id, format_snapshot, status, started_at, ended_at,
-        current_stage_index, current_side, remaining_ms, theme_snapshot, label, created_at,
-        stage_remaining_cache, aff_remaining_ms, neg_remaining_ms
+      INSERT INTO timer_sessions_new (${newColumns.join(', ')})
+      SELECT ${selectColumns.join(', ')}
       FROM timer_sessions;
 
       DROP TABLE timer_sessions;
