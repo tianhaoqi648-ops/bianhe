@@ -1,10 +1,18 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import { version } from './package.json'
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    resolve: {
+      alias: {
+        '@main': resolve(__dirname, 'src/main'),
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@preload': resolve(__dirname, 'src/preload')
+      }
+    },
     build: {
       rollupOptions: {
         input: {
@@ -29,6 +37,9 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    define: {
+      __APP_VERSION__: JSON.stringify(version)
+    }
   }
 })
