@@ -62,6 +62,7 @@ import {
 import type { DataNode } from 'antd/es/tree';
 import type { InputRef } from 'antd';
 import { useTopicStore } from '../stores/topicStore';
+import { useAgentStore } from '../stores/agentStore';
 import type {
   Topic,
   TopicCreateInput,
@@ -703,6 +704,10 @@ export default function TopicLibrary() {
   const handleEdit = (topic: Topic) => {
     setEditingTopic(topic);
     setEditModalOpen(true);
+    // Task 24.4: 打开编辑 Modal 时同步 Agent 上下文
+    useAgentStore.getState().setContext({
+      currentTopic: { id: topic.id, title: topic.title }
+    });
   };
   const handleEditSubmit = async (data: TopicCreateInput | TopicUpdateInput, isEdit: boolean) => {
     if (isEdit && editingTopic) {

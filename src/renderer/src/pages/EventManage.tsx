@@ -52,6 +52,7 @@ import ProgressRing from '../components/common/ProgressRing';
 import { safeIpc } from '../lib/ipc';
 import { useEventStore } from '../stores/eventStore';
 import { useTopicStore } from '../stores/topicStore';
+import { useAgentStore } from '../stores/agentStore';
 import type {
   Event,
   Round,
@@ -401,12 +402,24 @@ export default function EventManage() {
         try {
           await eventStore.deleteEvent(event.id);
           toast.success('赛事已删除');
-          if (selectedEvent?.id === event.id) setSelectedEvent(null);
+          if (selectedEvent?.id === event.id) {
+            setSelectedEvent(null);
+            // Task 24.5: 清除选中赛事时同步清除 Agent 上下文
+            useAgentStore.getState().setContext({ currentEvent: null });
+          }
           await eventStore.listEvents();
         } catch (e) {
           toast.error(e instanceof Error ? e.message : '删除失败');
         }
       }
+    });
+  };
+
+  // Task 24.5: 选中赛事时同步 Agent 上下文
+  const handleSelectEvent = (event: Event) => {
+    setSelectedEvent(event);
+    useAgentStore.getState().setContext({
+      currentEvent: { id: event.id, name: event.name }
     });
   };
 
@@ -911,7 +924,7 @@ export default function EventManage() {
             cursor: 'pointer'
           }}
           styles={{ body: { padding: spacing.lg } }}
-          onClick={() => setSelectedEvent(event)}
+          onClick={() => handleSelectEvent(event)}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm }}>
             <Text strong style={{ fontSize: fontSize.h4, flex: 1, marginRight: spacing.sm }} ellipsis={{ tooltip: event.name }}>

@@ -13,6 +13,7 @@ import {
   type TimerBackgroundSetting
 } from '../../../shared/timer-backgrounds';
 import { undoManager, registerStoreRefresher } from '../utils/undo-manager';
+import type { LLMConfig } from '../../../shared/agent-types';
 
 /** BGM 设置类型 */
 export interface BgmSetting {
@@ -94,6 +95,36 @@ function persistUIField(key: string, value: unknown): void {
   }
 }
 
+/** AI 助手默认配置（DeepSeek 为默认服务商） */
+const DEFAULT_AI_CONFIG: LLMConfig = {
+  provider: 'deepseek',
+  baseURL: 'https://api.deepseek.com/v1',
+  apiKey: '',
+  model: 'deepseek-chat'
+};
+
+/**
+ * 从 localStorage 读取持久化的 AI 助手配置（aiConfig + aiEnabled）。
+ * 复用 UI_LS_KEY 命名空间，与 themeMode 等偏好合并存储。
+ * 在 node 测试环境 / 访问异常时安全回退到默认值。
+ */
+function loadAISettings(): { aiConfig: LLMConfig; aiEnabled: boolean } {
+  const fallback = { aiConfig: { ...DEFAULT_AI_CONFIG }, aiEnabled: true };
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return fallback;
+    const raw = window.localStorage.getItem(UI_LS_KEY);
+    if (!raw) return fallback;
+    const obj = JSON.parse(raw);
+    const cfg = obj?.aiConfig;
+    const aiConfig: LLMConfig =
+      cfg && typeof cfg === 'object' ? { ...DEFAULT_AI_CONFIG, ...cfg } : { ...DEFAULT_AI_CONFIG };
+    const aiEnabled = typeof obj?.aiEnabled === 'boolean' ? obj.aiEnabled : true;
+    return { aiConfig, aiEnabled };
+  } catch {
+    return fallback;
+  }
+}
+
 /** 数据类重置选项（与 ResetDataRequest.dataOptions 一致） */
 export interface DataResetOptions {
   topics?: { keepOfficial: boolean };
@@ -118,6 +149,10 @@ interface SettingsState {
   showWorkflowCard: boolean;
   /** 是否已询问过示例数据填充（询问后无论用户选择都置 true，避免重复打扰） */
   sampleDataPrompted: boolean;
+  /** AI 助手配置（LLM 连接信息，localStorage 持久化） */
+  aiConfig: LLMConfig;
+  /** AI 助手开关（默认 true，可关闭回滚） */
+  aiEnabled: boolean;
 
   /** 拉取全部 settings */
   fetchAll: () => Promise<void>;
@@ -150,6 +185,10 @@ interface SettingsState {
   setShowWorkflowCard: (v: boolean) => void;
   /** 设置示例数据询问标记（同步写入 localStorage + 更新内存） */
   setSampleDataPrompted: (v: boolean) => void;
+  /** 更新 AI 配置（部分更新，合并到现有 aiConfig 并持久化） */
+  setAIConfig: (partial: Partial<LLMConfig>) => void;
+  /** 切换 AI 助手开关（同步写入 localStorage + 更新内存） */
+  setAIEnabled: (enabled: boolean) => void;
 }
 
 function extractError<T>(res: ApiResponse<unknown>): T {
@@ -165,6 +204,7 @@ registerStoreRefresher('settings', () => {
 export const useSettingsStore = create<SettingsState>((set, get) => {
   // 启动时同步从 localStorage 读取，避免首屏闪烁
   const persisted = loadPersistedUI();
+  const aiSettings = loadAISettings();
   return {
   settings: {},
   loading: false,
@@ -173,6 +213,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   onboardingCompleted: persisted.onboardingCompleted,
   showWorkflowCard: persisted.showWorkflowCard,
   sampleDataPrompted: persisted.sampleDataPrompted,
+  aiConfig: aiSettings.aiConfig,
+  aiEnabled: aiSettings.aiEnabled,
 
   fetchAll: async () => {
     set({ loading: true, error: null });
@@ -304,6 +346,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   setSampleDataPrompted: (v) => {
     set({ sampleDataPrompted: v });
     persistUIField('sampleDataPrompted', v);
+  },
+
+  setAIConfig: (partial) => {
+    const merged = { ...get().aiConfig, ...partial };
+    set({ aiConfig: merged });
+    persistUIField('aiConfig', merged);
+  },
+
+  setAIEnabled: (enabled) => {
+    set({ aiEnabled: enabled });
+    persistUIField('aiEnabled', enabled);
   }
 };
 });

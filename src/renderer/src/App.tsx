@@ -28,6 +28,7 @@ import UndoToast from './components/UndoToast';
 import ErrorBoundary from './components/ErrorBoundary';
 import CommandPalette from './components/CommandPalette';
 import WelcomeTour from './components/onboarding/WelcomeTour';
+import { AgentChatPanel } from './components/agent/AgentChatPanel';
 import { SAMPLE_TOPICS, SAMPLE_FORMAT } from './data/sample-data';
 import { useUIStore } from './stores/uiStore';
 
@@ -57,6 +58,12 @@ function AppLayout() {
   const isMobile = useMediaQuery('(max-width: 767px)'); // <768px
   const isTablet = useMediaQuery('(min-width: 768px) and (max-width: 1023px)'); // 768–1023px
   const collapsed = isTablet; // 平板自动折叠侧栏
+
+  // AI 助手面板折叠状态（默认收起，Ctrl+J 切换）
+  const [agentCollapsed, setAgentCollapsed] = useState(true);
+
+  // AI 助手开关（设置页可关闭，关闭后不渲染 AgentChatPanel，但 agentCollapsed 状态保留）
+  const aiEnabled = useSettingsStore((s) => s.aiEnabled);
 
   // ====== 首次启动 Tour 触发（Task 8.3） ======
   const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted);
@@ -183,7 +190,7 @@ function AppLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
       {/* 桌面 / 平板：显示侧栏（240px 或折叠 80px） */}
       {!isMobile && (
         <AppSidebar
@@ -192,7 +199,16 @@ function AppLayout() {
           onNavigate={handleNavigate}
         />
       )}
-      <Layout>
+      {/* AI 助手面板（Task 23）：左侧可折叠，Ctrl+J 切换，移动端不显示。
+          aiEnabled=false 时不渲染（设置页可关闭），agentCollapsed 状态保留以便重新开启时恢复。 */}
+      {!isMobile && aiEnabled && (
+        <AgentChatPanel
+          collapsed={agentCollapsed}
+          onToggle={() => setAgentCollapsed((v) => !v)}
+          onNavigateToSettings={() => navigate('/settings')}
+        />
+      )}
+      <Layout style={{ flex: 1, minWidth: 0 }}>
         <AppHeader selectedKey={selectedKey} />
         <Content style={contentStyle}>
           <ErrorBoundary>
