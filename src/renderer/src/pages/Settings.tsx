@@ -21,6 +21,9 @@ import {
   Modal,
   Checkbox,
   Radio,
+  Divider,
+  List,
+  Tooltip,
   theme
 } from 'antd';
 import BrandSpin from '../components/common/BrandSpin';
@@ -55,11 +58,13 @@ import {
   CloudDownloadOutlined,
   FolderOpenOutlined,
   RocketOutlined,
-  PlayCircleOutlined
+  PlayCircleOutlined,
+  RobotOutlined
 } from '@ant-design/icons';
 import { version } from '../../../../package.json';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTopicStore } from '../stores/topicStore';
+import { useAgentSessionStore } from '../stores/agentSessionStore';
 import { useThemeMode } from '../hooks/useThemeMode';
 import ImportTopicsModal from '../components/ImportTopicsModal';
 import DedupResultModal from '../components/DedupResultModal';
@@ -74,6 +79,15 @@ import { statCardStyle, cardStyle } from '../styles/shared';
 import { spacing, fontSize, radius } from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 import type { ExportFormat } from '../../../shared/types';
+import { LLM_PROVIDER_PRESETS } from '../../../shared/agent-types';
+import type {
+  LLMProvider,
+  LLMConfig,
+  TestConnectionResult,
+  ToolConfirmRule,
+  ToolRiskLevel,
+  AgentConfigAPI
+} from '../../../shared/agent-types';
 import {
   CONFIG_RESET_CATEGORIES,
   DATA_RESET_CATEGORIES,
@@ -87,7 +101,7 @@ const { Content } = Layout;
 const { Text, Paragraph, Title } = Typography;
 
 // 设置页 Tab 类型
-type SettingsTab = 'basic' | 'appearance' | 'data' | 'backup' | 'hotkeys' | 'about';
+type SettingsTab = 'basic' | 'appearance' | 'data' | 'backup' | 'hotkeys' | 'ai' | 'about';
 
 // 当前激活 Tab 持久化 key
 const ACTIVE_TAB_LS_KEY = 'bianhe-settings-active-tab';
@@ -136,10 +150,136 @@ const DEFAULTS = {
   aiThreshold: 0.85
 };
 
+// ============================================================
+// 工具确认规则相关常量（Task 48）
+//
+// 在渲染进程维护一份 12 个工具的元数据常量（与 src/main/agent/tools/index.ts
+// 的 allTools 对齐），避免新增 IPC 通道。如工具清单变化，同步更新此处。
+// ============================================================
+
+/** 工具确认规则元数据（用于设置页按风险等级分组展示） */
+interface ToolConfirmMeta {
+  toolName: string
+  description: string
+  riskLevel: ToolRiskLevel
+}
+
+/**
+ * 12 个工具的元数据常量（8 个 v1.3.0 基础工具 + 4 个 v1.4.0 赛事流程工具）。
+ *
+ * 风险等级分组（与各 *.tool.ts 中 riskLevel 字段对齐）：
+ *   - high：create_event / import_event_batch / optimize_team_groups / generate_schedule
+ *   - medium：create_topic / draw_topics
+ *   - low：search_topics / get_topic_detail / list_events / get_format /
+ *           get_current_timer_state / recommend_format
+ */
+const TOOL_CONFIRM_METAS: ToolConfirmMeta[] = [
+  // 高风险
+  {
+    toolName: 'create_event',
+    description: '创建赛事。仅写入赛事主体，赛制与队伍需后续单独配置。',
+    riskLevel: 'high'
+  },
+  {
+    toolName: 'import_event_batch',
+    description: '从 Excel/CSV/DOCX 文件批量导入赛事与队伍。',
+    riskLevel: 'high'
+  },
+  {
+    toolName: 'optimize_team_groups',
+    description: '优化赛事队伍分组（蛇形分配 / 随机分配）。',
+    riskLevel: 'high'
+  },
+  {
+    toolName: 'generate_schedule',
+    description: '为赛事生成赛程对阵（单淘汰/单循环/双淘汰/瑞士轮）。',
+    riskLevel: 'high'
+  },
+  // 中风险
+  {
+    toolName: 'create_topic',
+    description: '创建新辩题。',
+    riskLevel: 'medium'
+  },
+  {
+    toolName: 'draw_topics',
+    description: '从题库抽取辩题。支持按维度筛选、控制数量、避免重复。',
+    riskLevel: 'medium'
+  },
+  // 低风险
+  {
+    toolName: 'search_topics',
+    description: '搜索辩题库。支持按关键词、类型、领域、难度、标签筛选。',
+    riskLevel: 'low'
+  },
+  {
+    toolName: 'get_topic_detail',
+    description: '获取辩题详情（含自定义字段）。',
+    riskLevel: 'low'
+  },
+  {
+    toolName: 'list_events',
+    description: '列出赛事。可按状态筛选，默认按创建时间倒序返回。',
+    riskLevel: 'low'
+  },
+  {
+    toolName: 'get_format',
+    description: '查询赛制模板。不传 formatId 时返回默认赛制。',
+    riskLevel: 'low'
+  },
+  {
+    toolName: 'get_current_timer_state',
+    description: '查询当前计时器状态（当前环节、剩余时间、运行状态等）。',
+    riskLevel: 'low'
+  },
+  {
+    toolName: 'recommend_format',
+    description: '根据赛事规模与偏好推荐赛制模板。',
+    riskLevel: 'low'
+  }
+]
+
+/** 风险等级标签配置（含展示文案、Tag 颜色、默认是否需确认） */
+const RISK_LEVEL_LABELS: Record<
+  ToolRiskLevel,
+  { label: string; color: string; defaultRequireConfirm: boolean }
+> = {
+  high: { label: '高风险', color: 'red', defaultRequireConfirm: true },
+  medium: { label: '中风险', color: 'orange', defaultRequireConfirm: true },
+  low: { label: '低风险', color: 'green', defaultRequireConfirm: false }
+}
+
+/** 风险等级展示顺序（high → medium → low） */
+const RISK_LEVEL_ORDER: ToolRiskLevel[] = ['high', 'medium', 'low']
+
+/**
+ * 构造默认确认规则（按 riskLevel 决定 requireConfirm）。
+ * high / medium 默认需确认，low 默认无需确认。
+ */
+function buildDefaultConfirmRules(): ToolConfirmRule[] {
+  return TOOL_CONFIRM_METAS.map((m) => ({
+    toolName: m.toolName,
+    requireConfirm: RISK_LEVEL_LABELS[m.riskLevel].defaultRequireConfirm
+  }))
+}
+
+/**
+ * 获取 preload 暴露的 Agent 配置 API。
+ *
+ * window.agent 通过 contextBridge.exposeInMainWorld('agent', agentAPI) 挂载，
+ * 但 Window 接口尚未声明 agent 字段，此处用 cast 获取类型安全引用，
+ * 与 agentStore.ts 中 getAgentAPI 的处理方式一致。
+ */
+function getAgentConfigAPI(): AgentConfigAPI | null {
+  const w = window as unknown as { agent?: { config?: AgentConfigAPI } }
+  return w.agent?.config ?? null
+}
+
 export default function Settings() {
   const { token } = theme.useToken();
   const settingsStore = useSettingsStore();
   const topicStore = useTopicStore();
+  const { aiConfig, setAIConfig, aiEnabled: aiAssistantEnabled, setAIEnabled: setAIAssistantEnabled } = settingsStore;
   const { themeMode, setThemeMode } = useThemeMode();
   const toast = useToast();
 
@@ -156,6 +296,12 @@ export default function Settings() {
 
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // AI 助手「测试连接」按钮 loading
+  const [testing, setTesting] = useState(false);
+  // Task 48：工具确认规则状态
+  const [confirmRules, setConfirmRules] = useState<ToolConfirmRule[]>([]);
+  const [confirmRulesLoading, setConfirmRulesLoading] = useState(false);
+  const [confirmRulesSaving, setConfirmRulesSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
   const [tagDisplayOpen, setTagDisplayOpen] = useState(false);
@@ -440,6 +586,181 @@ export default function Settings() {
     } finally {
       setResetting(false);
     }
+  };
+
+  // ====== AI 助手：测试连接 ======
+  // 通过专用 agent:test-connection IPC 通道验证 LLM 连通性
+  // 不进入 agent 循环、不污染会话历史
+  const handleTestConnection = async () => {
+    // 前端侧前置校验（与主进程 validateConfig 逻辑一致，即时反馈）
+    const apiKey = aiConfig.apiKey?.trim() ?? '';
+    const baseURL = aiConfig.baseURL?.trim() ?? '';
+    const model = aiConfig.model?.trim() ?? '';
+
+    if (!apiKey) {
+      toast.error('请先填写 API Key');
+      return;
+    }
+    if (!baseURL.startsWith('http://') && !baseURL.startsWith('https://')) {
+      toast.error('baseURL 必须以 http:// 或 https:// 开头');
+      return;
+    }
+    if (!model) {
+      toast.error('请填写模型名');
+      return;
+    }
+
+    const w = window as unknown as {
+      agent?: {
+        testConnection: (config: LLMConfig) => Promise<TestConnectionResult>;
+      };
+    };
+    if (typeof w.agent === 'undefined' || !w.agent?.testConnection) {
+      toast.error('Agent 服务尚未就绪');
+      return;
+    }
+
+    setTesting(true);
+    try {
+      const result = await w.agent.testConnection(aiConfig);
+      if (result.success) {
+        toast.success(`连接成功（耗时 ${result.latencyMs ?? '?'}ms）`);
+      } else {
+        // 按 code 显示对应提示
+        switch (result.code) {
+          case 'no_api_key':
+            toast.error('请先填写 API Key');
+            break;
+          case 'invalid_baseURL':
+            toast.error('baseURL 必须以 http:// 或 https:// 开头');
+            break;
+          case 'invalid_model':
+            toast.error('请填写模型名');
+            break;
+          case 'invalid_api_key':
+            toast.error('API Key 无效或已过期');
+            break;
+          case 'rate_limit':
+            toast.error('请求过于频繁，请稍后重试');
+            break;
+          case 'network':
+            toast.error(result.message ?? '网络连接失败');
+            break;
+          case 'timeout':
+            toast.error(result.message ?? '请求超时（15s），请检查网络或更换 LLM 服务');
+            break;
+          default:
+            toast.error(result.message ?? '测试连接失败');
+            break;
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '测试连接失败');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // ====== Task 48：工具确认规则 ======
+  // 加载工具确认规则（无配置时主进程返回默认规则）
+  const loadConfirmRules = async () => {
+    const api = getAgentConfigAPI();
+    if (!api) {
+      // Agent 服务未就绪：使用本地默认规则占位，避免界面空白
+      setConfirmRules(buildDefaultConfirmRules());
+      return;
+    }
+    setConfirmRulesLoading(true);
+    try {
+      const res = await api.getConfirmRules();
+      if (res.success && Array.isArray(res.data)) {
+        setConfirmRules(res.data);
+      }
+    } catch {
+      // 静默失败，保留空数组
+    } finally {
+      setConfirmRulesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadConfirmRules();
+  }, []);
+
+  // 切换单个工具的确认规则（乐观更新 + 实时保存）
+  const handleToggleConfirmRule = async (toolName: string, requireConfirm: boolean) => {
+    const prev = confirmRules;
+    // 计算新规则：若已存在则更新，否则追加
+    const exists = prev.some((r) => r.toolName === toolName);
+    const next = exists
+      ? prev.map((r) => (r.toolName === toolName ? { ...r, requireConfirm } : r))
+      : [...prev, { toolName, requireConfirm }];
+    setConfirmRules(next); // 乐观更新
+    setConfirmRulesSaving(true);
+    try {
+      const api = getAgentConfigAPI();
+      if (!api) {
+        toast.error('Agent 服务未就绪，无法保存');
+        setConfirmRules(prev); // 回滚
+        return;
+      }
+      const res = await api.setConfirmRules(next);
+      if (!res.success) {
+        throw new Error(res.error || '保存失败');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存失败');
+      setConfirmRules(prev); // 回滚
+    } finally {
+      setConfirmRulesSaving(false);
+    }
+  };
+
+  // 恢复默认确认规则（按 riskLevel 重置）
+  const handleResetConfirmRules = async () => {
+    const defaultRules = buildDefaultConfirmRules();
+    const prev = confirmRules;
+    setConfirmRules(defaultRules); // 乐观更新
+    setConfirmRulesSaving(true);
+    try {
+      const api = getAgentConfigAPI();
+      if (!api) {
+        toast.error('Agent 服务未就绪，无法保存');
+        setConfirmRules(prev); // 回滚
+        return;
+      }
+      const res = await api.setConfirmRules(defaultRules);
+      if (!res.success) {
+        throw new Error(res.error || '恢复默认失败');
+      }
+      toast.success('已恢复为默认确认规则');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '恢复默认失败');
+      setConfirmRules(prev); // 回滚
+    } finally {
+      setConfirmRulesSaving(false);
+    }
+  };
+
+  // ====== 清空所有 Agent 会话 ======
+  // Modal.confirm 二次确认后调用 agentSessionStore.clearAllSessions，
+  // 由 store 内部调用 API + 重置会话列表/当前会话/消息。
+  const handleClearAllAgentSessions = () => {
+    Modal.confirm({
+      title: '确认清空所有 Agent 会话',
+      content: '将删除全部会话及消息，不可恢复。',
+      okText: '确认清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const ok = await useAgentSessionStore.getState().clearAllSessions();
+        if (ok) {
+          toast.success('已清空所有 Agent 会话');
+        } else {
+          toast.error('清空失败');
+        }
+      }
+    });
   };
 
   // 切换 Tab 并持久化
@@ -1127,6 +1448,210 @@ export default function Settings() {
     </div>
   );
 
+  // ====== 渲染：AI 助手 Tab（LLM 配置） ======
+  const renderAITab = () => (
+    <div>
+      <Alert
+        message="AI 助手"
+        description="配置内置 AI 助手的 LLM 服务。配置后可在应用内与 AI 对话，辅助辩题分析、赛事筹备等。"
+        type="info"
+        showIcon
+        banner
+        style={{ marginBottom: spacing.md }}
+      />
+
+      <AccentCard
+        size="small"
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#1677ff' }} />
+            <span>LLM 配置</span>
+          </Space>
+        }
+        style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+      >
+        <Form layout="vertical">
+          <Form.Item label="启用 AI 助手" tooltip="关闭后将隐藏 AI 助手入口，可随时重新开启">
+            <Switch
+              checked={aiAssistantEnabled}
+              onChange={(v) => setAIAssistantEnabled(v)}
+              checkedChildren="开启"
+              unCheckedChildren="关闭"
+            />
+          </Form.Item>
+
+          <Alert
+            type="info"
+            showIcon
+            message="隐私提示"
+            description="你的对话内容将发送到所配置的 LLM 服务并存储在本地。API Key 仅存储在本地，不会上传到任何服务器。"
+            style={{ marginBottom: 16 }}
+          />
+
+          <Form.Item label="服务商" tooltip="选择 LLM 服务商，切换后自动预填 baseURL 与模型（自定义不预填）">
+            <Select
+              value={aiConfig.provider}
+              onChange={(provider: LLMProvider) => {
+                const preset = LLM_PROVIDER_PRESETS[provider];
+                setAIConfig({
+                  provider,
+                  baseURL: preset.baseURL,
+                  model: preset.model
+                });
+              }}
+              options={[
+                { value: 'openai', label: 'OpenAI' },
+                { value: 'qwen', label: '通义千问' },
+                { value: 'kimi', label: 'Kimi' },
+                { value: 'zhipu', label: '智谱清言' },
+                { value: 'deepseek', label: 'DeepSeek' },
+                { value: 'custom', label: '自定义' }
+              ]}
+            />
+          </Form.Item>
+
+          <Form.Item label="API Key" tooltip="LLM 服务的 API 密钥（sk-... 开头，依服务商而定）">
+            <Input.Password
+              value={aiConfig.apiKey}
+              onChange={(e) => setAIConfig({ apiKey: e.target.value })}
+              placeholder="sk-..."
+              visibilityToggle
+            />
+          </Form.Item>
+
+          <Form.Item label="Base URL" tooltip="OpenAI 兼容 API 的基础地址">
+            <Input
+              value={aiConfig.baseURL}
+              onChange={(e) => setAIConfig({ baseURL: e.target.value })}
+              placeholder="https://api.example.com/v1"
+            />
+          </Form.Item>
+
+          <Form.Item label="模型" tooltip="具体模型名，如 gpt-4o-mini / deepseek-chat">
+            <Input
+              value={aiConfig.model}
+              onChange={(e) => setAIConfig({ model: e.target.value })}
+              placeholder="gpt-4o-mini"
+            />
+          </Form.Item>
+
+          <Space>
+            <Button
+              loading={testing}
+              onClick={handleTestConnection}
+              icon={<PlayCircleOutlined />}
+            >
+              测试连接
+            </Button>
+          </Space>
+        </Form>
+      </AccentCard>
+
+      {/* Task 48：工具确认规则 */}
+      <AccentCard
+        size="small"
+        title={
+          <Space>
+            <SafetyCertificateOutlined style={{ color: '#1677ff' }} />
+            <span>工具确认规则</span>
+            <Tooltip title="配置 Agent 调用工具时是否需要人工确认">
+              <InfoCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
+            </Tooltip>
+          </Space>
+        }
+        style={{ background: token.colorBgContainer, ...cardStyle }}
+      >
+        <Paragraph type="secondary" style={{ marginBottom: spacing.md }}>
+          配置 Agent 调用工具时是否需要人工确认。高风险工具建议保留确认。
+        </Paragraph>
+
+        <BrandSpin spinning={confirmRulesLoading}>
+          {RISK_LEVEL_ORDER.map((level) => {
+            const tools = TOOL_CONFIRM_METAS.filter((m) => m.riskLevel === level);
+            const cfg = RISK_LEVEL_LABELS[level];
+            return (
+              <div key={level} style={{ marginBottom: spacing.sm }}>
+                <Divider orientation="left" style={{ marginTop: 0, marginBottom: spacing.sm }}>
+                  <Tag color={cfg.color}>{cfg.label}</Tag>
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    默认{cfg.defaultRequireConfirm ? '需确认' : '无需确认'}
+                  </Text>
+                </Divider>
+                <List
+                  size="small"
+                  dataSource={tools}
+                  split={false}
+                  renderItem={(tool) => {
+                    const rule = confirmRules.find((r) => r.toolName === tool.toolName);
+                    const checked = rule?.requireConfirm ?? cfg.defaultRequireConfirm;
+                    return (
+                      <List.Item
+                        actions={[
+                          <Tooltip
+                            key="switch"
+                            title={
+                              checked ? '执行前将弹出确认框' : 'Agent 将直接执行，无需确认'
+                            }
+                          >
+                            <Switch
+                              size="small"
+                              checked={checked}
+                              onChange={(v) => handleToggleConfirmRule(tool.toolName, v)}
+                              checkedChildren="确认"
+                              unCheckedChildren="直通"
+                            />
+                          </Tooltip>
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={<Text code>{tool.toolName}</Text>}
+                          description={tool.description}
+                        />
+                      </List.Item>
+                    );
+                  }}
+                />
+              </div>
+            );
+          })}
+
+          <Space style={{ marginTop: spacing.sm }}>
+            <Button
+              icon={<UndoOutlined />}
+              onClick={handleResetConfirmRules}
+              loading={confirmRulesSaving}
+            >
+              恢复默认
+            </Button>
+          </Space>
+        </BrandSpin>
+      </AccentCard>
+
+      {/* 数据管理：清空所有 Agent 会话 */}
+      <AccentCard
+        size="small"
+        title={
+          <Space>
+            <DatabaseOutlined style={{ color: token.colorError }} />
+            <span>数据管理</span>
+          </Space>
+        }
+        style={{ marginTop: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+      >
+        <Paragraph type="secondary" style={{ marginBottom: spacing.md }}>
+          清空所有 Agent 会话及其消息记录。此操作不可恢复，请谨慎操作。
+        </Paragraph>
+        <Button
+          danger
+          icon={<RestOutlined />}
+          onClick={handleClearAllAgentSessions}
+        >
+          清空所有 Agent 会话
+        </Button>
+      </AccentCard>
+    </div>
+  );
+
   // 左侧 Menu 项
   const menuItems = [
     { key: 'basic', icon: <SettingOutlined />, label: '通用' },
@@ -1134,6 +1659,7 @@ export default function Settings() {
     { key: 'data', icon: <DatabaseOutlined />, label: '数据' },
     { key: 'backup', icon: <CloudSyncOutlined />, label: '备份与迁移' },
     { key: 'hotkeys', icon: <KeyOutlined />, label: '快捷键' },
+    { key: 'ai', icon: <RobotOutlined />, label: 'AI 助手' },
     { key: 'about', icon: <InfoCircleOutlined />, label: '关于' }
   ];
 
@@ -1201,6 +1727,7 @@ export default function Settings() {
                   {activeTab === 'data' && renderDataTab()}
                   {activeTab === 'backup' && renderBackupTab()}
                   {activeTab === 'hotkeys' && <HotkeySettingsTab />}
+                  {activeTab === 'ai' && renderAITab()}
                   {activeTab === 'about' && renderAboutTab()}
                 </div>
               </div>
