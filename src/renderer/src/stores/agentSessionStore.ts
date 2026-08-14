@@ -41,8 +41,12 @@ export interface AgentSessionState {
 
   /** 拉取全部会话列表 */
   loadSessions: () => Promise<void>
-  /** 创建新会话（默认标题「新会话」），并切换为当前会话 */
-  createSession: (title?: string) => Promise<AgentSession | null>
+  /**
+   * 创建新会话（默认标题「新会话」），并切换为当前会话。
+   * @param opts.resetChat 默认 true（清空 agentStore 消息/上下文、取消进行中流式）；
+   *   传 false 时跳过这些重置，用于「发送时自动建会话」场景（避免清掉刚输入的消息与 loading 状态）
+   */
+  createSession: (title?: string, opts?: { resetChat?: boolean }) => Promise<AgentSession | null>
   /** 切换到指定会话，并联动 agentStore 加载历史消息与上下文 */
   switchSession: (id: string) => Promise<void>
   /** 重命名指定会话 */
@@ -103,6 +107,12 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       if (!get().currentSessionId && data.length > 0) {
         set({ currentSessionId: data[0].id })
       }
+      // 启动预建：列表为空且无活动会话时自动创建一个，
+      // 保证「首次打开直接对话」即有会话可存（配合 sendMessage 兜底，绝不丢消息）。
+      // resetChat:false 避免清空 agentStore 消息/上下文；创建成功后 currentSessionId 非空，不会重复建。
+      if (data.length === 0 && !get().currentSessionId) {
+        await get().createSession('新会话', { resetChat: false })
+      }
     } catch (e) {
       set({
         loading: false,
@@ -111,14 +121,18 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
     }
   },
 
-  createSession: async (title = '新会话') => {
+  createSession: async (title = '新会话', opts?: { resetChat?: boolean }) => {
     const api = getAgentAPI()
     if (!api) {
       set({ error: 'Agent 服务未就绪（window.agent 不可用）' })
       return null
     }
-    // P0-2：创建新会话前取消进行中的流式对话，防止 delta 写入旧会话位置
-    useAgentStore.getState().cancel()
+    const resetChat = opts?.resetChat ?? true
+    // P0-2：创建新会话前取消进行中的流式对话，防止 delta 写入旧会话位置。
+    // resetChat:false（发送时自动建）跳过：不应清空刚输入的消息、也不破坏 sendMessage 的 loading 状态。
+    if (resetChat) {
+      useAgentStore.getState().cancel()
+    }
     set({ error: null })
     try {
       const created = await extractData(api.session.create(title))
@@ -127,9 +141,12 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
         sessions: [created, ...s.sessions],
         currentSessionId: created.id
       }))
-      // 切换会话时清空 agentStore 的消息与上下文（新会话无历史）
-      useAgentStore.getState().clearMessages()
-      useAgentStore.getState().clearContext()
+      // 切换会话时清空 agentStore 的消息与上下文（新会话无历史）。
+      // resetChat:false 时跳过：发送链路已把用户消息加入 agentStore.messages，不能清掉。
+      if (resetChat) {
+        useAgentStore.getState().clearMessages()
+        useAgentStore.getState().clearContext()
+      }
       return created
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
