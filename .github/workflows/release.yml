@@ -56,9 +56,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update release notes
+      - name: Update release notes (current version only)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release edit ${{ github.ref_name }} --notes-file RELEASE_NOTES.md
+        # shell: bash 显式指定：Windows runner 默认 pwsh 无 awk，git bash 自带
+        shell: bash
+        # 只把「当前 tag 对应的版本章节」写入 Release 描述，避免混入其他版本内容
+        # （RELEASE_NOTES.md 仓库内保留全部历史章节，此处按 '# 辩盒 vX.Y.Z' 标题切分）
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            /^# 辩盒 v[0-9]+\.[0-9]+\.[0-9]+/ {
+              if (match($0, /v[0-9]+\.[0-9]+\.[0-9]+/)) cur = substr($0, RSTART+1, RLENGTH-1)
+              if (cur == ver) { print; sec=1; next }
+              if (sec) exit
+              next
+            }
+            sec { print }
+          ' RELEASE_NOTES.md > release-notes-current.md
+          [ -s release-notes-current.md ] || { echo "::error::notes extraction failed for v${VERSION}"; exit 1; }
+          gh release edit "${GITHUB_REF_NAME}" --notes-file release-notes-current.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
