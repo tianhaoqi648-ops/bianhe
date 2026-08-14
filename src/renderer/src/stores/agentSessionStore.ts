@@ -291,23 +291,76 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       }
 
       // 转换消息格式：AgentMessageRecord -> AgentUIMessage
-      // AgentMessageRecord.role 含 system / tool_result 等类型，
-      // 而 AgentUIMessage.role 仅含 user / assistant / tool_call 三种。
-      // 历史消息中 system 消息属于内部提示词，不展示给用户；tool_result 一般挂在
-      // assistant 消息的 toolCalls 数组上而非独立条目，故此处仅保留 user/assistant/tool_call。
-      type UIRole = 'user' | 'assistant' | 'tool_call'
-      const isUIRole = (r: string): r is UIRole =>
-        r === 'user' || r === 'assistant' || r === 'tool_call'
+      //
+      // AgentMessageRecord.role 含 system / tool_result 等类型，而 AgentUIMessage.role
+      // 仅含 user / assistant / tool_call 三种：
+      // - system 属于内部提示词，不展示给用户
+      // - tool_result 不生成独立气泡，其结果合并进对应 assistant 消息的 toolCalls 卡片
+      // - assistant 消息的 toolCalls（OpenAI 格式，落库时保存）恢复为 AgentUIToolCall[]
+      //   （工具卡片），并匹配后续 tool_result 记录补上结果 / 失败状态——修复历史
+      //   会话「工具调用卡片丢失 → 多轮回复看起来被分段」的问题
       const uiMessages: AgentUIMessage[] = []
+
+      // 1) 先收集 tool_result 结果：toolCallId -> 结果/错误。
+      //    注意：落库层 messageToRecord 对 tool 消息硬编码 success=true，
+      //    成败需从内容判断——{ error: string } 结构视为失败。
+      const toolResultMap = new Map<
+        string,
+        { result?: unknown; error?: string }
+      >()
       for (const m of messages) {
-        if (!isUIRole(m.role)) continue
-        uiMessages.push({
+        if (m.role !== 'tool_result') continue
+        const tr = m.toolResults?.[0]
+        if (!tr) continue
+        const raw = tr.result != null ? String(tr.result) : m.content
+        let parsed: unknown = raw
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          // 非 JSON（纯文本结果）原样保留
+        }
+        const asRecord =
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null
+        if (asRecord && typeof asRecord.error === 'string') {
+          toolResultMap.set(tr.toolCallId, { error: asRecord.error })
+        } else {
+          toolResultMap.set(tr.toolCallId, { result: parsed })
+        }
+      }
+
+      // 2) 转换为 UI 消息（仅保留 user / assistant；tool_result 已合并进卡片）
+      for (const m of messages) {
+        if (m.role !== 'user' && m.role !== 'assistant') continue
+        const uiMsg: AgentUIMessage = {
           id: m.id,
           role: m.role,
           content: m.content,
           createdAt: new Date(m.createdAt).getTime(),
           isStreaming: false
-        })
+        }
+        // 历史 assistant 消息恢复工具调用卡片
+        if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+          uiMsg.toolCalls = m.toolCalls.map((tc) => {
+            let args: Record<string, unknown> = {}
+            try {
+              args = JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>
+            } catch {
+              // arguments 解析失败保留空对象
+            }
+            const outcome = toolResultMap.get(tc.id)
+            return {
+              toolCallId: tc.id,
+              toolName: tc.function.name,
+              args,
+              status: outcome?.error ? ('error' as const) : ('success' as const),
+              result: outcome?.result,
+              error: outcome?.error
+            }
+          })
+        }
+        uiMessages.push(uiMsg)
       }
       agentStore.setMessages(uiMessages)
     } catch (e) {
