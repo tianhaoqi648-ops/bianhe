@@ -117,6 +117,8 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       set({ error: 'Agent 服务未就绪（window.agent 不可用）' })
       return null
     }
+    // P0-2：创建新会话前取消进行中的流式对话，防止 delta 写入旧会话位置
+    useAgentStore.getState().cancel()
     set({ error: null })
     try {
       const created = await extractData(api.session.create(title))
@@ -137,6 +139,8 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
 
   switchSession: async (id) => {
     if (get().currentSessionId === id) return
+    // P0-2：切换会话前取消进行中的流式对话，防止 delta 写入错误会话
+    useAgentStore.getState().cancel()
     set({ currentSessionId: id })
     // 联动 agentStore：加载会话消息与上下文
     await get().loadSessionMessages(id)
@@ -174,6 +178,8 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       set({ error: 'Agent 服务未就绪（window.agent 不可用）' })
       return false
     }
+    // P0-2：删除会话前取消进行中的流式对话
+    useAgentStore.getState().cancel()
     set({ error: null })
     try {
       const ok = await extractData(api.session.delete(id))
@@ -207,6 +213,8 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       set({ error: 'Agent 服务未就绪（window.agent 不可用）' })
       return false
     }
+    // P0-2：清空全部会话前取消进行中的流式对话
+    useAgentStore.getState().cancel()
     set({ error: null })
     try {
       const ok = await extractData(api.session.clearAll())

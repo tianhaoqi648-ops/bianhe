@@ -77,8 +77,11 @@ export function AgentChatPanel({
 
   const messages = useAgentStore((s) => s.messages)
   const error = useAgentStore((s) => s.error)
+  const isLoading = useAgentStore((s) => s.isLoading)
+  const lastUserText = useAgentStore((s) => s.lastUserText)
   const clearMessages = useAgentStore((s) => s.clearMessages)
   const clearError = useAgentStore((s) => s.clearError)
+  const retryLast = useAgentStore((s) => s.retryLast)
   const pendingNavigation = useAgentStore((s) => s.pendingNavigation)
   const clearPendingNavigation = useAgentStore((s) => s.clearPendingNavigation)
 
@@ -98,13 +101,17 @@ export function AgentChatPanel({
     scope: 'global'
   })
 
-  // SubTask 19.4: 消息列表长度变化时自动滚动到底部
+  // SubTask 19.4: 消息流自动滚动到底部。
+  // P0-4 修复：原依赖 messages.length，但流式 delta 追加只改 content 不改变
+  // 数组长度，导致流式期间不滚动。改为监听最后一条消息 content 长度 + isLoading。
+  const lastMsg = messages[messages.length - 1]
+  const lastContentLength = lastMsg?.content?.length ?? 0
   useEffect(() => {
     const el = scrollRef.current
     if (el) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages.length])
+  }, [messages.length, lastContentLength, isLoading])
 
   // Task 24: 监听 pendingNavigation，工具调用触发路由跳转
   useEffect(() => {
@@ -296,7 +303,7 @@ export function AgentChatPanel({
             </Tooltip>
           </div>
 
-          {/* 错误提示：agentStore.error 非空时显示 */}
+          {/* 错误提示：agentStore.error 非空时显示（P0-3：可重试最近一次发送） */}
           {error && (
             <div style={{ padding: '8px 12px 0', flexShrink: 0 }}>
               <Alert
@@ -305,6 +312,13 @@ export function AgentChatPanel({
                 closable
                 onClose={clearError}
                 showIcon
+                action={
+                  lastUserText ? (
+                    <Button size="small" type="primary" onClick={() => retryLast()}>
+                      重试
+                    </Button>
+                  ) : undefined
+                }
               />
             </div>
           )}
