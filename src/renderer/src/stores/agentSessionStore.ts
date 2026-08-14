@@ -22,7 +22,7 @@
 import { create } from 'zustand'
 import type { AgentSession, AgentAPI } from '../../../shared/agent-types'
 import type { ApiResponse } from '../../../shared/types'
-import { useAgentStore, type AgentUIMessage } from './agentStore'
+import { useAgentStore, type AgentUIMessage, type AgentUIToolCall } from './agentStore'
 
 /** Agent 会话 Store 状态 */
 export interface AgentSessionState {
@@ -290,16 +290,14 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
         agentStore.clearContext()
       }
 
-      // 转换消息格式：AgentMessageRecord -> AgentUIMessage
-      //
-      // AgentMessageRecord.role 含 system / tool_result 等类型，而 AgentUIMessage.role
-      // 仅含 user / assistant / tool_call 三种：
-      // - system 属于内部提示词，不展示给用户
-      // - tool_result 不生成独立气泡，其结果合并进对应 assistant 消息的 toolCalls 卡片
-      // - assistant 消息的 toolCalls（OpenAI 格式，落库时保存）恢复为 AgentUIToolCall[]
-      //   （工具卡片），并匹配后续 tool_result 记录补上结果 / 失败状态——修复历史
-      //   会话「工具调用卡片丢失 → 多轮回复看起来被分段」的问题
-      const uiMessages: AgentUIMessage[] = []
+      // 转换消息格式：AgentMessageRecord -> AgentUIMessage，按「回合」合并：
+      //    - user 消息独立气泡，并结算上一个回合
+      //    - assistant 消息累积（正文拼接 + toolCalls 合并），在下一条 user 或
+      //      遍历结束时合成一条助手气泡——与实时对话显示一致（一个提问回合内的
+      //      多轮工具迭代在实时流式时本就是同一条消息持续追加）
+      //    - tool_result 不生成气泡，其结果合并进对应 assistant 消息的工具卡片
+      //      （OpenAI 格式 toolCalls → AgentUIToolCall[]，匹配 tool_result 补结果/失败状态）
+      //    - system 为内部提示词，不展示
 
       // 1) 先收集 tool_result 结果：toolCallId -> 结果/错误。
       //    注意：落库层 messageToRecord 对 tool 消息硬编码 success=true，
@@ -330,19 +328,63 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
         }
       }
 
-      // 2) 转换为 UI 消息（仅保留 user / assistant；tool_result 已合并进卡片）
-      for (const m of messages) {
-        if (m.role !== 'user' && m.role !== 'assistant') continue
-        const uiMsg: AgentUIMessage = {
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          createdAt: new Date(m.createdAt).getTime(),
-          isStreaming: false
+      // 2) 按「回合」累积转换为 UI 消息
+      const uiMessages: AgentUIMessage[] = []
+      // 回合累积器：当前回合（上一条 user 之后）的所有 assistant 片段
+      let acc: {
+        id: string
+        content: string
+        toolCalls: AgentUIToolCall[]
+        createdAt: number
+      } | null = null
+
+      const flushAssistantAccumulator = (): void => {
+        if (!acc) return
+        const hasContent = acc.content.length > 0
+        const hasCards = acc.toolCalls.length > 0
+        // 防御：既无正文也无工具卡片 → 不生成空气泡
+        if (hasContent || hasCards) {
+          uiMessages.push({
+            id: acc.id,
+            role: 'assistant',
+            content: acc.content,
+            ...(hasCards ? { toolCalls: acc.toolCalls } : {}),
+            createdAt: acc.createdAt,
+            isStreaming: false
+          })
         }
-        // 历史 assistant 消息恢复工具调用卡片
-        if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-          uiMsg.toolCalls = m.toolCalls.map((tc) => {
+        acc = null
+      }
+
+      for (const m of messages) {
+        if (m.role === 'user') {
+          // 结算上一个回合的助手累积
+          flushAssistantAccumulator()
+          uiMessages.push({
+            id: m.id,
+            role: 'user',
+            content: m.content,
+            createdAt: new Date(m.createdAt).getTime(),
+            isStreaming: false
+          })
+          continue
+        }
+        if (m.role !== 'assistant') continue
+
+        // 累积助手片段到当前回合
+        if (!acc) {
+          acc = {
+            id: m.id,
+            content: '',
+            toolCalls: [],
+            createdAt: new Date(m.createdAt).getTime()
+          }
+        }
+        // 正文直接拼接（与实时 delta 持续追加的行为一致）
+        acc.content += m.content
+        // 工具卡片按执行顺序合并
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          for (const tc of m.toolCalls) {
             let args: Record<string, unknown> = {}
             try {
               args = JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>
@@ -350,18 +392,19 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
               // arguments 解析失败保留空对象
             }
             const outcome = toolResultMap.get(tc.id)
-            return {
+            acc.toolCalls.push({
               toolCallId: tc.id,
               toolName: tc.function.name,
               args,
               status: outcome?.error ? ('error' as const) : ('success' as const),
               result: outcome?.result,
               error: outcome?.error
-            }
-          })
+            })
+          }
         }
-        uiMessages.push(uiMsg)
       }
+      // 遍历结束，结算最后一个回合
+      flushAssistantAccumulator()
       agentStore.setMessages(uiMessages)
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
