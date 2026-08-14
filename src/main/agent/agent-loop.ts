@@ -30,16 +30,23 @@ import type {
   LLMConfig,
   AgentContext,
   AssistantMessage,
+  Message,
   ToolConfirmRule,
-  ToolConfirmResult
+  ToolConfirmResult,
+  AgentMessageRecord
 } from '@shared/agent-types'
 import { chatStream, LLMError } from './llm-client'
 import { list, execute, getRiskLevel, get } from './tool-registry'
 import {
   addMessage,
   buildLLMMessages,
-  setContext
+  setContext,
+  clearContext,
+  setMessages,
+  getContext
 } from './context-manager'
+import { agentMessageRepo } from '../db/repository/agent-message.repo'
+import { agentSessionRepo } from '../db/repository/agent-session.repo'
 import { getDb } from '../db/index'
 
 // ============================================================
@@ -55,6 +62,12 @@ export interface RunAgentLoopParams {
   userMessage: string
   /** 系统提示词（由调用方传入，解耦 prompt-templates） */
   systemPrompt: string
+  /**
+   * 目标会话 id（多会话上下文隔离 P0-1 引入）。
+   * - 传值：入口按该会话恢复历史与业务上下文，消息实时落库，结束持久化上下文
+   * - 不传：内存历史清空（不串话）、不持久化（向后兼容测试与无会话场景）
+   */
+  sessionId?: string
   /** 当前业务上下文（可选） */
   context?: AgentContext
   /** LLM 配置 */
@@ -77,6 +90,143 @@ const CONFIRM_TIMEOUT_MS = 300_000
 
 /** settings 表中存储工具确认规则的 key（与 agent-config.ipc.ts 保持一致） */
 const CONFIRM_RULES_KEY = 'agent.confirm_rules'
+
+// ============================================================
+// 会话持久化辅助（多会话上下文隔离 P0-1 引入）
+//
+// 消息双向转换：
+//   - 内存 Message（OpenAI 格式）↔ DB AgentMessageRecord（agent_messages 表）
+//   - assistant 的 tool_calls 落库到 tool_calls_json；
+//   - role='tool'（工具结果）落库为 role='tool_result' + toolResults[0]，
+//     恢复时从 toolResults[0] 取回 tool_call_id 与结果内容。
+// ============================================================
+
+/** Message（OpenAI 格式）-> AgentMessageRecord（DB 格式，不含自增字段） */
+function messageToRecord(
+  msg: Message
+): Omit<AgentMessageRecord, 'id' | 'createdAt' | 'seq' | 'sessionId'> {
+  switch (msg.role) {
+    case 'user':
+      return { role: 'user', content: msg.content }
+    case 'assistant':
+      return {
+        role: 'assistant',
+        content: msg.content ?? '',
+        toolCalls: msg.tool_calls
+      }
+    case 'tool':
+      return {
+        role: 'tool_result',
+        content: msg.content,
+        toolResults: [
+          {
+            toolCallId: msg.tool_call_id,
+            success: true,
+            result: msg.content
+          }
+        ]
+      }
+    case 'system':
+      return { role: 'system', content: msg.content }
+  }
+}
+
+/** AgentMessageRecord（DB 格式）-> Message（OpenAI 格式） */
+function recordToMessage(rec: AgentMessageRecord): Message {
+  switch (rec.role) {
+    case 'user':
+      return { role: 'user', content: rec.content }
+    case 'assistant':
+      return {
+        role: 'assistant',
+        content: rec.content,
+        ...(rec.toolCalls && rec.toolCalls.length > 0
+          ? { tool_calls: rec.toolCalls }
+          : {})
+      }
+    case 'tool_result': {
+      const tr = rec.toolResults?.[0]
+      return {
+        role: 'tool',
+        tool_call_id: tr?.toolCallId ?? '',
+        content: tr?.result != null ? String(tr.result) : rec.content
+      }
+    }
+    case 'system':
+      return { role: 'system', content: rec.content }
+    case 'tool_call':
+      // tool_call 不会作为独立消息出现（挂在 assistant.tool_calls 上），兜底降级为 system
+      return { role: 'system', content: rec.content }
+  }
+}
+
+/** 生成会话列表最近消息预览（截断到 100 字） */
+function toPreview(text: string): string {
+  return text.length > 100 ? text.slice(0, 100) + '...' : text
+}
+
+/**
+ * 向会话历史追加消息，并（若有 sessionId）同步落库 + 刷新最近消息预览。
+ * 落库失败仅记录日志，不中断对话。
+ */
+function appendMessage(sessionId: string | undefined, msg: Message): void {
+  addMessage(msg)
+  if (!sessionId) return
+  try {
+    agentMessageRepo.add(sessionId, messageToRecord(msg))
+  } catch (e) {
+    console.error('[agent-loop] 持久化消息失败：', e)
+  }
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    try {
+      agentSessionRepo.updateLastMessage(sessionId, toPreview(msg.content ?? ''))
+    } catch (e) {
+      console.error('[agent-loop] 更新最近消息预览失败：', e)
+    }
+  }
+}
+
+/**
+ * 按 sessionId 恢复会话历史与业务上下文。
+ * - 历史：agent_messages 全量按 seq 恢复为内存 Message[]
+ * - 上下文：agent_sessions.contextJson 恢复为 AgentContext
+ * 无 sessionId 时清空内存历史（防止无会话场景串话）。
+ */
+function restoreSession(sessionId: string | undefined): void {
+  if (!sessionId) {
+    setMessages([])
+    return
+  }
+  try {
+    const history = agentMessageRepo.listBySession(sessionId).map(recordToMessage)
+    setMessages(history)
+  } catch (e) {
+    console.error('[agent-loop] 恢复会话历史失败：', e)
+    setMessages([])
+  }
+  try {
+    const session = agentSessionRepo.get(sessionId)
+    if (session?.context && Object.keys(session.context).length > 0) {
+      clearContext()
+      setContext(session.context)
+    } else {
+      clearContext()
+    }
+  } catch (e) {
+    console.error('[agent-loop] 恢复会话上下文失败：', e)
+    clearContext()
+  }
+}
+
+/** 将当前业务上下文持久化到会话（若有 sessionId）。失败仅记录日志。 */
+function persistContext(sessionId: string | undefined): void {
+  if (!sessionId) return
+  try {
+    agentSessionRepo.updateContext(sessionId, getContext())
+  } catch (e) {
+    console.error('[agent-loop] 持久化会话上下文失败：', e)
+  }
+}
 
 // ============================================================
 // Task 32：人工确认机制
@@ -237,19 +387,21 @@ function shouldConfirm(
  * 运行 Agent 对话循环。
  *
  * 流程：
- *   1. 更新业务上下文（如有）
- *   2. 将用户消息加入会话历史
+ *   0. 按 sessionId 恢复会话历史与业务上下文（多会话隔离，P0-1 引入）
+ *   1. 更新业务上下文（params.context 为最新业务状态，覆盖/合并）
+ *   2. 将用户消息加入会话历史（内存 + 按 sessionId 落库）
  *   3. 加载用户工具确认规则（Task 32.1）
  *   4. 循环：
  *      - 调用 chatStream 获取 assistant 消息（流式推送 delta）
  *      - 若无 tool_calls，推送 done 并结束
- *      - 顺序执行所有 tool_calls，结果反馈给会话历史
+ *      - 顺序执行所有 tool_calls，结果反馈给会话历史（含落库）
  *        · 工具执行前根据 riskLevel 与 confirm_rules 判断是否需人工确认（Task 32）
  *        · 需确认时推送 tool_call_confirm 事件，暂停等待渲染进程回传结果
  *        · 用户取消或超时 → 将「用户取消了该操作」反馈给 LLM，跳过执行
  *        · 用户确认 → 使用 modifiedArgs（若有）执行
  *      - 继续下一轮，让 LLM 基于工具结果响应
  *   5. 达到 MAX_ITERATIONS 时推送提示并结束
+ *   finally：按 sessionId 持久化当前业务上下文
  *
  * 错误处理：
  *   - LLMError：透传 code 与 message 到 onEvent('error')，直接结束
@@ -261,31 +413,37 @@ function shouldConfirm(
  * @param params 入参
  */
 export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
-  const { userMessage, systemPrompt, context, config, onEvent, signal } = params
+  const { userMessage, systemPrompt, context, config, onEvent, signal, sessionId } = params
 
-  // 1. 更新业务上下文（如有）
-  if (context) {
-    setContext(context)
-  }
+  try {
+    // 0. 恢复会话历史与业务上下文（无 sessionId 时清空内存历史，防止串话）
+    restoreSession(sessionId)
 
-  // 2. 将用户消息加入会话历史
-  addMessage({ role: 'user', content: userMessage })
-
-  // 3. 获取工具元数据（ToolMeta[]，含 riskLevel）供 chatStream 使用。
-  //    list() 返回不含 execute 的元数据数组，直接作为 chatStream 的 tools 入参。
-  const tools = list()
-
-  // 3.1 加载用户工具确认规则（Task 32.1：每轮对话加载一次，工具调用时按工具名查找）。
-  //     读取失败或无配置时返回 null，由 shouldConfirm 走默认规则（high/medium 需确认）。
-  const confirmRules = loadConfirmRules()
-
-  // 4. 主循环
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    // 循环开始检查 abort 信号
-    if (signal?.aborted) {
-      onEvent({ type: 'done' })
-      return
+    // 1. 更新业务上下文（如有）。
+    //    注意：restoreSession 已恢复会话持久化的上下文，此处 params.context
+    //    是本次请求的最新业务状态（用户可能切换页面/选中新辩题），覆盖/合并之。
+    if (context) {
+      setContext(context)
     }
+
+    // 2. 将用户消息加入会话历史（内存 + 按 sessionId 落库 + 刷新最近消息预览）
+    appendMessage(sessionId, { role: 'user', content: userMessage })
+
+    // 3. 获取工具元数据（ToolMeta[]，含 riskLevel）供 chatStream 使用。
+    //    list() 返回不含 execute 的元数据数组，直接作为 chatStream 的 tools 入参。
+    const tools = list()
+
+    // 3.1 加载用户工具确认规则（Task 32.1：每轮对话加载一次，工具调用时按工具名查找）。
+    //     读取失败或无配置时返回 null，由 shouldConfirm 走默认规则（high/medium 需确认）。
+    const confirmRules = loadConfirmRules()
+
+    // 4. 主循环
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      // 循环开始检查 abort 信号
+      if (signal?.aborted) {
+        onEvent({ type: 'done' })
+        return
+      }
 
     // 构建完整消息列表（含 system prompt）
     const messages = buildLLMMessages(systemPrompt)
@@ -316,8 +474,8 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
       return
     }
 
-    // 将 assistant 消息加入会话历史
-    addMessage(assistantMessage)
+    // 将 assistant 消息加入会话历史（内存 + 按 sessionId 落库，tool_calls 一并持久化）
+    appendMessage(sessionId, assistantMessage)
 
     // 检查是否有 tool_calls：无则对话结束
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
@@ -375,7 +533,7 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
             success: false,
             error: '用户取消了该操作'
           })
-          addMessage({
+          appendMessage(sessionId, {
             role: 'tool',
             tool_call_id: toolCall.id,
             content: '用户取消了该操作'
@@ -400,8 +558,8 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
           success: true,
           result
         })
-        // 将工具成功结果加入会话历史
-        addMessage({
+        // 将工具成功结果加入会话历史（内存 + 按 sessionId 落库）
+        appendMessage(sessionId, {
           role: 'tool',
           tool_call_id: toolCall.id,
           content: JSON.stringify(result)
@@ -415,8 +573,8 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
           success: false,
           error: errorMsg
         })
-        // 工具失败也将错误信息加入会话历史，让 LLM 决定如何处理
-        addMessage({
+        // 工具失败也将错误信息加入会话历史（内存 + 按 sessionId 落库），让 LLM 决定如何处理
+        appendMessage(sessionId, {
           role: 'tool',
           tool_call_id: toolCall.id,
           content: JSON.stringify({ error: errorMsg })
@@ -425,9 +583,13 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
     }
 
     // 继续下一轮循环，让 LLM 基于工具结果继续响应
-  }
+    }
 
-  // 达到最大循环次数，推送提示并结束
-  onEvent({ type: 'delta', text: '（已达到最大工具调用次数，停止迭代）' })
-  onEvent({ type: 'done' })
+    // 达到最大循环次数，推送提示并结束
+    onEvent({ type: 'delta', text: '（已达到最大工具调用次数，停止迭代）' })
+    onEvent({ type: 'done' })
+  } finally {
+    // 无论正常结束 / 错误 / 中止，按 sessionId 持久化当前业务上下文
+    persistContext(sessionId)
+  }
 }

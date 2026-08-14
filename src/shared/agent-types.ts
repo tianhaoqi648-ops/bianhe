@@ -106,6 +106,12 @@ export type Message =
 export interface ChatRequest {
   /** 用户本次输入的文本 */
   message: string
+  /**
+   * 目标会话 id（多会话上下文隔离 P0-1 引入）。
+   * - 传值：agent-loop 按该会话恢复历史与业务上下文，消息实时落库，结束持久化上下文
+   * - 不传/空：不持久化、每次对话内存历史清空（向后兼容测试与无会话场景）
+   */
+  sessionId?: string
   /** 当前业务上下文（如选中的辩题/赛事） */
   context?: AgentContext
   /** 是否流式响应（默认 true） */

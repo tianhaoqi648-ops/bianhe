@@ -36,6 +36,14 @@ const {
   mockAddMessage,
   mockBuildLLMMessages,
   mockSetContext,
+  mockSetMessages,
+  mockClearContext,
+  mockGetContext,
+  mockListBySession,
+  mockMessageAdd,
+  mockGetSession,
+  mockUpdateLastMessage,
+  mockUpdateContext,
   mockDbGetReturn
 } = vi.hoisted(() => {
   // 捕获 'agent:confirm-result' IPC handler 引用，测试中直接调用以模拟用户确认
@@ -51,6 +59,15 @@ const {
   const mockAddMessage = vi.fn()
   const mockBuildLLMMessages = vi.fn()
   const mockSetContext = vi.fn()
+  // P0-1 会话隔离相关 mock
+  const mockSetMessages = vi.fn()
+  const mockClearContext = vi.fn()
+  const mockGetContext = vi.fn()
+  const mockListBySession = vi.fn()
+  const mockMessageAdd = vi.fn()
+  const mockGetSession = vi.fn()
+  const mockUpdateLastMessage = vi.fn()
+  const mockUpdateContext = vi.fn()
 
   // loadConfirmRules 读取 settings 表的返回值（undefined=无配置，{value:JSON字符串}=有配置）
   const mockDbGetReturn: { current: unknown } = { current: undefined }
@@ -65,6 +82,14 @@ const {
     mockAddMessage,
     mockBuildLLMMessages,
     mockSetContext,
+    mockSetMessages,
+    mockClearContext,
+    mockGetContext,
+    mockListBySession,
+    mockMessageAdd,
+    mockGetSession,
+    mockUpdateLastMessage,
+    mockUpdateContext,
     mockDbGetReturn
   }
 })
@@ -107,11 +132,31 @@ vi.mock('../tool-registry', () => ({
   get: mockGet
 }))
 
-// Mock context-manager
+// Mock context-manager（P0-1：补充 setMessages / clearContext / getContext）
 vi.mock('../context-manager', () => ({
   addMessage: mockAddMessage,
   buildLLMMessages: mockBuildLLMMessages,
-  setContext: mockSetContext
+  setContext: mockSetContext,
+  setMessages: mockSetMessages,
+  clearContext: mockClearContext,
+  getContext: mockGetContext
+}))
+
+// Mock agent-message.repo（P0-1：agent-loop 现在按 sessionId 恢复历史与落库）
+vi.mock('../../db/repository/agent-message.repo', () => ({
+  agentMessageRepo: {
+    listBySession: mockListBySession,
+    add: mockMessageAdd
+  }
+}))
+
+// Mock agent-session.repo（P0-1：agent-loop 现在恢复/持久化会话上下文）
+vi.mock('../../db/repository/agent-session.repo', () => ({
+  agentSessionRepo: {
+    get: mockGetSession,
+    updateLastMessage: mockUpdateLastMessage,
+    updateContext: mockUpdateContext
+  }
 }))
 
 // Mock db：控制 loadConfirmRules 读取的确认规则
@@ -206,6 +251,21 @@ beforeEach(() => {
   mockBuildLLMMessages.mockReturnValue([])
   mockAddMessage.mockImplementation(() => {})
   mockSetContext.mockImplementation(() => {})
+  // P0-1 会话隔离默认值：无历史、无会话、上下文为空
+  mockSetMessages.mockImplementation(() => {})
+  mockClearContext.mockImplementation(() => {})
+  mockGetContext.mockReturnValue({})
+  mockListBySession.mockReturnValue([])
+  mockMessageAdd.mockImplementation(() => ({
+    id: 'mock-msg',
+    sessionId: 's1',
+    role: 'user',
+    content: '',
+    createdAt: new Date().toISOString()
+  }))
+  mockGetSession.mockReturnValue(null)
+  mockUpdateLastMessage.mockImplementation(() => {})
+  mockUpdateContext.mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -591,5 +651,122 @@ describe('runAgentLoop：用户配置覆盖默认规则', () => {
     await loopPromise
 
     expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+  })
+})
+
+describe('runAgentLoop：多会话上下文隔离（P0-1）', () => {
+  it('传 sessionId → 恢复历史/上下文、消息落库、结束持久化上下文', async () => {
+    mockChatStream.mockResolvedValueOnce(makeAssistantDone('你好，上次我们聊过'))
+
+    // 模拟该会话的持久化历史：1 条历史 user 消息
+    mockListBySession.mockReturnValue([
+      {
+        id: 'm-hist-1',
+        sessionId: 's1',
+        role: 'user',
+        content: '上次的问题',
+        toolCalls: undefined,
+        toolResults: undefined,
+        createdAt: '2026-08-01T00:00:00.000Z'
+      }
+    ])
+    // 模拟该会话的持久化上下文
+    mockGetSession.mockReturnValue({
+      id: 's1',
+      title: '会话A',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+      lastMessageText: '上次的问题',
+      lastMessageAt: '2026-08-01T00:00:00.000Z',
+      context: { currentPage: '/draw' }
+    })
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '继续',
+      systemPrompt: 'test',
+      sessionId: 's1',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // 1. 恢复历史：setMessages 被调用，且收到的是该会话恢复的消息
+    expect(mockSetMessages).toHaveBeenCalledTimes(1)
+    const restored = mockSetMessages.mock.calls[0][0] as unknown[]
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({ role: 'user', content: '上次的问题' })
+
+    // 2. 消息落库：user 与 assistant 都按 sessionId=s1 写入
+    expect(mockMessageAdd).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ role: 'user', content: '继续' })
+    )
+    expect(mockMessageAdd).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ role: 'assistant', content: '你好，上次我们聊过' })
+    )
+
+    // 3. 结束持久化上下文：updateContext 被调用
+    expect(mockUpdateContext).toHaveBeenCalledWith('s1', expect.any(Object))
+
+    // 4. 正常完成
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('传 sessionId → assistant 带 tool_calls 时落库保留 toolCalls', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-p01-1'
+    const args = { keyword: 'AI' }
+
+    // 第 1 轮：返回 tool_call；第 2 轮：无 tool_calls 结束
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('搜索完成'))
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({
+      name: toolName,
+      description: '搜索辩题',
+      riskLevel: 'low'
+    })
+    mockExecute.mockResolvedValue({ topics: [] })
+
+    const { onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索 AI 辩题',
+      systemPrompt: 'test',
+      sessionId: 's1',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // 落库的 assistant 消息应带 toolCalls（tool_calls 持久化，供历史恢复展示）
+    const assistantAddCall = mockMessageAdd.mock.calls.find(
+      (c) => c[1] && (c[1] as { role: string }).role === 'assistant'
+    )
+    expect(assistantAddCall).toBeDefined()
+    expect(assistantAddCall![1]).toMatchObject({
+      role: 'assistant',
+      toolCalls: [{ id: toolCallId, function: { name: toolName } }]
+    })
+  })
+
+  it('无 sessionId → 清空内存历史且不落库（向后兼容）', async () => {
+    mockChatStream.mockResolvedValueOnce(makeAssistantDone('ok'))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: 'hi',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // 清空历史：setMessages 以空数组调用
+    expect(mockSetMessages).toHaveBeenCalledWith([])
+    // 不落库
+    expect(mockMessageAdd).not.toHaveBeenCalled()
+    // 不持久化上下文
+    expect(mockUpdateContext).not.toHaveBeenCalled()
+    expect(events.some((e) => e.type === 'done')).toBe(true)
   })
 })

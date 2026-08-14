@@ -24,7 +24,8 @@ import { agentSessionRepo } from '../db/repository/agent-session.repo'
 import { agentMessageRepo } from '../db/repository/agent-message.repo'
 import type {
   AgentSession,
-  AgentMessageRecord
+  AgentMessageRecord,
+  AgentContext
 } from '../../shared/agent-types'
 import { wrap } from './utils'
 
@@ -59,6 +60,12 @@ interface AddMessagePayload {
 interface UpdateLastMessagePayload {
   sessionId: string
   text: string
+}
+
+/** update-context 入参结构（P0-1 引入） */
+interface UpdateContextPayload {
+  sessionId: string
+  context: AgentContext
 }
 
 /**
@@ -165,6 +172,25 @@ export function registerAgentSessionIpc(): void {
         assertNonEmptyString(payload.sessionId, 'sessionId')
         assertParam(typeof payload.text === 'string', '参数 text 必须为字符串')
         agentSessionRepo.updateLastMessage(payload.sessionId, payload.text)
+        return true
+      })
+  )
+
+  // ---------- agent:session:update-context（P0-1 引入） ----------
+  // 入参 { sessionId: string; context: AgentContext }
+  // 将业务上下文序列化到 agent_sessions.contextJson 并刷新 updatedAt。
+  // agent-loop 每次对话结束（finally）时调用，用于重启后恢复会话上下文。
+  ipcMain.handle(
+    'agent:session:update-context',
+    (_e, payload: UpdateContextPayload) =>
+      wrap(() => {
+        assertParam(payload && typeof payload === 'object', '参数 payload 必须为对象')
+        assertNonEmptyString(payload.sessionId, 'sessionId')
+        assertParam(
+          payload.context && typeof payload.context === 'object',
+          '参数 context 必须为对象'
+        )
+        agentSessionRepo.updateContext(payload.sessionId, payload.context)
         return true
       })
   )
