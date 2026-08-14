@@ -41,7 +41,7 @@ export function registerAgentIpc(): void {
   // ---------- agent:chat ----------
   ipcMain.handle('agent:chat', async (event, request: ChatRequest) => {
     const webContents = event.sender
-    const { message, context, config } = request
+    const { message, context, config, sessionId } = request
 
     // Task 17.1：API Key 未配置（config 缺失或 apiKey 为空）
     // 直接推送 error 事件并返回，不进入 agent-loop
@@ -77,6 +77,7 @@ export function registerAgentIpc(): void {
         userMessage: message,
         systemPrompt: buildSystemPrompt(context),
         context,
+        sessionId,
         config,
         onEvent: (evt) => sendEvent(webContents, evt),
         signal: controller.signal

@@ -236,6 +236,19 @@ export const agentSessionRepo = {
   },
 
   /**
+   * 更新会话绑定的业务上下文（P0-1 引入）。
+   * 将 AgentContext 序列化为 contextJson 持久化，同时刷新 updatedAt。
+   * agent-loop 每次对话结束（finally）时调用，用于重启后恢复会话上下文。
+   */
+  updateContext(id: string, context: AgentContext): void {
+    const db = getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE agent_sessions SET contextJson = ?, updatedAt = ? WHERE id = ?'
+    ).run(JSON.stringify(context), now, id)
+  },
+
+  /**
    * 跨会话搜索（SubTask 28.3）。
    *
    * - 使用 LIKE 模糊匹配 title 与 lastMessageText 字段

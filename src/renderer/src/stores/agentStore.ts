@@ -25,6 +25,7 @@
 // ============================================================
 
 import { create } from 'zustand'
+import type { StoreApi } from 'zustand'
 import type {
   ChatRequest,
   ChatEvent,
@@ -80,6 +81,10 @@ export interface AgentState {
   contextLocked: boolean
   /** 最近一次错误 */
   error: AgentError | null
+  /** 最近一次用户发送的文本（P0-3 错误重试用；未发送过为 null） */
+  lastUserText: string | null
+  /** 重试最近一次用户消息（P0-3：错误后一键重发） */
+  retryLast: () => void
   /** 待跳转的路由路径（由工具调用触发，AgentChatPanel 监听并执行 navigate） */
   pendingNavigation: string | null
   /** 设置待跳转路由（Task 49.2：ToolCallCard「应用此赛制」按钮外部调用） */
@@ -174,6 +179,58 @@ async function getCurrentSessionId(): Promise<string | null> {
 /** 模块级变量：保存当前对话的取消函数（由 window.agent.chat 返回） */
 let currentCancelFn: (() => void) | null = null
 
+// ============================================================
+// 流式增量渲染（P0-5）：delta 文本缓冲 + 30ms 节流合并 setState
+//
+// 原实现每收到一个 delta 就全量 slice+concat 重建消息数组，长回复时
+// 每次 token 触发一次 React 重渲染导致卡顿。改为累积到 deltaBuf，
+// 30ms 节流 flush 一次，显著减少 setState 次数。
+// ============================================================
+
+/** 累积的 delta 文本（节流窗口内暂存） */
+let deltaBuf = ''
+/** 节流定时器（30ms） */
+let deltaTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 将累积的 delta 文本一次性合并进消息列表（创建/追加流式 assistant 消息）。
+ * done / error / cancel 时也会调用以清空残余缓冲。
+ */
+function flushDelta(set: StoreApi<AgentState>['setState']): void {
+  if (deltaTimer) {
+    clearTimeout(deltaTimer)
+    deltaTimer = null
+  }
+  if (!deltaBuf) return
+  const text = deltaBuf
+  deltaBuf = ''
+  set((s) => {
+    const msgs = s.messages
+    const last = msgs[msgs.length - 1]
+    if (isStreamingAssistant(last)) {
+      const next = msgs.slice()
+      next[next.length - 1] = { ...last, content: last.content + text }
+      return { messages: next }
+    }
+    const assistantMsg: AgentUIMessage = {
+      id: genId(),
+      role: 'assistant',
+      content: text,
+      createdAt: Date.now(),
+      isStreaming: true
+    }
+    return { messages: [...msgs, assistantMsg] }
+  })
+}
+
+/** 累积一条 delta 文本并安排 30ms 节流 flush */
+function enqueueDelta(set: StoreApi<AgentState>['setState'], text: string): void {
+  deltaBuf += text
+  if (!deltaTimer) {
+    deltaTimer = setTimeout(() => flushDelta(set), 30)
+  }
+}
+
 export const useAgentStore = create<AgentState>((set, get) => ({
   messages: [],
   isLoading: false,
@@ -181,6 +238,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   context: { currentTopic: null, currentEvent: null, currentPage: undefined },
   contextLocked: false,
   error: null,
+  lastUserText: null,
   pendingNavigation: null,
   pendingConfirm: null,
   pendingSchedulePreview: null,
@@ -188,6 +246,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   sendMessage(text) {
     const trimmed = text?.trim?.() ?? ''
     if (!trimmed) return
+
+    // P0-5：发送前清空可能残留的 delta 缓冲（防上次对话未 flush 的内容混入）
+    flushDelta(set)
 
     // 修复：无论 isLoading 状态，先调用上一次的取消函数清理 IPC handler。
     // 上一次对话 done/error 事件只置空了 currentCancelFn 引用，但 preload 层
@@ -226,7 +287,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set((s) => ({
       messages: [...s.messages, userMsg],
       isLoading: true,
-      error: null
+      error: null,
+      lastUserText: trimmed
     }))
 
     const api = getAgentAPI()
@@ -238,53 +300,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       return
     }
 
-    // Task 41.3：在发送前持久化用户消息到 agent_messages 表
-    // 异步执行，不阻塞流式响应；失败时仅 console.error，不打断 UI
-    void getCurrentSessionId()
-      .then((sessionId) => {
-        if (!sessionId) return
-        return api.session
-          .addMessage(sessionId, {
-            role: 'user',
-            content: trimmed
-          })
-          .catch((e) => {
-            console.error('[agentStore] 持久化用户消息失败：', e)
-          })
-      })
-      .catch(() => {
-        // 忽略 dynamic import 失败
-      })
-
     // 每次发送时读取最新 LLM 配置（用户可能刚在设置页改过）
+    // 注意：消息持久化（P0-1 起）已移交主进程 agent-loop 统一按 sessionId 落库，
+    // 渲染层不再自行调用 api.session.addMessage / updateLastMessage（避免双写）。
     const config = useSettingsStore.getState().aiConfig
-    const request: ChatRequest = {
-      message: trimmed,
-      context: get().context,
-      config
-    }
+    const currentContext = get().context
 
     const onEvent = (event: ChatEvent): void => {
       switch (event.type) {
         case 'delta': {
-          // 若最后一条是流式 assistant，则追加文本；否则新建一条
-          set((s) => {
-            const msgs = s.messages
-            const last = msgs[msgs.length - 1]
-            if (isStreamingAssistant(last)) {
-              const next = msgs.slice()
-              next[next.length - 1] = { ...last, content: last.content + event.text }
-              return { messages: next }
-            }
-            const assistantMsg: AgentUIMessage = {
-              id: genId(),
-              role: 'assistant',
-              content: event.text,
-              createdAt: Date.now(),
-              isStreaming: true
-            }
-            return { messages: [...msgs, assistantMsg] }
-          })
+          // P0-5：累积到缓冲，30ms 节流合并，避免每 token 全量重建消息数组
+          enqueueDelta(set, event.text)
           break
         }
         case 'tool_call_start': {
@@ -416,8 +442,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           break
         }
         case 'done': {
+          // P0-5：先把残余 delta 缓冲写入消息，再置为完成
+          flushDelta(set)
           // 将最后一条流式 assistant 置为完成，并解除 loading
-          const lastMsg = get().messages[get().messages.length - 1]
           set((s) => {
             const msgs = s.messages
             const last = msgs[msgs.length - 1]
@@ -437,41 +464,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
             }
             currentCancelFn = null
           }
-
-          // Task 41.3：在收到 done 事件后，持久化 assistant 的最后一条消息，
-          // 并更新 agent_sessions.lastMessageText。
-          // 异步执行，不阻塞 UI；失败时仅 console.error
-          if (lastMsg && lastMsg.role === 'assistant') {
-            const sessionIdPromise = getCurrentSessionId()
-            void sessionIdPromise
-              .then((sessionId) => {
-                if (!sessionId) return
-                const contentToSave = lastMsg.content || ''
-                // 1. 持久化 assistant 消息到 agent_messages 表
-                return api.session
-                  .addMessage(sessionId, {
-                    role: 'assistant',
-                    content: contentToSave
-                  })
-                  .then(() => {
-                    // 2. 更新会话最近消息预览（截断到 100 字，避免列表过长）
-                    const preview =
-                      contentToSave.length > 100
-                        ? contentToSave.slice(0, 100) + '...'
-                        : contentToSave
-                    return api.session.updateLastMessage(sessionId, preview)
-                  })
-                  .catch((e) => {
-                    console.error('[agentStore] 持久化 assistant 消息失败：', e)
-                  })
-              })
-              .catch(() => {
-                // 忽略 dynamic import 失败
-              })
-          }
+          // 注：assistant 消息持久化已移交主进程（P0-1 起由 agent-loop 统一落库 +
+          // 更新 lastMessageText），渲染层不再自行持久化，避免与主进程双写。
           break
         }
         case 'error': {
+          // P0-5：先把残余 delta 缓冲写入消息，再设置错误状态
+          flushDelta(set)
           // 设置错误状态、解除 loading、并把最后一条流式 assistant 置为完成
           set((s) => {
             const msgs = s.messages
@@ -502,10 +501,30 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       }
     }
 
-    currentCancelFn = api.chat(request, onEvent)
+    // P0-1：发起对话。sessionId 从 agentSessionStore 异步读取（dynamic import 解耦循环依赖），
+    // 主进程 agent-loop 将按 sessionId 恢复历史并落库；dynamic import 失败时无 sessionId 兜底发起。
+    void getCurrentSessionId()
+      .then((sessionId) => {
+        const request: ChatRequest = {
+          message: trimmed,
+          context: currentContext,
+          sessionId: sessionId ?? undefined,
+          config
+        }
+        currentCancelFn = api.chat(request, onEvent)
+      })
+      .catch(() => {
+        // 忽略 dynamic import 失败：无 sessionId 直接发起（不持久化，兼容兜底）
+        currentCancelFn = api.chat(
+          { message: trimmed, context: currentContext, config },
+          onEvent
+        )
+      })
   },
 
   cancel() {
+    // P0-5：先把残余 delta 缓冲写入消息（取消时保留已输出的内容）
+    flushDelta(set)
     // 1. 调用 chat 返回的取消函数（移除 IPC 事件监听 + 发送 agent:cancel 信号）
     if (currentCancelFn) {
       try {
@@ -584,6 +603,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   clearError() {
     set({ error: null })
+  },
+
+  retryLast() {
+    // P0-3：错误后一键重发最近一次用户消息（复用 sendMessage，内部处理 cancel/loading 复位）
+    const last = get().lastUserText
+    if (!last) return
+    get().sendMessage(last)
   },
 
   clearPendingNavigation() {
