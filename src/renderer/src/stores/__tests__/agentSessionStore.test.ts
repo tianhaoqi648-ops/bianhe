@@ -247,3 +247,162 @@ describe('deriveSessionTitle 纯函数', () => {
     expect(deriveSessionTitle('')).toBe('')
   })
 })
+
+describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    mockLoad.mockReset()
+    useAgentSessionStore.setState({
+      sessions: [],
+      currentSessionId: null,
+      searchKeyword: '',
+      searchResults: [],
+      loading: false,
+      error: null
+    })
+    useAgentStore.setState({
+      messages: [],
+      isLoading: false,
+      context: { currentTopic: null, currentEvent: null, currentPage: undefined },
+      contextLocked: false,
+      error: null,
+      lastUserText: null,
+      pendingNavigation: null,
+      pendingConfirm: null,
+      pendingSchedulePreview: null
+    })
+  })
+
+  it('assistant 的 toolCalls 恢复为工具卡片（含结果）', async () => {
+    mockLoad.mockResolvedValue({
+      success: true,
+      data: {
+        session: SESSION_A,
+        messages: [
+          {
+            id: 'm1',
+            sessionId: 'sess-a',
+            role: 'user',
+            content: '抽取 8 道科技类辩题',
+            createdAt: '2026-08-14T00:00:01.000Z'
+          },
+          {
+            id: 'm2',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '让我先查看赛事情况。',
+            toolCalls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'list_events', arguments: '{}' }
+              },
+              {
+                id: 'call_2',
+                type: 'function',
+                function: {
+                  name: 'search_topics',
+                  arguments: '{"keyword":"科技","limit":8}'
+                }
+              }
+            ],
+            createdAt: '2026-08-14T00:00:02.000Z'
+          },
+          {
+            id: 'm3',
+            sessionId: 'sess-a',
+            role: 'tool_result',
+            content: '{"events":[{"id":"e1","name":"八队单淘汰赛"}]}',
+            toolResults: [
+              {
+                toolCallId: 'call_1',
+                success: true,
+                result: '{"events":[{"id":"e1","name":"八队单淘汰赛"}]}'
+              }
+            ],
+            createdAt: '2026-08-14T00:00:03.000Z'
+          },
+          {
+            id: 'm4',
+            sessionId: 'sess-a',
+            role: 'tool_result',
+            content: '{"error":"题库中科技类辩题数量不足"}',
+            toolResults: [
+              { toolCallId: 'call_2', success: true, result: '{"error":"题库中科技类辩题数量不足"}' }
+            ],
+            createdAt: '2026-08-14T00:00:04.000Z'
+          },
+          {
+            id: 'm5',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '抽取失败了，题库中科技类辩题数量不足。',
+            createdAt: '2026-08-14T00:00:05.000Z'
+          }
+        ]
+      }
+    })
+
+    await useAgentSessionStore.getState().loadSessionMessages('sess-a')
+
+    const msgs = useAgentStore.getState().messages
+    // user + 2 条 assistant；tool_result 不生成独立气泡
+    expect(msgs).toHaveLength(3)
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+
+    // 第一条 assistant：工具卡片恢复
+    const first = msgs[1]
+    expect(first.toolCalls).toHaveLength(2)
+    const [c1, c2] = first.toolCalls!
+    expect(c1).toMatchObject({
+      toolCallId: 'call_1',
+      toolName: 'list_events',
+      args: {},
+      status: 'success'
+    })
+    expect(c1.result).toEqual({ events: [{ id: 'e1', name: '八队单淘汰赛' }] })
+    // 失败的工具调用：status error + 错误信息
+    expect(c2).toMatchObject({
+      toolCallId: 'call_2',
+      toolName: 'search_topics',
+      args: { keyword: '科技', limit: 8 },
+      status: 'error',
+      error: '题库中科技类辩题数量不足'
+    })
+
+    // 第二条 assistant（最终回复）：无工具卡片
+    expect(msgs[2].toolCalls).toBeUndefined()
+  })
+
+  it('纯对话（无工具调用）恢复不受影响', async () => {
+    mockLoad.mockResolvedValue({
+      success: true,
+      data: {
+        session: SESSION_A,
+        messages: [
+          {
+            id: 'm1',
+            sessionId: 'sess-a',
+            role: 'user',
+            content: '你好',
+            createdAt: '2026-08-14T00:00:01.000Z'
+          },
+          {
+            id: 'm2',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '你好！有什么可以帮你？',
+            createdAt: '2026-08-14T00:00:02.000Z'
+          }
+        ]
+      }
+    })
+
+    await useAgentSessionStore.getState().loadSessionMessages('sess-a')
+
+    const msgs = useAgentStore.getState().messages
+    expect(msgs).toHaveLength(2)
+    expect(msgs[1].content).toBe('你好！有什么可以帮你？')
+    expect(msgs[1].toolCalls).toBeUndefined()
+  })
+})
