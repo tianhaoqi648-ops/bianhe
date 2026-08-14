@@ -169,11 +169,41 @@ function isStreamingAssistant(msg: AgentUIMessage | undefined): msg is AgentUIMe
 /**
  * 获取当前活动会话 id（从 agentSessionStore 读取最新值）。
  * 使用 dynamic import 避免循环依赖：agentSessionStore 顶部 import 了 useAgentStore。
- * 返回 null 表示无活动会话（不持久化消息）。
+ * 返回 null 表示无活动会话（sendMessage 会自动创建，见下）。
  */
 async function getCurrentSessionId(): Promise<string | null> {
   const { useAgentSessionStore } = await import('./agentSessionStore')
   return useAgentSessionStore.getState().currentSessionId
+}
+
+/**
+ * 从用户消息推导会话标题：折叠空白（含换行）、去首尾空格、截前 12 字。
+ * 纯函数，便于单测。空文本时原样返回（调用方保证入参非空）。
+ */
+export function deriveSessionTitle(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return text
+  return collapsed.slice(0, 12)
+}
+
+/**
+ * 若会话标题仍为默认「新会话」，则用首条用户消息自动命名（前 12 字）。
+ * fire-and-forget：失败仅 console.error，不阻塞发送链路。
+ * 手动创建（标题为新会话）与自动创建的会话一视同仁，体验统一；手动改名过的不会被覆盖。
+ */
+async function ensureSessionTitle(sessionId: string, text: string): Promise<void> {
+  try {
+    const { useAgentSessionStore } = await import('./agentSessionStore')
+    const st = useAgentSessionStore.getState()
+    const session = st.sessions.find((s) => s.id === sessionId)
+    if (!session || session.title !== '新会话') return
+    const title = deriveSessionTitle(text)
+    if (title) {
+      await st.renameSession(sessionId, title)
+    }
+  } catch (e) {
+    console.error('[agentStore] 自动命名会话失败：', e)
+  }
 }
 
 /** 模块级变量：保存当前对话的取消函数（由 window.agent.chat 返回） */
@@ -501,25 +531,42 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       }
     }
 
-    // P0-1：发起对话。sessionId 从 agentSessionStore 异步读取（dynamic import 解耦循环依赖），
-    // 主进程 agent-loop 将按 sessionId 恢复历史并落库；dynamic import 失败时无 sessionId 兜底发起。
-    void getCurrentSessionId()
-      .then((sessionId) => {
-        const request: ChatRequest = {
-          message: trimmed,
-          context: currentContext,
-          sessionId: sessionId ?? undefined,
-          config
+    // 发起对话（P0-1 + 自动建会话修复）：
+    // 1. 从 agentSessionStore 读取当前 sessionId（dynamic import 解耦循环依赖）
+    // 2. 无活动会话时自动创建一个（resetChat:false 保留刚输入的消息与 loading 状态），
+    //    保证「首次打开直接对话」也有会话可持久化，重启后记忆不丢
+    // 3. 主进程 agent-loop 按 sessionId 恢复历史并落库；创建失败时兜底无 sessionId 发送（不落库）
+    const send = async (): Promise<void> => {
+      let sessionId: string | null = null
+      try {
+        sessionId = await getCurrentSessionId()
+        if (!sessionId) {
+          const { useAgentSessionStore } = await import('./agentSessionStore')
+          const created = await useAgentSessionStore
+            .getState()
+            .createSession('新会话', { resetChat: false })
+          sessionId = created?.id ?? null
         }
-        currentCancelFn = api.chat(request, onEvent)
-      })
-      .catch(() => {
-        // 忽略 dynamic import 失败：无 sessionId 直接发起（不持久化，兼容兜底）
-        currentCancelFn = api.chat(
-          { message: trimmed, context: currentContext, config },
-          onEvent
-        )
-      })
+      } catch (e) {
+        // createSession / dynamic import 失败：兜底无 sessionId 发送（不阻塞、不落库）
+        console.error('[agentStore] 自动创建会话失败，将以无会话模式发送：', e)
+        sessionId = null
+      }
+
+      // 标题仍为「新会话」时，用首条消息自动命名（fire-and-forget，失败不阻塞）
+      if (sessionId) {
+        void ensureSessionTitle(sessionId, trimmed)
+      }
+
+      const request: ChatRequest = {
+        message: trimmed,
+        context: currentContext,
+        sessionId: sessionId ?? undefined,
+        config
+      }
+      currentCancelFn = api.chat(request, onEvent)
+    }
+    void send()
   },
 
   cancel() {
