@@ -273,7 +273,7 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
     })
   })
 
-  it('assistant 的 toolCalls 恢复为工具卡片（含结果）', async () => {
+  it('多轮工具迭代合并为一条助手消息（文字拼接 + 卡片按序）', async () => {
     mockLoad.mockResolvedValue({
       success: true,
       data: {
@@ -346,14 +346,19 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
     await useAgentSessionStore.getState().loadSessionMessages('sess-a')
 
     const msgs = useAgentStore.getState().messages
-    // user + 2 条 assistant；tool_result 不生成独立气泡
-    expect(msgs).toHaveLength(3)
-    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant'])
+    // 回合合并：user + 1 条合并的 assistant；tool_result 不生成独立气泡
+    expect(msgs).toHaveLength(2)
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
 
-    // 第一条 assistant：工具卡片恢复
-    const first = msgs[1]
-    expect(first.toolCalls).toHaveLength(2)
-    const [c1, c2] = first.toolCalls!
+    // 合并的 assistant：文字按序拼接
+    const merged = msgs[1]
+    expect(merged.content).toBe(
+      '让我先查看赛事情况。抽取失败了，题库中科技类辩题数量不足。'
+    )
+
+    // 工具卡片按执行顺序恢复
+    expect(merged.toolCalls).toHaveLength(2)
+    const [c1, c2] = merged.toolCalls!
     expect(c1).toMatchObject({
       toolCallId: 'call_1',
       toolName: 'list_events',
@@ -369,9 +374,133 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
       status: 'error',
       error: '题库中科技类辩题数量不足'
     })
+  })
 
-    // 第二条 assistant（最终回复）：无工具卡片
-    expect(msgs[2].toolCalls).toBeUndefined()
+  it('多次提问不跨回合合并（每条 user 之后各自合并）', async () => {
+    mockLoad.mockResolvedValue({
+      success: true,
+      data: {
+        session: SESSION_A,
+        messages: [
+          {
+            id: 'm1',
+            sessionId: 'sess-a',
+            role: 'user',
+            content: '问题一',
+            createdAt: '2026-08-14T00:00:01.000Z'
+          },
+          {
+            id: 'm2',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '回答一：第一步。',
+            toolCalls: [
+              { id: 'call_1', type: 'function', function: { name: 'list_events', arguments: '{}' } }
+            ],
+            createdAt: '2026-08-14T00:00:02.000Z'
+          },
+          {
+            id: 'm3',
+            sessionId: 'sess-a',
+            role: 'tool_result',
+            content: '{"ok":true}',
+            toolResults: [{ toolCallId: 'call_1', success: true, result: '{"ok":true}' }],
+            createdAt: '2026-08-14T00:00:03.000Z'
+          },
+          {
+            id: 'm4',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '回答一：第二步。',
+            createdAt: '2026-08-14T00:00:04.000Z'
+          },
+          {
+            id: 'm5',
+            sessionId: 'sess-a',
+            role: 'user',
+            content: '问题二',
+            createdAt: '2026-08-14T00:00:05.000Z'
+          },
+          {
+            id: 'm6',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '回答二。',
+            createdAt: '2026-08-14T00:00:06.000Z'
+          }
+        ]
+      }
+    })
+
+    await useAgentSessionStore.getState().loadSessionMessages('sess-a')
+
+    const msgs = useAgentStore.getState().messages
+    // user(问题一) + assistant(合并回答一) + user(问题二) + assistant(回答二)
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(msgs[0].content).toBe('问题一')
+    expect(msgs[1].content).toBe('回答一：第一步。回答一：第二步。')
+    expect(msgs[1].toolCalls).toHaveLength(1)
+    expect(msgs[2].content).toBe('问题二')
+    expect(msgs[3].content).toBe('回答二。')
+    expect(msgs[3].toolCalls).toBeUndefined()
+  })
+
+  it('纯工具轮（无正文）正常并入同一条助手消息', async () => {
+    mockLoad.mockResolvedValue({
+      success: true,
+      data: {
+        session: SESSION_A,
+        messages: [
+          {
+            id: 'm1',
+            sessionId: 'sess-a',
+            role: 'user',
+            content: '推荐一个赛制',
+            createdAt: '2026-08-14T00:00:01.000Z'
+          },
+          {
+            id: 'm2',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              { id: 'call_1', type: 'function', function: { name: 'recommend_format', arguments: '{}' } }
+            ],
+            createdAt: '2026-08-14T00:00:02.000Z'
+          },
+          {
+            id: 'm3',
+            sessionId: 'sess-a',
+            role: 'tool_result',
+            content: '{"formatId":"f1","formatName":"华辩赛制"}',
+            toolResults: [
+              { toolCallId: 'call_1', success: true, result: '{"formatId":"f1","formatName":"华辩赛制"}' }
+            ],
+            createdAt: '2026-08-14T00:00:03.000Z'
+          },
+          {
+            id: 'm4',
+            sessionId: 'sess-a',
+            role: 'assistant',
+            content: '推荐华辩赛制。',
+            createdAt: '2026-08-14T00:00:04.000Z'
+          }
+        ]
+      }
+    })
+
+    await useAgentSessionStore.getState().loadSessionMessages('sess-a')
+
+    const msgs = useAgentStore.getState().messages
+    expect(msgs).toHaveLength(2)
+    // 纯工具轮的卡片并入最终助手消息，正文不含空气泡
+    expect(msgs[1].content).toBe('推荐华辩赛制。')
+    expect(msgs[1].toolCalls).toHaveLength(1)
+    expect(msgs[1].toolCalls![0]).toMatchObject({
+      toolCallId: 'call_1',
+      toolName: 'recommend_format',
+      status: 'success'
+    })
   })
 
   it('纯对话（无工具调用）恢复不受影响', async () => {
