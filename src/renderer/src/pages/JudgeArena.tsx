@@ -27,6 +27,7 @@ import {
   Alert,
   Spin,
   Divider,
+  Tag,
   theme
 } from 'antd'
 import {
@@ -234,20 +235,63 @@ export default function JudgeArena(): JSX.Element {
           style={{ marginTop: 6, marginBottom: 14 }}
         />
 
-        {/* 评委选择：5 种评委风格（2026-08-18：不显示真人名，仅显示风格类别） */}
+        {/* 评委选择：5 种评委风格卡片（含具体描述；不显示真人名） */}
         <Typography.Text strong style={{ fontSize: 13 }}>评委风格</Typography.Text>
         <Radio.Group
           value={judgeId}
           onChange={(e) => setJudgeId(e.target.value)}
           style={{ display: 'block', marginTop: 6, marginBottom: 14 }}
         >
-          <Space wrap>
-            {JUDGES.map((j) => (
-              <Radio.Button key={j.id} value={j.id} title={j.tags?.join(' / ')}>
-                {j.category}
-              </Radio.Button>
-            ))}
-          </Space>
+          {JUDGES.map((j) => {
+            const bio = j.bio ?? ''
+            const bioShort = bio.length > 58 ? `${bio.slice(0, 58)}…` : bio
+            return (
+              <div
+                key={j.id}
+                onClick={() => setJudgeId(j.id)}
+                title={`${j.bio}\n${j.styleTraits?.join('\n') ?? ''}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  marginBottom: 6,
+                  borderRadius: 6,
+                  border: `1px solid ${
+                    judgeId === j.id ? token.colorPrimary : token.colorBorderSecondary
+                  }`,
+                  backgroundColor: judgeId === j.id ? token.colorPrimaryBg : token.colorBgContainer,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <input
+                  type="radio"
+                  checked={judgeId === j.id}
+                  onChange={() => setJudgeId(j.id)}
+                  style={{ margin: 0 }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      {j.category}
+                    </Typography.Text>
+                    {j.tags?.slice(0, 3).map((t) => (
+                      <Tag key={t} style={{ marginRight: 0, fontSize: 11 }}>
+                        {t}
+                      </Tag>
+                    ))}
+                  </div>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 12, display: 'block', lineHeight: 1.5, marginTop: 2 }}
+                  >
+                    {bioShort}
+                  </Typography.Text>
+                </div>
+              </div>
+            )
+          })}
         </Radio.Group>
 
         {/* 环节选择 + 自动识别 */}
