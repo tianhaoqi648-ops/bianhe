@@ -233,6 +233,8 @@ export interface FileAPI {
   pickFile: (
     filters?: Array<{ name: string; extensions: string[] }>
   ) => Promise<ApiResponse<string | null>>
+  /** 读取稿子文本文件内容（txt/md/docx，限 2MB；AI 裁判工作台 2026-08-18） */
+  readTextFile: (filePath: string) => Promise<ApiResponse<string>>
 }
 
 export interface SystemAPI {

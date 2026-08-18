@@ -25,11 +25,10 @@ export interface JudgeArenaFormState {
 export type JudgeAction =
   | 'judge_speech'
   | 'simulate_opponent'
-  | 'rewrite_speech'
   | 'judge_debate'
   | 'detect_stage'
 
-/** 当前选中立场的稿子（judge_speech/simulate_opponent/rewrite_speech 用） */
+/** 当前选中立场的稿子（judge_speech/simulate_opponent 用） */
 export function currentSpeech(s: JudgeArenaFormState): string {
   return s.side === 'aff' ? s.affSpeech : s.negSpeech
 }
@@ -38,7 +37,7 @@ export function currentSpeech(s: JudgeArenaFormState): string {
  * 计算当前表单状态下可执行的操作。
  * 规则：
  *   - 未配置 API Key → 全部禁用
- *   - judge_speech / rewrite_speech：topic + stage + 当前立场稿子
+ *   - judge_speech：topic + stage + 当前立场稿子
  *   - simulate_opponent：topic + 当前立场稿子
  *   - judge_debate：topic + 双稿均非空
  *   - detect_stage：当前立场稿子（识别环节回填用）
@@ -53,7 +52,7 @@ export function getAvailableActions(s: JudgeArenaFormState): JudgeAction[] {
   const hasStage = !!s.stage
 
   if (hasTopic && hasSpeech && hasStage) {
-    actions.push('judge_speech', 'rewrite_speech')
+    actions.push('judge_speech')
   }
   if (hasTopic && hasSpeech) {
     actions.push('simulate_opponent')

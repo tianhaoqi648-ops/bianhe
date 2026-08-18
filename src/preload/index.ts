@@ -306,7 +306,10 @@ const fileAPI = {
   /** 调用主进程 dialog.showOpenDialog 选择单个文件，返回文件路径或 null */
   pickFile: (
     filters?: Array<{ name: string; extensions: string[] }>
-  ) => invoke<ApiResponse<string | null>>(IPC_CHANNELS.SYSTEM_PICK_FILE, filters)
+  ) => invoke<ApiResponse<string | null>>(IPC_CHANNELS.SYSTEM_PICK_FILE, filters),
+  /** 读取稿子文本文件内容（txt/md/docx，限 2MB；AI 裁判工作台 2026-08-18） */
+  readTextFile: (filePath: string) =>
+    invoke<ApiResponse<string>>(IPC_CHANNELS.SYSTEM_READ_TEXT_FILE, filePath)
 }
 
 // ============================================================
@@ -563,7 +566,7 @@ const agentAPI: AgentAPI = {
   },
   /**
    * 直接调用裁判工具（AI 裁判工作台，2026-08-18）。
-   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent / rewrite_speech。
+   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent。
    */
   runTool(req: RunToolRequest): Promise<RunToolResult> {
     return ipcRenderer.invoke('agent:run-tool', req)

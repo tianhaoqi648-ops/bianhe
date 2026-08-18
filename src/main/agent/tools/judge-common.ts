@@ -2,7 +2,7 @@
 // judge-common.ts — AI 裁判工具公共模块（AI 裁判功能演进 2026-08-18）
 //
 // 从 judge-debate.tool.ts 提取的共享能力，供 judge_debate / judge_speech /
-// simulate_opponent / rewrite_speech 等工具复用：
+// simulate_opponent 等工具复用：
 //   1. buildJudgeSystemPrompt：按评委人设构建 system prompt
 //   2. parseJsonResult：容错解析 LLM 返回的 JSON（去 ```json 围栏、取首个 {} 块）
 // ============================================================

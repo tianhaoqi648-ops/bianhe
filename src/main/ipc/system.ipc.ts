@@ -15,6 +15,7 @@ import { IPC_CHANNELS } from '../../shared/types'
 import type { ApiResponse, ResetDataRequest, ResetDataResponse } from '../../shared/types'
 import { getMergedCandidatesWithDB } from '../services/candidate-service'
 import { resetData } from '../services/reset-service'
+import { readTextFileContent } from '../services/text-file-service'
 import type { CandidateField } from '../../shared/constants'
 
 export function registerSystemIpc(): void {
@@ -47,6 +48,22 @@ export function registerSystemIpc(): void {
           error: e instanceof Error ? e.message : String(e)
         }
       }
+    }
+  )
+
+  // 读取稿子文本文件内容（AI 裁判工作台 2026-08-18）
+  // 支持 txt/md（utf-8）与 docx（mammoth 提取纯文本），限制 2MB
+  ipcMain.handle(
+    IPC_CHANNELS.SYSTEM_READ_TEXT_FILE,
+    async (_e, filePath: string): Promise<ApiResponse<string>> => {
+      if (typeof filePath !== 'string' || filePath === '') {
+        return { success: false, error: '文件路径无效' }
+      }
+      const res = await readTextFileContent(filePath)
+      if (!res.ok) {
+        return { success: false, error: res.message ?? `读取失败（${res.code ?? 'unknown'}）` }
+      }
+      return { success: true, data: res.content ?? '' }
     }
   )
 

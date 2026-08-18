@@ -1,18 +1,26 @@
 // ============================================================
 // judge-result-cards.tsx — AI 裁判结果卡片（2026-08-18）
 //
-// 从 ToolCallCard.tsx 抽出的 5 个 AI 裁判结果卡片组件，
+// 从 ToolCallCard.tsx 抽出的 4 个 AI 裁判结果卡片组件（2026-08-18 移除 rewrite_speech），
 // 供两处复用：
 //   1. Agent 聊天流的 ToolCallCard（工具调用结果卡片）
 //   2. AI 裁判工作台独立页面（JudgeArena）
 //
 // 包含：结果接口定义、卡片组件、JudgeResultCardByTool 切换器。
-// STAGE_NAMES 由 shared/debate-stages.ts 的 STAGE_DEFINITIONS 派生（首次消费该数据源）。
+// STAGE_NAMES 由 shared/debate-stages.ts 的 STAGE_DEFINITIONS 派生。
+// 评委显示：不显示真人名，按 judgeId 映射为风格类别（judgeCategoryOf）。
 // ============================================================
 
 import React, { useState } from 'react'
 import { Typography, Tag, Progress, theme } from 'antd'
 import { STAGE_DEFINITIONS } from '../../../../shared/debate-stages'
+import { getJudgeById } from '../../../../shared/ai-judges'
+
+/** 按 judgeId 映射评委风格类别（不显示真人名）；查不到兜底「AI 裁判」 */
+export function judgeCategoryOf(judgeId: string | undefined): string {
+  if (!judgeId) return 'AI 裁判'
+  return getJudgeById(judgeId)?.category ?? 'AI 裁判'
+}
 
 // ---------- 结果接口（与 main/agent/tools/*.tool.ts 对齐） ----------
 
@@ -78,17 +86,6 @@ export interface SimulateOpponentResult {
   }>
 }
 
-/** rewrite_speech 结果 */
-export interface RewriteSpeechResult {
-  judgeId: string
-  judgeName: string
-  topic: string
-  stage: string
-  side: 'aff' | 'neg'
-  rewrittenSpeech: string
-  changeNotes: Array<{ target: string; change: string }>
-}
-
 // ---------- 映射（STAGE_NAMES 由 STAGE_DEFINITIONS 派生） ----------
 
 /** 环节类型 → 展示名（shared/debate-stages.ts 派生） */
@@ -125,7 +122,7 @@ const LAYER_COLOR: Record<string, string> = {
  */
 export function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.Element {
   const { token } = theme.useToken()
-  const { judgeName, topic, verdict, dimensions, summary, stageVerdicts } = result
+  const { topic, verdict, dimensions, summary, stageVerdicts } = result
   const affWon = verdict.winner === 'aff'
 
   return (
@@ -149,7 +146,7 @@ export function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.
         }}
       >
         <Typography.Text strong style={{ fontSize: 13 }}>
-          ⚖️ {judgeName} 判定
+          ⚖️ {judgeCategoryOf(result.judgeId)} · 判定
         </Typography.Text>
         <Tag color={affWon ? 'blue' : 'orange'}>{affWon ? '正方胜' : '反方胜'}</Tag>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -281,7 +278,7 @@ export function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.
  */
 export function JudgeSpeechResultCard({ result }: { result: JudgeSpeechResult }): JSX.Element {
   const { token } = theme.useToken()
-  const { judgeName, topic, stage, side, dimensions, gaps, improvements, summary } = result
+  const { topic, stage, side, dimensions, gaps, improvements, summary } = result
   const [gapsExpanded, setGapsExpanded] = useState(false)
 
   return (
@@ -305,7 +302,7 @@ export function JudgeSpeechResultCard({ result }: { result: JudgeSpeechResult })
         }}
       >
         <Typography.Text strong style={{ fontSize: 13 }}>
-          📝 {judgeName} 评估
+          📝 {judgeCategoryOf(result.judgeId)} · 评估
         </Typography.Text>
         <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag>
         <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
@@ -500,7 +497,7 @@ export function DetectStageResultCard({ result }: { result: DetectStageResult })
  */
 export function SimulateOpponentCard({ result }: { result: SimulateOpponentResult }): JSX.Element {
   const { token } = theme.useToken()
-  const { judgeName, topic, side, attackMode, weaknessSummary, attackPoints } = result
+  const { topic, side, attackMode, weaknessSummary, attackPoints } = result
   const [pointsExpanded, setPointsExpanded] = useState(false)
   const modeMeta = ATTACK_MODE_META[attackMode] ?? { label: attackMode, color: 'default' }
 
@@ -525,7 +522,7 @@ export function SimulateOpponentCard({ result }: { result: SimulateOpponentResul
         }}
       >
         <Typography.Text strong style={{ fontSize: 13 }}>
-          ⚔️ {judgeName} 模拟攻击
+          ⚔️ {judgeCategoryOf(result.judgeId)} · 模拟攻击
         </Typography.Text>
         <Tag color={modeMeta.color}>{modeMeta.label}</Tag>
         <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '攻正方稿' : '攻反方稿'}</Tag>
@@ -601,99 +598,6 @@ export function SimulateOpponentCard({ result }: { result: SimulateOpponentResul
   )
 }
 
-/**
- * rewrite_speech 稿子改写结果卡片。
- * 展示：评委 + 环节 + 立场；改写稿全文（默认折叠展开）；改动清单。
- */
-export function RewriteSpeechCard({ result }: { result: RewriteSpeechResult }): JSX.Element {
-  const { token } = theme.useToken()
-  const { judgeName, topic, stage, side, rewrittenSpeech, changeNotes } = result
-  const [speechExpanded, setSpeechExpanded] = useState(false)
-
-  return (
-    <div
-      style={{
-        marginTop: 8,
-        padding: 8,
-        borderRadius: 6,
-        backgroundColor: token.colorPrimaryBg,
-        border: `1px solid ${token.colorPrimaryBorder}`
-      }}
-    >
-      {/* 头部：评委 + 环节 + 立场 */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 4,
-          flexWrap: 'wrap'
-        }}
-      >
-        <Typography.Text strong style={{ fontSize: 13 }}>
-          ✏️ {judgeName} 改写稿
-        </Typography.Text>
-        <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag>
-        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
-      </div>
-
-      {topic ? (
-        <Typography.Text
-          type="secondary"
-          style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
-        >
-          辩题：{topic}
-        </Typography.Text>
-      ) : null}
-
-      {/* 改写稿全文（默认折叠） */}
-      <div style={{ marginTop: 4 }}>
-        <Typography.Link
-          style={{ fontSize: 12, color: token.colorPrimary, cursor: 'pointer' }}
-          onClick={() => setSpeechExpanded((v) => !v)}
-        >
-          {speechExpanded ? '收起改写稿' : '展开改写稿'}
-        </Typography.Link>
-        {speechExpanded && (
-          <Typography.Paragraph
-            style={{
-              fontSize: 12,
-              color: token.colorText,
-              marginTop: 6,
-              marginBottom: 8,
-              whiteSpace: 'pre-wrap',
-              backgroundColor: token.colorFillQuaternary,
-              borderRadius: 6,
-              padding: 8,
-              wordBreak: 'break-word',
-              lineHeight: 1.6
-            }}
-          >
-            {rewrittenSpeech}
-          </Typography.Paragraph>
-        )}
-      </div>
-
-      {/* 改动清单 */}
-      {changeNotes.length > 0 ? (
-        <div>
-          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
-            改动清单
-          </div>
-          {changeNotes.map((n, i) => (
-            <div key={i} style={{ fontSize: 12, marginBottom: 4, lineHeight: 1.5 }}>
-              <Typography.Text strong style={{ fontSize: 12 }}>
-                {n.target}：
-              </Typography.Text>
-              {n.change}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 // ---------- 切换器 ----------
 
 /** JudgeResultCardByTool Props */
@@ -723,8 +627,6 @@ export function JudgeResultCardByTool({
       return <DetectStageResultCard result={result as DetectStageResult} />
     case 'simulate_opponent':
       return <SimulateOpponentCard result={result as SimulateOpponentResult} />
-    case 'rewrite_speech':
-      return <RewriteSpeechCard result={result as RewriteSpeechResult} />
     default:
       return null
   }

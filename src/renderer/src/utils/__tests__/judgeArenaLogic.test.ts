@@ -57,12 +57,11 @@ describe('getAvailableActions 启用矩阵', () => {
     expect(actions).not.toContain('judge_debate')
   })
 
-  it('辩题+环节+单稿 → 单方操作全可用（除整场评审）', () => {
+  it('辩题+环节+单稿 → 单方操作全可用（除双方评审）', () => {
     const s = makeState({ topic: 't', stage: 'opening', affSpeech: 'A' })
     const actions = getAvailableActions(s)
     expect(actions).toContain('judge_speech')
     expect(actions).toContain('simulate_opponent')
-    expect(actions).toContain('rewrite_speech')
     expect(actions).toContain('detect_stage')
     expect(actions).not.toContain('judge_debate')
   })
@@ -74,12 +73,12 @@ describe('getAvailableActions 启用矩阵', () => {
     expect(actions).toContain('simulate_opponent')
   })
 
-  it('全部齐备 → 五个操作全可用', () => {
+  it('全部齐备 → 四个操作全可用', () => {
     const s = makeState({ topic: 't', stage: 'rebuttal', affSpeech: 'A', negSpeech: 'B' })
     const actions = getAvailableActions(s)
-    expect(actions).toHaveLength(5)
+    expect(actions).toHaveLength(4)
     expect(actions).toEqual(
-      expect.arrayContaining(['judge_speech', 'simulate_opponent', 'rewrite_speech', 'judge_debate', 'detect_stage'])
+      expect.arrayContaining(['judge_speech', 'simulate_opponent', 'judge_debate', 'detect_stage'])
     )
   })
 })

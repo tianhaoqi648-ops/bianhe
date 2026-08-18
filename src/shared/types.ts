@@ -735,6 +735,7 @@ export const IPC_CHANNELS = {
   DEDUP_DELETE_TOPICS: 'dedup:deleteTopics',
   // system
   SYSTEM_PICK_FILE: 'system:pickFile',
+  SYSTEM_READ_TEXT_FILE: 'system:readTextFile',
   SYSTEM_GET_CANDIDATES: 'system:getCandidates',
   SYSTEM_RESET_DATA: 'system:resetData',
   // custom field

@@ -401,7 +401,7 @@ export interface AgentAPI {
   cancel(sessionId?: string): Promise<void>
   /**
    * 直接调用裁判工具（AI 裁判工作台，2026-08-18）。
-   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent / rewrite_speech。
+   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent。
    * 绕过 agent-loop 聊天流，表单直接执行；结果通过返回值返回。
    */
   runTool(req: RunToolRequest): Promise<RunToolResult>

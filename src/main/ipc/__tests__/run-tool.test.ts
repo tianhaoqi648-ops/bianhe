@@ -49,13 +49,12 @@ beforeEach(() => {
 })
 
 describe('白名单校验', () => {
-  it('5 个裁判工具全在白名单内', () => {
+  it('4 个裁判工具全在白名单内', () => {
     expect(JUDGE_TOOL_NAMES).toEqual([
       'judge_debate',
       'judge_speech',
       'detect_stage',
-      'simulate_opponent',
-      'rewrite_speech'
+      'simulate_opponent'
     ])
   })
 

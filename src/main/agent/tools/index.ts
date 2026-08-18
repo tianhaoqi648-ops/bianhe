@@ -25,7 +25,6 @@ export { judgeDebateTool } from './judge-debate.tool'
 export { judgeSpeechTool } from './judge-speech.tool'
 export { detectStageTool } from './detect-stage.tool'
 export { simulateOpponentTool } from './simulate-opponent.tool'
-export { rewriteSpeechTool } from './rewrite-speech.tool'
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { searchTopicsTool } from './search-topics.tool'
@@ -44,10 +43,9 @@ import { judgeDebateTool } from './judge-debate.tool'
 import { judgeSpeechTool } from './judge-speech.tool'
 import { detectStageTool } from './detect-stage.tool'
 import { simulateOpponentTool } from './simulate-opponent.tool'
-import { rewriteSpeechTool } from './rewrite-speech.tool'
 
 /**
- * 全部 12 个工具（用于一次性注册）。
+ * 全部工具（用于一次性注册）。
  *
  * 类型说明：各工具的 TArgs / TResult 泛型参数各异（如 GetTopicDetailArgs / Topic），
  * 而 ToolDefinition.execute 为函数属性（严格逆变），无法统一收敛到默认
@@ -73,6 +71,5 @@ export const allTools: ToolDefinition<any, any>[] = [
   judgeDebateTool,
   judgeSpeechTool,
   detectStageTool,
-  simulateOpponentTool,
-  rewriteSpeechTool
+  simulateOpponentTool
 ]

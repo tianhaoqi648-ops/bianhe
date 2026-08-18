@@ -32,10 +32,10 @@ import {
 import {
   AuditOutlined,
   AimOutlined,
-  EditOutlined,
   ExperimentOutlined,
   ThunderboltOutlined,
-  CloseOutlined
+  CloseOutlined,
+  UploadOutlined
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import { JUDGES } from '../../../shared/ai-judges'
@@ -74,12 +74,11 @@ const ATTACK_MODE_OPTIONS = [
   { value: 'free_debate', label: '自由辩突袭' }
 ]
 
-/** 操作按钮元数据 */
+/** 操作按钮元数据（2026-08-18：移除改写稿子；按钮改名单方评审/双方评审） */
 const ACTION_BUTTONS: Array<{ action: JudgeAction; label: string; icon: React.ReactNode; tooltip: string }> = [
-  { action: 'judge_speech', label: '评估单方稿', icon: <ExperimentOutlined />, tooltip: '按评委人设评估己方稿子：五维评分 + 漏洞清单 + 改进建议' },
+  { action: 'judge_speech', label: '单方评审', icon: <ExperimentOutlined />, tooltip: '按评委风格评估当前立场稿子：五维评分 + 漏洞清单 + 改进建议' },
   { action: 'simulate_opponent', label: '模拟对方攻击', icon: <AimOutlined />, tooltip: '以评委思维模拟对方攻击（质询/驳论/自由辩突袭）' },
-  { action: 'rewrite_speech', label: '改写稿子', icon: <EditOutlined />, tooltip: '按评委辩风改写稿子，保留论证骨架' },
-  { action: 'judge_debate', label: '整场评审', icon: <AuditOutlined />, tooltip: '评审完整辩论（需双方辩词），含五维评分与胜负判定' }
+  { action: 'judge_debate', label: '双方评审', icon: <AuditOutlined />, tooltip: '分别录入正、反方完整辩词后，双方一起评审（胜负判定 + 五维对比）' }
 ]
 
 export default function JudgeArena(): JSX.Element {
@@ -93,7 +92,6 @@ export default function JudgeArena(): JSX.Element {
   const [affSpeech, setAffSpeech] = useState('')
   const [negSpeech, setNegSpeech] = useState('')
   const [attackMode, setAttackMode] = useState('cross_exam')
-  const [focus, setFocus] = useState('')
 
   // ---------- 执行状态 ----------
   const [results, setResults] = useState<ArenaResult[]>([])
@@ -167,25 +165,53 @@ export default function JudgeArena(): JSX.Element {
     setRunning(false)
   }
 
+  /** 上传稿子文件（txt/md/docx）→ 读取内容 → 填入当前立场 TextArea */
+  const handleUpload = async (): Promise<void> => {
+    const w = window as unknown as {
+      fileAPI?: {
+        pickFile: (filters: Array<{ name: string; extensions: string[] }>) => Promise<{ success: boolean; data?: string | null; error?: string }>
+        readTextFile: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
+      }
+    }
+    const fileAPI = w.fileAPI
+    if (!fileAPI) {
+      setError('文件服务未就绪（window.fileAPI 不可用）')
+      return
+    }
+    try {
+      const picked = await fileAPI.pickFile([{ name: '辩词文本', extensions: ['txt', 'md', 'docx'] }])
+      if (!picked.success) {
+        setError(picked.error ?? '选择文件失败')
+        return
+      }
+      if (!picked.data) return // 用户取消
+      const read = await fileAPI.readTextFile(picked.data)
+      if (!read.success) {
+        setError(read.error ?? '读取文件失败')
+        return
+      }
+      if (side === 'aff') {
+        setAffSpeech(read.data ?? '')
+      } else {
+        setNegSpeech(read.data ?? '')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   /** 操作按钮点击分发 */
   const handleAction = (action: JudgeAction): void => {
     const base = { topic: topic.trim() }
     switch (action) {
       case 'judge_speech':
-        void runJudge('judge_speech', { ...base, stage, side, speech: currentSpeechText, judgeId }, '评估单方稿')
+        void runJudge('judge_speech', { ...base, stage, side, speech: currentSpeechText, judgeId }, '单方评审')
         break
       case 'simulate_opponent':
         void runJudge('simulate_opponent', { ...base, side, speech: currentSpeechText, judgeId, attackMode }, '模拟对方攻击')
         break
-      case 'rewrite_speech':
-        void runJudge(
-          'rewrite_speech',
-          { ...base, stage, side, speech: currentSpeechText, judgeId, ...(focus.trim() ? { focus: focus.trim() } : {}) },
-          '改写稿子'
-        )
-        break
       case 'judge_debate':
-        void runJudge('judge_debate', { ...base, affSpeech, negSpeech, judgeId }, '整场评审')
+        void runJudge('judge_debate', { ...base, affSpeech, negSpeech, judgeId }, '双方评审')
         break
       case 'detect_stage':
         void runJudge('detect_stage', { speech: currentSpeechText, topic: topic.trim() }, '环节识别')
@@ -195,7 +221,7 @@ export default function JudgeArena(): JSX.Element {
 
   return (
     <div style={{ padding: 16, maxWidth: 860, margin: '0 auto' }}>
-      <PageHeader title="AI 裁判" subtitle="评委人设驱动的备赛工作台：评估稿子 · 模拟攻击 · 改写优化 · 整场评审" />
+      <PageHeader title="AI 裁判" subtitle="风格化备赛工作台：单方评审 · 双方评审 · 模拟攻击 · 环节识别" />
 
       {/* 表单区 */}
       <Card size="small" style={{ marginBottom: 16 }}>
@@ -208,8 +234,8 @@ export default function JudgeArena(): JSX.Element {
           style={{ marginTop: 6, marginBottom: 14 }}
         />
 
-        {/* 评委选择：5 位评委卡片 */}
-        <Typography.Text strong style={{ fontSize: 13 }}>评委人设</Typography.Text>
+        {/* 评委选择：5 种评委风格（2026-08-18：不显示真人名，仅显示风格类别） */}
+        <Typography.Text strong style={{ fontSize: 13 }}>评委风格</Typography.Text>
         <Radio.Group
           value={judgeId}
           onChange={(e) => setJudgeId(e.target.value)}
@@ -217,8 +243,8 @@ export default function JudgeArena(): JSX.Element {
         >
           <Space wrap>
             {JUDGES.map((j) => (
-              <Radio.Button key={j.id} value={j.id}>
-                {j.name} · {j.category}
+              <Radio.Button key={j.id} value={j.id} title={j.tags?.join(' / ')}>
+                {j.category}
               </Radio.Button>
             ))}
           </Space>
@@ -245,16 +271,29 @@ export default function JudgeArena(): JSX.Element {
             自动识别
           </Button>
         </div>
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 14 }}>
+          环节仅「单方评审 / 模拟对方攻击」需要；「双方评审」请直接录入正、反方完整辩词。
+        </Typography.Text>
 
-        {/* 立场 + 稿子输入 */}
+        {/* 立场 + 稿子输入（支持粘贴或上传文件 txt/md/docx） */}
         <div style={{ marginBottom: 14 }}>
-          <Radio.Group value={side} onChange={(e) => setSide(e.target.value)} style={{ marginBottom: 8 }}>
-            <Radio.Button value="aff">正方稿</Radio.Button>
-            <Radio.Button value="neg">反方稿</Radio.Button>
-          </Radio.Group>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Radio.Group value={side} onChange={(e) => setSide(e.target.value)}>
+              <Radio.Button value="aff">正方稿</Radio.Button>
+              <Radio.Button value="neg">反方稿</Radio.Button>
+            </Radio.Group>
+            <Button
+              size="small"
+              icon={<UploadOutlined />}
+              disabled={running}
+              onClick={handleUpload}
+            >
+              上传稿子
+            </Button>
+          </div>
           <Input.TextArea
             rows={6}
-            placeholder={side === 'aff' ? '粘贴正方稿（立论/驳论/质询/总结等）' : '粘贴反方稿（立论/驳论/质询/总结等）'}
+            placeholder={side === 'aff' ? '粘贴正方完整辩词（全部环节），或点「上传稿子」选择文件' : '粘贴反方完整辩词（全部环节），或点「上传稿子」选择文件'}
             value={side === 'aff' ? affSpeech : negSpeech}
             onChange={(e) =>
               side === 'aff' ? setAffSpeech(e.target.value) : setNegSpeech(e.target.value)
@@ -262,7 +301,7 @@ export default function JudgeArena(): JSX.Element {
           />
         </div>
 
-        {/* 扩展选项：攻击方式 / 改写侧重 */}
+        {/* 扩展选项：攻击方式 */}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -274,18 +313,6 @@ export default function JudgeArena(): JSX.Element {
               value={attackMode}
               onChange={setAttackMode}
               options={ATTACK_MODE_OPTIONS}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, minWidth: 220 }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              改写侧重
-            </Typography.Text>
-            <Input
-              size="small"
-              placeholder="可选，如：让立论更严密"
-              value={focus}
-              onChange={(e) => setFocus(e.target.value)}
-              style={{ flex: 1 }}
             />
           </div>
         </div>
@@ -339,7 +366,7 @@ export default function JudgeArena(): JSX.Element {
 
       {running ? (
         <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
-          <Spin /> <span style={{ marginLeft: 8 }}>正在执行 {judge.name} 判定中…</span>
+          <Spin /> <span style={{ marginLeft: 8 }}>正在执行 {judge.category} 判定中…</span>
         </div>
       ) : null}
 
@@ -352,10 +379,15 @@ export default function JudgeArena(): JSX.Element {
               title={
                 <span style={{ fontSize: 13 }}>
                   {r.actionLabel}
-                  {r.toolName === 'judge_debate' || r.toolName === 'judge_speech' ? (
+                  {r.toolName === 'judge_speech' ? (
                     <span style={{ marginLeft: 8, color: token.colorTextSecondary, fontSize: 12 }}>
                       {STAGE_NAMES[stage ?? ''] ? `${STAGE_NAMES[stage ?? '']} · ` : ''}
                       {side === 'aff' ? '正方' : '反方'}稿
+                    </span>
+                  ) : null}
+                  {r.toolName === 'judge_debate' ? (
+                    <span style={{ marginLeft: 8, color: token.colorTextSecondary, fontSize: 12 }}>
+                      正反方完整辩词
                     </span>
                   ) : null}
                 </span>
