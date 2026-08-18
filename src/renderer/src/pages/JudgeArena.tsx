@@ -75,6 +75,18 @@ const ATTACK_MODE_OPTIONS = [
   { value: 'free_debate', label: '自由辩突袭' }
 ]
 
+/**
+ * 评审风格说明（2026-08-18：仅风格视角，不含任何人物身份/履历信息）。
+ * 按 category 映射，供评委风格卡片展示。
+ */
+const STYLE_BRIEFS: Record<string, string> = {
+  攻防流: '聚焦交锋效率与攻防纪律：关注反驳是否到位、立论是否被有效拆解，对方未回应的观点视为成立',
+  价值流: '重视价值立意与切入角度：能否重新定义辩题、刷新看待问题的视角，表达感染力权重较高',
+  '价值+知识': '兼顾价值深度与知识含量：论证需有思维高度与视野广度，表达清晰有说服力',
+  学理流: '强调立论的理论深度与独立思考：从概念与前提处检验论证是否站得住，注重风度与学养',
+  建构流: '倡导知识增量型论证：论证应带来新认知而非重复存量，条理清晰、温和而有说服力'
+}
+
 /** 操作按钮元数据（2026-08-18：移除改写稿子；按钮改名单方评审/双方评审） */
 const ACTION_BUTTONS: Array<{ action: JudgeAction; label: string; icon: React.ReactNode; tooltip: string }> = [
   { action: 'judge_speech', label: '单方评审', icon: <ExperimentOutlined />, tooltip: '按评委风格评估当前立场稿子：五维评分 + 漏洞清单 + 改进建议' },
@@ -243,13 +255,20 @@ export default function JudgeArena(): JSX.Element {
           style={{ display: 'block', marginTop: 6, marginBottom: 14 }}
         >
           {JUDGES.map((j) => {
-            const bio = j.bio ?? ''
-            const bioShort = bio.length > 58 ? `${bio.slice(0, 58)}…` : bio
+            const brief = STYLE_BRIEFS[j.category] ?? ''
+            const briefShort = brief.length > 58 ? `${brief.slice(0, 58)}…` : brief
+            const priorities = j.judgePriorities
             return (
               <div
                 key={j.id}
                 onClick={() => setJudgeId(j.id)}
-                title={`${j.bio}\n${j.styleTraits?.join('\n') ?? ''}`}
+                title={[
+                  STYLE_BRIEFS[j.category] ?? '',
+                  priorities?.top ? `最看重：${priorities.top}` : '',
+                  priorities?.secondary ? `其次：${priorities.secondary}` : ''
+                ]
+                  .filter(Boolean)
+                  .join('\n')}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -286,7 +305,7 @@ export default function JudgeArena(): JSX.Element {
                     type="secondary"
                     style={{ fontSize: 12, display: 'block', lineHeight: 1.5, marginTop: 2 }}
                   >
-                    {bioShort}
+                    {briefShort}
                   </Typography.Text>
                 </div>
               </div>
