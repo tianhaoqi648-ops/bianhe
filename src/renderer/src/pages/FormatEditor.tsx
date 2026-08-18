@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react'
 import { Card, List, Typography, Input, Alert, Tag, Space, Button, Segmented, Drawer, theme as antdTheme } from 'antd'
 import { CopyOutlined, GiftOutlined, PlusOutlined } from '@ant-design/icons'
+import { v4 as uuidv4 } from 'uuid'
 import EmptyState from '../components/common/EmptyState'
 import AccentCard from '../components/common/AccentCard'
 import PageHeader from '../components/common/PageHeader'
@@ -145,6 +146,23 @@ export default function FormatEditor() {
     setDirty(true)
   }
 
+  /** 新建赛制后首个环节（EmptyState「请添加环节」的入口；与 StageCardList 的 handleAdd 同构） */
+  const handleAddFirstStage = () => {
+    const newStage: StageDef = {
+      id: uuidv4(),
+      name: '新环节',
+      side: 'aff',
+      durationMs: 3 * 60 * 1000,
+      bells: [
+        { atMs: 30 * 1000, sound: 'beep' },
+        { atMs: 0, sound: 'time_up' }
+      ]
+    }
+    setEditingStages([newStage])
+    setEditingStageIdx(0)
+    setDirty(true)
+  }
+
   // === 桌面端 / 移动端共用内容片段（Task 19） ===
   // 赛制列表 List（点击赛制时同步切换移动端到 edit 视图）
   const formatListContent = (
@@ -201,6 +219,7 @@ export default function FormatEditor() {
         type="default"
         description="请添加环节"
         style={{ marginTop: 60 }}
+        cta={[{ text: '添加环节', icon: <PlusOutlined />, onClick: handleAddFirstStage }]}
       />
     ) : (
       <StageCardList

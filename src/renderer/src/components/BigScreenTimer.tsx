@@ -617,6 +617,7 @@ export default function BigScreenTimer({
             justifyContent: 'space-around',
             alignItems: 'center',
             width: '100%',
+            flexShrink: 0,
             margin: isFreeDebate ? 'clamp(8px, 1.5vh, 12px) 0' : 'clamp(8px, 2vh, 20px) 0',
             gap: 'clamp(16px, 4vw, 48px)',
             zIndex: 1
@@ -710,8 +711,10 @@ export default function BigScreenTimer({
                 <div
                   style={{
                     position: 'relative',
-                    width: 'clamp(320px, 70vmin, 720px)',
-                    height: 'clamp(320px, 70vmin, 720px)',
+                    // 2026-08-18 修复：70vmin 在矮窗口会顶走上方正反方（顶部条+正反方+底部 ≈ 300px 固定占用），
+                    // 同时受 45vh 限制，保证正反方与环都能完整显示
+                    width: 'clamp(280px, min(55vmin, 45vh), 640px)',
+                    height: 'clamp(280px, min(55vmin, 45vh), 640px)',
                     margin: '0 auto',
                     display: 'flex',
                     alignItems: 'center',
