@@ -16,24 +16,26 @@ import type { ApiResponse } from './types'
 
 // ---------- 1. 工具相关类型（SubTask 1.1） ----------
 
+/**
+ * 工具参数 JSON Schema 的元素（OpenAI Function Calling 格式）。
+ * 支持嵌套 object（数组元素为对象时用 properties/required），批3 环节分段入参需要。
+ */
+export interface ToolSchemaItem {
+  type: string
+  description?: string
+  enum?: string[]
+  default?: unknown
+  /** 当 type='array' 时，描述数组元素的 schema */
+  items?: ToolSchemaItem
+  /** 当 type='object' 时，描述属性 */
+  properties?: Record<string, ToolSchemaItem>
+  required?: string[]
+}
+
 /** 工具参数 JSON Schema（OpenAI Function Calling 格式） */
 export interface ToolSchema {
   type: 'object'
-  properties: Record<
-    string,
-    {
-      type: string
-      description: string
-      enum?: string[]
-      default?: unknown
-      /** 当 type='array' 时，描述数组元素的 schema（OpenAI JSON Schema 标准） */
-      items?: {
-        type: string
-        description?: string
-        enum?: string[]
-      }
-    }
-  >
+  properties: Record<string, ToolSchemaItem>
   required?: string[]
 }
 

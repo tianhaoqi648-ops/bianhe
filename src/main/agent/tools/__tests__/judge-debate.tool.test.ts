@@ -197,3 +197,128 @@ describe('judge_debate：异常处理', () => {
     if (!res.success) expect(res.error).toContain('rate_limit')
   })
 })
+
+// ---------- 分段模式（批3） ----------
+
+const VALID_STAGES = {
+  ...VALID_ARGS,
+  affStages: [{ stage: 'opening' as const, content: '正方立论段……' }],
+  negStages: [{ stage: 'rebuttal' as const, content: '反方驳论段……' }]
+}
+
+/** VALID_JSON + stageVerdicts */
+const VALID_STAGE_JSON = JSON.stringify({
+  verdict: { winner: 'aff', confidence: 0.7, reason: '正方在核心交锋点完成有效回应' },
+  dimensions: [
+    { key: 'logicDepth', affScore: 8, negScore: 6, comment: '正方立论有层次' },
+    { key: 'logicRigor', affScore: 7, negScore: 7, comment: '双方逻辑均完整' },
+    { key: 'rebuttal', affScore: 8, negScore: 5, comment: '反方多处未正面回应' },
+    { key: 'expressiveness', affScore: 6, negScore: 8, comment: '反方表达感染力更强' },
+    { key: 'teamwork', affScore: 7, negScore: 6, comment: '正方口径一致' }
+  ],
+  summary: '整体而言，正方更完整……',
+  stageVerdicts: [
+    { stage: 'opening', winner: 'aff', confidence: 0.8, comment: '正方立论框架更完整' },
+    { stage: 'rebuttal', winner: 'neg', confidence: 0.65, comment: '反方拆解更有力' }
+  ]
+})
+
+describe('judge_debate：分段模式（批3）', () => {
+  it('传分段 → prompt 含分段标注与逐段指令，解析出 stageVerdicts', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_STAGE_JSON })
+    const res = await judgeDebateTool.execute(VALID_STAGES, ctxWithConfig)
+
+    if (!res.success) throw new Error(res.error)
+    expect(res.stageVerdicts).toHaveLength(2)
+    expect(res.stageVerdicts![0]).toMatchObject({
+      stage: 'opening',
+      winner: 'aff',
+      confidence: 0.8
+    })
+    expect(res.stageVerdicts![1].comment).toContain('反方拆解')
+
+    const [messages] = mockChat.mock.calls[0]
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).toContain('【分段标注】')
+    expect(user.content).toContain('[立论]（opening）')
+    expect(user.content).toContain('[驳论]（rebuttal）')
+    expect(user.content).toContain('stageVerdicts')
+  })
+
+  it('不传分段 → 现有行为不变（无分段标注、结果无 stageVerdicts）', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
+    const res = await judgeDebateTool.execute(VALID_ARGS, ctxWithConfig)
+    if (!res.success) throw new Error(res.error)
+    expect(res.stageVerdicts).toBeUndefined()
+    const [messages] = mockChat.mock.calls[0]
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).not.toContain('【分段标注】')
+  })
+
+  it('分段结构非法（stage 非法 / content 空）→ success:false，不调 LLM', async () => {
+    const badStage = await judgeDebateTool.execute(
+      { ...VALID_ARGS, affStages: [{ stage: 'foo' as never, content: 'x' }] },
+      ctxWithConfig
+    )
+    expect(badStage.success).toBe(false)
+    expect(mockChat).not.toHaveBeenCalled()
+
+    const badContent = await judgeDebateTool.execute(
+      { ...VALID_ARGS, negStages: [{ stage: 'opening', content: '  ' }] },
+      ctxWithConfig
+    )
+    expect(badContent.success).toBe(false)
+    expect(mockChat).not.toHaveBeenCalled()
+  })
+
+  it('空数组视为未提供 → prompt 无分段标注', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
+    const res = await judgeDebateTool.execute(
+      { ...VALID_ARGS, affStages: [], negStages: [] },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    const [messages] = mockChat.mock.calls[0]
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).not.toContain('【分段标注】')
+  })
+
+  it('stageVerdicts 解析：非法项跳过，保留合法项', async () => {
+    const json = JSON.stringify({
+      verdict: { winner: 'aff', confidence: 0.6, reason: 'r' },
+      dimensions: [
+        { key: 'logicDepth', affScore: 8, negScore: 6, comment: 'c' },
+        { key: 'logicRigor', affScore: 7, negScore: 7, comment: 'c' },
+        { key: 'rebuttal', affScore: 8, negScore: 5, comment: 'c' },
+        { key: 'expressiveness', affScore: 6, negScore: 8, comment: 'c' },
+        { key: 'teamwork', affScore: 7, negScore: 6, comment: 'c' }
+      ],
+      summary: 's',
+      stageVerdicts: [
+        { stage: 'opening', winner: 'aff', confidence: 0.8, comment: '合法' },
+        { stage: 'banter', winner: 'aff', confidence: 0.8, comment: '非法 stage' },
+        { stage: 'closing', winner: 'draw', confidence: 0.8, comment: '非法 winner' },
+        { stage: 'rebuttal', winner: 'neg', confidence: 1.5, comment: '越界 confidence' },
+        { stage: 'closing', winner: 'neg', confidence: 0.5, comment: '' }
+      ]
+    })
+    mockChat.mockResolvedValue({ role: 'assistant', content: json })
+    const res = await judgeDebateTool.execute(VALID_STAGES, ctxWithConfig)
+    if (!res.success) throw new Error(res.error)
+    expect(res.stageVerdicts).toHaveLength(1)
+    expect(res.stageVerdicts![0]).toMatchObject({ stage: 'opening', winner: 'aff' })
+  })
+
+  it('分段 + 指定评委人设生效', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_STAGE_JSON })
+    const res = await judgeDebateTool.execute(
+      { ...VALID_STAGES, judgeId: 'huang-zhizhong' },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    expect(res.judgeName).toBe('黄执中')
+    const [messages] = mockChat.mock.calls[0]
+    const system = messages.find((m: { role: string }) => m.role === 'system')
+    expect(system.content).toContain('黄执中')
+  })
+})

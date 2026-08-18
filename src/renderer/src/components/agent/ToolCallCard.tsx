@@ -322,6 +322,13 @@ interface JudgeDebateResult {
   verdict: { winner: 'aff' | 'neg'; confidence: number; reason: string }
   dimensions: JudgeDimensionScore[]
   summary: string
+  /** 批3：环节分段判定（可选） */
+  stageVerdicts?: Array<{
+    stage: string
+    winner: 'aff' | 'neg'
+    confidence: number
+    comment: string
+  }>
 }
 
 /**
@@ -336,7 +343,7 @@ interface JudgeDebateResult {
  */
 function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.Element {
   const { token } = theme.useToken()
-  const { judgeName, topic, verdict, dimensions, summary } = result
+  const { judgeName, topic, verdict, dimensions, summary, stageVerdicts } = result
   const affWon = verdict.winner === 'aff'
 
   return (
@@ -383,6 +390,42 @@ function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.Element
         >
           {verdict.reason}
         </Typography.Text>
+      ) : null}
+
+      {/* 批3：环节判定区（仅提供分段时显示） */}
+      {stageVerdicts && stageVerdicts.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            环节判定
+          </div>
+          {stageVerdicts.map((sv, i) => {
+            const svAffWon = sv.winner === 'aff'
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                  marginBottom: 4,
+                  flexWrap: 'wrap'
+                }}
+              >
+                <span style={{ color: token.colorTextSecondary }}>
+                  {STAGE_NAMES[sv.stage] ?? sv.stage}
+                </span>
+                <Tag color={svAffWon ? 'blue' : 'orange'}>{svAffWon ? '正方胜' : '反方胜'}</Tag>
+                <span style={{ color: token.colorTextSecondary }}>
+                  {Math.round(sv.confidence * 100)}%
+                </span>
+                {sv.comment ? (
+                  <span style={{ color: token.colorText }}>{sv.comment}</span>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
       ) : null}
 
       {/* 五维双方评分对比 */}
