@@ -94,7 +94,9 @@ import type {
   ToolConfirmRule,
   ToolConfirmResult,
   TestConnectionResult,
-  LLMConfig
+  LLMConfig,
+  RunToolRequest,
+  RunToolResult
 } from '../shared/agent-types'
 
 /**
@@ -558,6 +560,17 @@ const agentAPI: AgentAPI = {
    */
   cancel(sessionId?: string): Promise<void> {
     return ipcRenderer.invoke('agent:cancel', sessionId)
+  },
+  /**
+   * 直接调用裁判工具（AI 裁判工作台，2026-08-18）。
+   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent / rewrite_speech。
+   */
+  runTool(req: RunToolRequest): Promise<RunToolResult> {
+    return ipcRenderer.invoke('agent:run-tool', req)
+  },
+  /** 取消当前进行中的 runTool 调用（AI 裁判工作台「取消」按钮） */
+  cancelTool(): Promise<void> {
+    return ipcRenderer.invoke('agent:cancel-tool')
   },
   /**
    * 回传工具人工确认结果（Task 32 / 41.4）。

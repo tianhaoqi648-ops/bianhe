@@ -10,6 +10,7 @@ import EventManage from './pages/EventManage';
 import History from './pages/History';
 import TimerPage from './pages/TimerPage';
 import FormatEditor from './pages/FormatEditor';
+import JudgeArena from './pages/JudgeArena';
 import Settings from './pages/Settings';
 import { getThemeConfig } from './styles/theme';
 import { contentBgStyle } from './styles/shared';
@@ -222,6 +223,7 @@ function AppLayout() {
                 <Route path="/history" element={<History />} />
                 <Route path="/timer" element={<TimerPage />} />
                 <Route path="/format-editor" element={<FormatEditor />} />
+                <Route path="/judge" element={<JudgeArena />} />
                 <Route path="/settings" element={<Settings />} />
               </Routes>
             </div>

@@ -358,6 +358,28 @@ export interface AgentConfigAPI {
  *
  * SubTask 30.4：扩展 session 与 config 命名空间，支持多会话持久化与工具确认规则配置。
  */
+
+/** agent:run-tool 请求（AI 裁判工作台直接调工具，2026-08-18） */
+export interface RunToolRequest {
+  /** 工具名（白名单：5 个裁判工具） */
+  toolName: string
+  /** 工具入参（与各工具 schema 对齐） */
+  args: Record<string, unknown>
+  /** LLM 连接配置（由渲染进程从 settingsStore.aiConfig 传入） */
+  config: LLMConfig
+  /** 会话 id（可选，用于会话上下文归属） */
+  sessionId?: string
+}
+
+/** agent:run-tool 结果（AI 裁判工作台） */
+export interface RunToolResult {
+  success: boolean
+  code?: 'ok' | 'forbidden_tool' | 'not_found' | 'no_api_key' | 'cancelled' | 'error'
+  message?: string
+  /** 工具执行结果（成功时） */
+  data?: unknown
+}
+
 export interface AgentAPI {
   /**
    * 发起 Agent 对话。
@@ -377,6 +399,14 @@ export interface AgentAPI {
    * @param sessionId 会话 id；缺失时取消当前窗口全部进行中的对话（兼容旧调用）
    */
   cancel(sessionId?: string): Promise<void>
+  /**
+   * 直接调用裁判工具（AI 裁判工作台，2026-08-18）。
+   * 白名单：judge_debate / judge_speech / detect_stage / simulate_opponent / rewrite_speech。
+   * 绕过 agent-loop 聊天流，表单直接执行；结果通过返回值返回。
+   */
+  runTool(req: RunToolRequest): Promise<RunToolResult>
+  /** 取消当前进行中的 runTool 调用（AI 裁判工作台「取消」按钮） */
+  cancelTool(): Promise<void>
   /**
    * 回传工具人工确认结果（Task 32 / 41.4）。
    * 渲染进程在 ToolConfirmModal 中点击「确认/取消」后调用本方法，

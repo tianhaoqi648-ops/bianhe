@@ -39,6 +39,8 @@ const mockTestConnection = vi.fn()
     cancel: mockCancel,
     confirmResult: mockConfirmResult,
     exportSession: vi.fn(),
+    runTool: vi.fn(),
+    cancelTool: vi.fn(),
     session: {
       list: mockList,
       create: mockCreate,

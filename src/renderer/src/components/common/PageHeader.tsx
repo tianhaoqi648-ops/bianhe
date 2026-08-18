@@ -51,7 +51,7 @@ export interface PageHeaderProps {
 /** 金色路由前缀（赛事工作区） */
 const GOLD_ROUTES = ['/draw', '/topics', '/events', '/history', '/teams']
 /** 紫色路由前缀（比赛工具区） */
-const PURPLE_ROUTES = ['/timer', '/format']
+const PURPLE_ROUTES = ['/timer', '/format', '/judge']
 /** 蓝色路由前缀（系统区） */
 const PRIMARY_ROUTES = ['/settings']
 

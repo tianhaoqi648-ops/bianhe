@@ -16,6 +16,7 @@ import {
   HistoryOutlined,
   ClockCircleOutlined,
   FormOutlined,
+  RobotOutlined,
   SettingOutlined
 } from '@ant-design/icons'
 import type { CSSProperties, ReactNode } from 'react'
@@ -87,7 +88,8 @@ export const MENU_GROUPS: MenuGroupDef[] = [
     items: [
       { key: '/timer', icon: <ClockCircleOutlined />, label: '计时器' },
       // 注意：路由 key 与 App.tsx 现有路由保持一致（/format-editor）
-      { key: '/format-editor', icon: <FormOutlined />, label: '赛制编辑器' }
+      { key: '/format-editor', icon: <FormOutlined />, label: '赛制编辑器' },
+      { key: '/judge', icon: <RobotOutlined />, label: 'AI 裁判' }
     ]
   },
   {

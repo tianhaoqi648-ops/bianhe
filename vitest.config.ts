@@ -23,7 +23,8 @@ export default defineConfig({
       'src/renderer/src/stores/__tests__/**/*.test.ts',
       'src/main/agent/__tests__/**/*.test.ts',
       'src/main/agent/tools/__tests__/**/*.test.ts',
-      'src/main/db/repository/__tests__/**/*.test.ts'
+      'src/main/db/repository/__tests__/**/*.test.ts',
+      'src/main/ipc/__tests__/**/*.test.ts'
     ],
     environment: 'node',
     globals: false

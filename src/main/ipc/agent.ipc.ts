@@ -22,10 +22,11 @@
 // ============================================================
 
 import { ipcMain, type WebContents } from 'electron'
-import type { ChatRequest, ChatEvent, TestConnectionResult, LLMConfig } from '@shared/agent-types'
+import type { ChatRequest, ChatEvent, TestConnectionResult, LLMConfig, RunToolRequest } from '@shared/agent-types'
 import { runAgentLoop } from '../agent/agent-loop'
 import { buildSystemPrompt } from '../agent/prompt-templates'
 import { LLMError, chat, validateConfig } from '../agent/llm-client'
+import { runJudgeTool } from './run-tool'
 
 /**
  * 进行中的对话 AbortController，按 sessionId 维度管理（2026-08-18）。
@@ -36,6 +37,9 @@ const activeControllers = new Map<string, { controller: AbortController; webCont
 
 /** 无 sessionId 时的默认 key */
 const DEFAULT_SESSION_KEY = '__default__'
+
+/** run-tool 专用 controller key（AI 裁判工作台：同时只跑一个操作） */
+const RUN_TOOL_KEY = '__run_tool__'
 
 /**
  * 注册 Agent IPC handler。
@@ -196,6 +200,38 @@ export function registerAgentIpc(): void {
         entry.controller.abort()
         activeControllers.delete(key)
       }
+    }
+  })
+
+  // ---------- agent:run-tool / agent:cancel-tool ----------
+  // AI 裁判工作台（2026-08-18）：表单直接调 5 个裁判工具（白名单见 run-tool.ts），
+  // 绕过聊天流；同时只跑一个操作（RUN_TOOL_KEY 覆盖旧操作）。
+  ipcMain.handle('agent:run-tool', async (event, req: RunToolRequest) => {
+    const webContents = event.sender
+    // 防御性：abort 上一次 run-tool（若有）
+    const oldEntry = activeControllers.get(RUN_TOOL_KEY)
+    if (oldEntry) {
+      try {
+        oldEntry.controller.abort()
+      } catch {
+        // 忽略 abort 异常
+      }
+      activeControllers.delete(RUN_TOOL_KEY)
+    }
+    const controller = new AbortController()
+    activeControllers.set(RUN_TOOL_KEY, { controller, webContents })
+    try {
+      return await runJudgeTool(req, controller.signal)
+    } finally {
+      activeControllers.delete(RUN_TOOL_KEY)
+    }
+  })
+
+  ipcMain.handle('agent:cancel-tool', async (event) => {
+    const entry = activeControllers.get(RUN_TOOL_KEY)
+    if (entry && entry.webContents === event.sender) {
+      entry.controller.abort()
+      activeControllers.delete(RUN_TOOL_KEY)
     }
   })
 }
