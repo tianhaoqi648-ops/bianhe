@@ -28,10 +28,14 @@ import { buildSystemPrompt } from '../agent/prompt-templates'
 import { LLMError, chat, validateConfig } from '../agent/llm-client'
 
 /**
- * 每个 webContents 对应一个进行中的 AbortController。
- * 多窗口独立对话互不影响；同一窗口同时只有一个活跃对话。
+ * 进行中的对话 AbortController，按 sessionId 维度管理（2026-08-18）。
+ * 支持多会话并发：切走会话不中断其后台回复；同会话新对话才覆盖旧 controller。
+ * 无 sessionId 用 '__default__' key（兼容旧调用/无会话场景）。
  */
-const activeControllers = new Map<WebContents, AbortController>()
+const activeControllers = new Map<string, { controller: AbortController; webContents: WebContents }>()
+
+/** 无 sessionId 时的默认 key */
+const DEFAULT_SESSION_KEY = '__default__'
 
 /**
  * 注册 Agent IPC handler。
@@ -42,35 +46,34 @@ export function registerAgentIpc(): void {
   ipcMain.handle('agent:chat', async (event, request: ChatRequest) => {
     const webContents = event.sender
     const { message, context, config, sessionId } = request
+    const sessionKey = sessionId ?? DEFAULT_SESSION_KEY
 
     // Task 17.1：API Key 未配置（config 缺失或 apiKey 为空）
     // 直接推送 error 事件并返回，不进入 agent-loop
     if (!config || !config.apiKey) {
       sendEvent(webContents, {
         type: 'error',
+        sessionId: sessionId ?? '',
         code: 'no_api_key',
         message: '未配置 API Key，请先在设置页「AI 助手」中配置'
       })
       return
     }
 
-    // 防御性：若同 webContents 有旧 AbortController，先 abort 并清理。
-    // 避免旧对话的流式事件继续推送到渲染进程（与渲染进程侧的 handler 清理配合），
-    // 防止旧对话的 delta 与新对话的 delta 交叠造成字符双写。
-    const oldController = activeControllers.get(webContents)
-    if (oldController) {
+    // 防御性：若同会话有旧 AbortController，先 abort 并清理（同会话新对话覆盖旧对话）。
+    // 不同会话的 controller 互不影响——切走会话的后台回复不被其他会话的新对话打断。
+    const oldEntry = activeControllers.get(sessionKey)
+    if (oldEntry) {
       try {
-        oldController.abort()
+        oldEntry.controller.abort()
       } catch {
         // 忽略 abort 异常
       }
-      activeControllers.delete(webContents)
+      activeControllers.delete(sessionKey)
     }
 
-    // 创建 AbortController 并绑定到当前 webContents
-    // （若同一窗口仍有旧对话在进行，旧 controller 被覆盖；渲染进程应先调用 cancel）
     const controller = new AbortController()
-    activeControllers.set(webContents, controller)
+    activeControllers.set(sessionKey, { controller, webContents })
 
     try {
       await runAgentLoop({
@@ -79,7 +82,9 @@ export function registerAgentIpc(): void {
         context,
         sessionId,
         config,
-        onEvent: (evt) => sendEvent(webContents, evt),
+        // 2026-08-18：事件统一注入 sessionId（供渲染层按会话路由）
+        onEvent: (evt) =>
+          sendEvent(webContents, { ...evt, sessionId: sessionId ?? '' } as ChatEvent),
         signal: controller.signal
       })
     } catch (err) {
@@ -87,9 +92,9 @@ export function registerAgentIpc(): void {
       // 这里捕获未被内部处理的异常（理论上不应到达），作为最后防线
       const code = err instanceof LLMError ? err.code : 'unknown'
       const msg = err instanceof Error ? err.message : String(err)
-      sendEvent(webContents, { type: 'error', code, message: msg })
+      sendEvent(webContents, { type: 'error', sessionId: sessionId ?? '', code, message: msg })
     } finally {
-      activeControllers.delete(webContents)
+      activeControllers.delete(sessionKey)
     }
   })
 
@@ -175,11 +180,22 @@ export function registerAgentIpc(): void {
   )
 
   // ---------- agent:cancel ----------
-  ipcMain.handle('agent:cancel', async (event) => {
-    const controller = activeControllers.get(event.sender)
-    if (controller) {
-      controller.abort()
-      activeControllers.delete(event.sender)
+  // 2026-08-18：按 sessionId 取消指定会话；缺失时取消该窗口全部进行中的对话（兼容旧调用）
+  ipcMain.handle('agent:cancel', async (event, sessionId?: string) => {
+    if (typeof sessionId === 'string' && sessionId !== '') {
+      const entry = activeControllers.get(sessionId)
+      if (entry) {
+        entry.controller.abort()
+        activeControllers.delete(sessionId)
+      }
+      return
+    }
+    // 兼容：未传 sessionId 时取消该窗口全部会话
+    for (const [key, entry] of activeControllers) {
+      if (entry.webContents === event.sender) {
+        entry.controller.abort()
+        activeControllers.delete(key)
+      }
     }
   })
 }

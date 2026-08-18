@@ -523,20 +523,24 @@ const agentAPI: AgentAPI = {
    */
   chat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void {
     const handler = (_event: unknown, data: ChatEvent): void => onEvent(data)
-    // 防御性：注册新 handler 前移除所有旧的 'agent:event' 监听器，
-    // 确保同一时刻只有一个 handler 监听该通道。
-    // 正常情况下 agentStore 会在 done/error 时调用 cancelFn 清理，
-    // 此处作为防御层，避免任何残留 handler 导致 delta 事件被重复处理（字符双写）。
-    ipcRenderer.removeAllListeners('agent:event')
+    // 2026-08-18：移除全局 removeAllListeners——多会话并发时，A 会话完成/取消会
+    // 误删 B 会话的 handler。每个 chat 注册独立 handler，取消函数仅移除自身。
     ipcRenderer.on('agent:event', handler)
     // 异步发起调用，不阻塞
     ipcRenderer.invoke('agent:chat', request).catch((err) => {
-      onEvent({ type: 'error', code: 'unknown', message: err?.message ?? String(err) })
+      onEvent({
+        type: 'error',
+        sessionId: request.sessionId ?? '',
+        code: 'unknown',
+        message: err?.message ?? String(err)
+      })
     })
-    // 返回取消函数
+    // 返回取消函数：仅取消本会话（2026-08-18 按 sessionId 维度）
     return () => {
       ipcRenderer.removeListener('agent:event', handler)
-      ipcRenderer.send('agent:cancel')
+      ipcRenderer.invoke('agent:cancel', request.sessionId ?? '').catch(() => {
+        // 取消请求失败可忽略（主进程 may 已无该会话的 controller）
+      })
     }
   },
   /**
@@ -548,9 +552,12 @@ const agentAPI: AgentAPI = {
   testConnection(config: LLMConfig): Promise<TestConnectionResult> {
     return ipcRenderer.invoke('agent:test-connection', config)
   },
-  /** 取消当前进行中的对话 */
-  cancel(): Promise<void> {
-    return ipcRenderer.invoke('agent:cancel')
+  /**
+   * 取消指定会话进行中的对话（2026-08-18：按会话维度取消，支持多会话并发）。
+   * @param sessionId 会话 id；缺失时取消当前窗口全部进行中的对话（兼容旧调用）
+   */
+  cancel(sessionId?: string): Promise<void> {
+    return ipcRenderer.invoke('agent:cancel', sessionId)
   },
   /**
    * 回传工具人工确认结果（Task 32 / 41.4）。

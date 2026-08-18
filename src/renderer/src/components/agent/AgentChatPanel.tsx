@@ -35,6 +35,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useHotkeys } from '../../hooks/useHotkeys'
 import { useAgentStore } from '../../stores/agentStore'
+import { useAgentSessionStore } from '../../stores/agentSessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { AgentMessage } from './AgentMessage'
 import { AgentInput } from './AgentInput'
@@ -75,9 +76,15 @@ export function AgentChatPanel({
   const { token } = theme.useToken()
   const navigate = useNavigate()
 
-  const messages = useAgentStore((s) => s.messages)
+  // 2026-08-18：消息/loading 按会话分桶读取（当前活动会话的桶）
+  const currentSessionId = useAgentSessionStore((s) => s.currentSessionId)
+  const messages = useAgentStore((s) =>
+    currentSessionId ? s.messagesBySession[currentSessionId] : (s.messagesBySession['__default__'] ?? [])
+  )
   const error = useAgentStore((s) => s.error)
-  const isLoading = useAgentStore((s) => s.isLoading)
+  const isLoading = useAgentStore((s) =>
+    currentSessionId ? s.loadingBySession[currentSessionId] ?? false : false
+  )
   const lastUserText = useAgentStore((s) => s.lastUserText)
   const clearMessages = useAgentStore((s) => s.clearMessages)
   const clearError = useAgentStore((s) => s.clearError)
@@ -132,7 +139,7 @@ export function AgentChatPanel({
       okText: '清空',
       cancelText: '取消',
       okButtonProps: { danger: true },
-      onOk: () => clearMessages()
+      onOk: () => clearMessages(currentSessionId ?? undefined)
     })
   }
 

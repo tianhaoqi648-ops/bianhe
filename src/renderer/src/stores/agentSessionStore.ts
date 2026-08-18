@@ -128,7 +128,7 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       return null
     }
     const resetChat = opts?.resetChat ?? true
-    // P0-2：创建新会话前取消进行中的流式对话，防止 delta 写入旧会话位置。
+    // P0-2：创建新会话前取消当前活动会话的流式对话（仅影响活动会话，2026-08-18 按会话维度）。
     // resetChat:false（发送时自动建）跳过：不应清空刚输入的消息、也不破坏 sendMessage 的 loading 状态。
     if (resetChat) {
       useAgentStore.getState().cancel()
@@ -141,10 +141,10 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
         sessions: [created, ...s.sessions],
         currentSessionId: created.id
       }))
-      // 切换会话时清空 agentStore 的消息与上下文（新会话无历史）。
-      // resetChat:false 时跳过：发送链路已把用户消息加入 agentStore.messages，不能清掉。
+      // 2026-08-18：消息改为按会话分桶（messagesBySession），新会话的桶天然为空，
+      // 旧会话桶保留（切回仍可见），不再调用 clearMessages。
+      // resetChat 时仍清空业务上下文（新会话无选中辩题/赛事）。
       if (resetChat) {
-        useAgentStore.getState().clearMessages()
         useAgentStore.getState().clearContext()
       }
       return created
@@ -156,11 +156,15 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
 
   switchSession: async (id) => {
     if (get().currentSessionId === id) return
-    // P0-2：切换会话前取消进行中的流式对话，防止 delta 写入错误会话
-    useAgentStore.getState().cancel()
+    // 2026-08-18：切换会话不再取消进行中的流式对话——回复在主进程后台继续完成，
+    // 事件按 sessionId 路由到对应桶，切回时直接看到完整/进行中的内容。
     set({ currentSessionId: id })
-    // 联动 agentStore：加载会话消息与上下文
-    await get().loadSessionMessages(id)
+    // 联动 agentStore：优先读内存桶（含流式增量/进行中状态），无缓存才从 DB 加载，
+    // 避免 DB（整轮完成才落库）覆盖内存中尚未完成的回复。
+    const hasMemBucket = (useAgentStore.getState().messagesBySession[id]?.length ?? 0) > 0
+    if (!hasMemBucket) {
+      await get().loadSessionMessages(id)
+    }
   },
 
   renameSession: async (id, title) => {
@@ -195,8 +199,8 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       set({ error: 'Agent 服务未就绪（window.agent 不可用）' })
       return false
     }
-    // P0-2：删除会话前取消进行中的流式对话
-    useAgentStore.getState().cancel()
+    // P0-2：删除会话前取消该会话的流式对话（2026-08-18：仅取消被删会话）
+    useAgentStore.getState().cancel(id)
     set({ error: null })
     try {
       const ok = await extractData(api.session.delete(id))
@@ -405,7 +409,7 @@ export const useAgentSessionStore = create<AgentSessionState>((set, get) => ({
       }
       // 遍历结束，结算最后一个回合
       flushAssistantAccumulator()
-      agentStore.setMessages(uiMessages)
+      agentStore.setMessages(id, uiMessages)
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) })
     }

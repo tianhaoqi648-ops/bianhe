@@ -172,6 +172,7 @@ vi.mock('../../db/index', () => ({
 import { runAgentLoop } from '../agent-loop'
 import type {
   ChatEvent,
+  ChatEventWithoutSession,
   LLMConfig,
   AssistantMessage,
   ToolConfirmResult
@@ -228,9 +229,11 @@ async function simulateConfirmResult(result: ToolConfirmResult): Promise<void> {
 }
 
 /** 收集 onEvent 推送的事件 */
-function collectEvents(): { events: ChatEvent[]; onEvent: (e: ChatEvent) => void } {
+function collectEvents(): { events: ChatEvent[]; onEvent: (e: ChatEventWithoutSession) => void } {
   const events: ChatEvent[] = []
-  const onEvent = (e: ChatEvent) => events.push(e)
+  const onEvent = (e: ChatEventWithoutSession): void => {
+    events.push(e as ChatEvent)
+  }
   return { events, onEvent }
 }
 
@@ -690,9 +693,10 @@ describe('runAgentLoop：多会话上下文隔离（P0-1）', () => {
       onEvent
     })
 
-    // 1. 恢复历史：setMessages 被调用，且收到的是该会话恢复的消息
+    // 1. 恢复历史：setMessages(sessionId, msgs) 被调用，且收到的是该会话恢复的消息
     expect(mockSetMessages).toHaveBeenCalledTimes(1)
-    const restored = mockSetMessages.mock.calls[0][0] as unknown[]
+    expect(mockSetMessages.mock.calls[0][0]).toBe('s1')
+    const restored = mockSetMessages.mock.calls[0][1] as unknown[]
     expect(restored).toHaveLength(1)
     expect(restored[0]).toMatchObject({ role: 'user', content: '上次的问题' })
 
@@ -761,8 +765,8 @@ describe('runAgentLoop：多会话上下文隔离（P0-1）', () => {
       onEvent
     })
 
-    // 清空历史：setMessages 以空数组调用
-    expect(mockSetMessages).toHaveBeenCalledWith([])
+    // 清空历史：setMessages(undefined, []) 以空数组调用
+    expect(mockSetMessages).toHaveBeenCalledWith(undefined, [])
     // 不落库
     expect(mockMessageAdd).not.toHaveBeenCalled()
     // 不持久化上下文

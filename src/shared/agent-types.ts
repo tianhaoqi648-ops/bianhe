@@ -143,12 +143,15 @@ export interface ChatRequest {
 /** 文本增量事件（assistant 输出 token 流） */
 export interface DeltaEvent {
   type: 'delta'
+  /** 所属会话 id（2026-08-18：支持多会话并发路由） */
+  sessionId: string
   text: string
 }
 
 /** 工具调用开始事件（主进程即将执行工具） */
 export interface ToolCallStartEvent {
   type: 'tool_call_start'
+  sessionId: string
   toolCallId: string
   toolName: string
   args: Record<string, unknown>
@@ -157,6 +160,7 @@ export interface ToolCallStartEvent {
 /** 工具调用结果事件（主进程执行工具后回传） */
 export interface ToolCallResultEvent {
   type: 'tool_call_result'
+  sessionId: string
   toolCallId: string
   toolName: string
   success: boolean
@@ -167,6 +171,7 @@ export interface ToolCallResultEvent {
 /** 工具调用人工确认事件（高风险工具执行前由主进程推送，渲染进程弹出确认框） */
 export interface ToolCallConfirmEvent {
   type: 'tool_call_confirm'
+  sessionId: string
   toolCallId: string
   toolName: string
   args: Record<string, unknown>
@@ -177,11 +182,13 @@ export interface ToolCallConfirmEvent {
 /** 对话完成事件 */
 export interface DoneEvent {
   type: 'done'
+  sessionId: string
 }
 
 /** 错误事件 */
 export interface ErrorEvent {
   type: 'error'
+  sessionId: string
   code: 'no_api_key' | 'invalid_api_key' | 'rate_limit' | 'network' | 'tool_error' | 'unknown'
   message: string
 }
@@ -194,6 +201,19 @@ export type ChatEvent =
   | ToolCallConfirmEvent
   | DoneEvent
   | ErrorEvent
+
+/**
+ * 不带 sessionId 的流式事件联合（2026-08-18 引入）。
+ * 主进程 agent-loop 内部生成事件时不含 sessionId，由 ipc 层统一注入。
+ * 注意：不能用 Omit<ChatEvent, 'sessionId'>（联合类型 Omit 不分发，会退化为仅公共字段）。
+ */
+export type ChatEventWithoutSession =
+  | Omit<DeltaEvent, 'sessionId'>
+  | Omit<ToolCallStartEvent, 'sessionId'>
+  | Omit<ToolCallResultEvent, 'sessionId'>
+  | Omit<ToolCallConfirmEvent, 'sessionId'>
+  | Omit<DoneEvent, 'sessionId'>
+  | Omit<ErrorEvent, 'sessionId'>
 
 /** 测试连接结果 */
 export interface TestConnectionResult {
@@ -352,8 +372,11 @@ export interface AgentAPI {
    * @returns 测试结果（含成功/失败、错误码、耗时）
    */
   testConnection(config: LLMConfig): Promise<TestConnectionResult>
-  /** 取消当前进行中的对话 */
-  cancel(): Promise<void>
+  /**
+   * 取消指定会话进行中的对话（2026-08-18：按会话维度取消，支持多会话并发）。
+   * @param sessionId 会话 id；缺失时取消当前窗口全部进行中的对话（兼容旧调用）
+   */
+  cancel(sessionId?: string): Promise<void>
   /**
    * 回传工具人工确认结果（Task 32 / 41.4）。
    * 渲染进程在 ToolConfirmModal 中点击「确认/取消」后调用本方法，

@@ -25,6 +25,7 @@ import { Input, Button, Dropdown, Typography, theme, Menu } from 'antd'
 import { SendOutlined, StopOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { useAgentStore } from '../../stores/agentStore'
+import { useAgentSessionStore } from '../../stores/agentSessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 
 /** AgentInput Props */
@@ -59,7 +60,11 @@ export function AgentInput({ onNavigateToSettings }: AgentInputProps): JSX.Eleme
   const { token } = theme.useToken()
   const [value, setValue] = useState('')
 
-  const isLoading = useAgentStore((s) => s.isLoading)
+  // 2026-08-18：loading 按当前活动会话的桶读取；停止按钮只取消该会话
+  const currentSessionId = useAgentSessionStore((s) => s.currentSessionId)
+  const isLoading = useAgentStore((s) =>
+    currentSessionId ? s.loadingBySession[currentSessionId] ?? false : false
+  )
   const sendMessage = useAgentStore((s) => s.sendMessage)
   const cancel = useAgentStore((s) => s.cancel)
 
@@ -74,10 +79,10 @@ export function AgentInput({ onNavigateToSettings }: AgentInputProps): JSX.Eleme
     setValue('')
   }
 
-  /** 按钮点击：loading 时取消，否则发送 */
+  /** 按钮点击：loading 时取消（仅当前会话），否则发送 */
   const handleButtonClick = (): void => {
     if (isLoading) {
-      cancel()
+      cancel(currentSessionId ?? undefined)
     } else {
       handleSend()
     }

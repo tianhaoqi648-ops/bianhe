@@ -26,7 +26,7 @@
 
 import { ipcMain } from 'electron'
 import type {
-  ChatEvent,
+  ChatEventWithoutSession,
   LLMConfig,
   AgentContext,
   AssistantMessage,
@@ -53,8 +53,11 @@ import { getDb } from '../db/index'
 // 类型定义
 // ============================================================
 
-/** 流式事件回调类型 */
-export type AgentEventCallback = (event: ChatEvent) => void
+/**
+ * 流式事件回调类型。
+ * 2026-08-18：事件不带 sessionId（由 ipc 层统一注入，agent-loop 内部无需感知）。
+ */
+export type AgentEventCallback = (event: ChatEventWithoutSession) => void
 
 /** runAgentLoop 入参 */
 export interface RunAgentLoopParams {
@@ -170,7 +173,7 @@ function toPreview(text: string): string {
  * 落库失败仅记录日志，不中断对话。
  */
 function appendMessage(sessionId: string | undefined, msg: Message): void {
-  addMessage(msg)
+  addMessage(sessionId, msg)
   if (!sessionId) return
   try {
     agentMessageRepo.add(sessionId, messageToRecord(msg))
@@ -194,27 +197,27 @@ function appendMessage(sessionId: string | undefined, msg: Message): void {
  */
 function restoreSession(sessionId: string | undefined): void {
   if (!sessionId) {
-    setMessages([])
+    setMessages(sessionId, [])
     return
   }
   try {
     const history = agentMessageRepo.listBySession(sessionId).map(recordToMessage)
-    setMessages(history)
+    setMessages(sessionId, history)
   } catch (e) {
     console.error('[agent-loop] 恢复会话历史失败：', e)
-    setMessages([])
+    setMessages(sessionId, [])
   }
   try {
     const session = agentSessionRepo.get(sessionId)
     if (session?.context && Object.keys(session.context).length > 0) {
-      clearContext()
-      setContext(session.context)
+      clearContext(sessionId)
+      setContext(sessionId, session.context)
     } else {
-      clearContext()
+      clearContext(sessionId)
     }
   } catch (e) {
     console.error('[agent-loop] 恢复会话上下文失败：', e)
-    clearContext()
+    clearContext(sessionId)
   }
 }
 
@@ -222,7 +225,7 @@ function restoreSession(sessionId: string | undefined): void {
 function persistContext(sessionId: string | undefined): void {
   if (!sessionId) return
   try {
-    agentSessionRepo.updateContext(sessionId, getContext())
+    agentSessionRepo.updateContext(sessionId, getContext(sessionId))
   } catch (e) {
     console.error('[agent-loop] 持久化会话上下文失败：', e)
   }
@@ -239,6 +242,8 @@ function persistContext(sessionId: string | undefined): void {
 
 /** 待确认工具调用的 Promise 解析器 */
 interface PendingConfirm {
+  /** 所属会话 id（2026-08-18：并发时防串台，记录会话归属） */
+  sessionId?: string
   resolve: (result: ToolConfirmResult) => void
 }
 
@@ -282,11 +287,13 @@ registerConfirmResultHandler()
  *   - 使用 Promise 暂停当前工具执行流程，不阻塞主进程事件循环
  *   - 通过 5 分钟超时防止永久挂起，超时视为取消
  *   - 收到结果或超时后均清理 Map 条目，避免内存泄漏
+ *   - 2026-08-18：记录所属 sessionId（并发多会话时防确认串台）
  *
  * @param toolCallId 工具调用 ID（用于匹配渲染进程回传的结果）
+ * @param sessionId 所属会话 id（可选）
  * @returns 确认结果（confirmed=true/false，可能含 modifiedArgs）
  */
-function waitForConfirm(toolCallId: string): Promise<ToolConfirmResult> {
+function waitForConfirm(toolCallId: string, sessionId?: string): Promise<ToolConfirmResult> {
   return new Promise<ToolConfirmResult>((resolve) => {
     let settled = false
 
@@ -300,7 +307,7 @@ function waitForConfirm(toolCallId: string): Promise<ToolConfirmResult> {
     }
 
     // 注册到 Map，等待 'agent:confirm-result' handler 调用
-    pendingConfirms.set(toolCallId, { resolve: wrappedResolve })
+    pendingConfirms.set(toolCallId, { sessionId, resolve: wrappedResolve })
 
     // 超时定时器：5 分钟后视为取消，自动清理 Map 条目（Task 32.7）
     const timer = setTimeout(() => {
@@ -423,7 +430,7 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
     //    注意：restoreSession 已恢复会话持久化的上下文，此处 params.context
     //    是本次请求的最新业务状态（用户可能切换页面/选中新辩题），覆盖/合并之。
     if (context) {
-      setContext(context)
+      setContext(sessionId, context)
     }
 
     // 2. 将用户消息加入会话历史（内存 + 按 sessionId 落库 + 刷新最近消息预览）
@@ -446,7 +453,7 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
       }
 
     // 构建完整消息列表（含 system prompt）
-    const messages = buildLLMMessages(systemPrompt)
+    const messages = buildLLMMessages(sessionId, systemPrompt)
 
     // 调用 LLM 流式接口
     let assistantMessage: AssistantMessage
@@ -522,7 +529,7 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
         })
 
         // Task 32.3 / 32.4 / 32.7：暂停执行，等待确认结果（含 5 分钟超时）
-        const confirmResult = await waitForConfirm(toolCall.id)
+        const confirmResult = await waitForConfirm(toolCall.id, sessionId)
 
         // Task 32.6：用户取消（confirmed=false 或超时）→ 将取消信息作为 tool_result 反馈 LLM
         if (!confirmResult.confirmed) {

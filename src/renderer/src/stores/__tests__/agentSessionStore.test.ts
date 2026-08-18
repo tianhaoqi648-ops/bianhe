@@ -86,8 +86,8 @@ describe('agentSessionStore 自动建会话（loadSessions 启动预建）', () 
       error: null
     })
     useAgentStore.setState({
-      messages: [],
-      isLoading: false,
+      messagesBySession: {},
+      loadingBySession: {},
       context: { currentTopic: null, currentEvent: null, currentPage: undefined },
       contextLocked: false,
       error: null,
@@ -165,8 +165,8 @@ describe('agentSessionStore createSession resetChat 选项', () => {
       error: null
     })
     useAgentStore.setState({
-      messages: [],
-      isLoading: false,
+      messagesBySession: {},
+      loadingBySession: {},
       context: { currentTopic: null, currentEvent: null, currentPage: undefined },
       contextLocked: false,
       error: null,
@@ -177,7 +177,7 @@ describe('agentSessionStore createSession resetChat 选项', () => {
     })
   })
 
-  it('默认 resetChat=true：取消流式并清空消息/上下文', async () => {
+  it('默认 resetChat=true：取消流式并清空上下文（消息按会话分桶，不再清消息）', async () => {
     const cancelSpy = vi.spyOn(useAgentStore.getState(), 'cancel').mockImplementation(() => {})
     const clearMessagesSpy = vi
       .spyOn(useAgentStore.getState(), 'clearMessages')
@@ -191,7 +191,9 @@ describe('agentSessionStore createSession resetChat 选项', () => {
 
     expect(created?.id).toBe('sess-a')
     expect(cancelSpy).toHaveBeenCalledTimes(1)
-    expect(clearMessagesSpy).toHaveBeenCalledTimes(1)
+    // 2026-08-18：消息改为 messagesBySession 分桶，新会话桶天然为空，
+    // 旧会话桶保留（切回仍可见），createSession 不再调用 clearMessages。
+    expect(clearMessagesSpy).not.toHaveBeenCalled()
     expect(clearContextSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -261,8 +263,8 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
       error: null
     })
     useAgentStore.setState({
-      messages: [],
-      isLoading: false,
+      messagesBySession: {},
+      loadingBySession: {},
       context: { currentTopic: null, currentEvent: null, currentPage: undefined },
       contextLocked: false,
       error: null,
@@ -345,7 +347,7 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
 
     await useAgentSessionStore.getState().loadSessionMessages('sess-a')
 
-    const msgs = useAgentStore.getState().messages
+    const msgs = useAgentStore.getState().messagesBySession['sess-a'] ?? []
     // 回合合并：user + 1 条合并的 assistant；tool_result 不生成独立气泡
     expect(msgs).toHaveLength(2)
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
@@ -434,7 +436,7 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
 
     await useAgentSessionStore.getState().loadSessionMessages('sess-a')
 
-    const msgs = useAgentStore.getState().messages
+    const msgs = useAgentStore.getState().messagesBySession['sess-a'] ?? []
     // user(问题一) + assistant(合并回答一) + user(问题二) + assistant(回答二)
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
     expect(msgs[0].content).toBe('问题一')
@@ -491,7 +493,7 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
 
     await useAgentSessionStore.getState().loadSessionMessages('sess-a')
 
-    const msgs = useAgentStore.getState().messages
+    const msgs = useAgentStore.getState().messagesBySession['sess-a'] ?? []
     expect(msgs).toHaveLength(2)
     // 纯工具轮的卡片并入最终助手消息，正文不含空气泡
     expect(msgs[1].content).toBe('推荐华辩赛制。')
@@ -529,7 +531,7 @@ describe('loadSessionMessages 历史工具调用恢复（F5 修复）', () => {
 
     await useAgentSessionStore.getState().loadSessionMessages('sess-a')
 
-    const msgs = useAgentStore.getState().messages
+    const msgs = useAgentStore.getState().messagesBySession['sess-a'] ?? []
     expect(msgs).toHaveLength(2)
     expect(msgs[1].content).toBe('你好！有什么可以帮你？')
     expect(msgs[1].toolCalls).toBeUndefined()
