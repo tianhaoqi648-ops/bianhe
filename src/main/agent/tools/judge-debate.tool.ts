@@ -17,7 +17,7 @@
 
 import type { ToolDefinition } from '@shared/agent-types'
 import type { LLMConfig } from '@shared/agent-types'
-import { FIVE_DIMENSIONS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
+import { FIVE_DIMENSIONS, JUDGE_IDS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
 import { chat, LLMError } from '../llm-client'
 import { buildJudgeSystemPrompt, parseJsonResult } from './judge-common'
 
@@ -77,9 +77,6 @@ export interface JudgeDebateFailure {
   success: false
   error: string
 }
-
-/** 评委 id 白名单（供 parameters enum 与校验用） */
-const JUDGE_IDS = ['hu-jianbiao', 'huang-zhizhong', 'chen-ming', 'zhou-xuanyi', 'xiong-hao']
 
 /** 默认评委：胡渐彪（攻防流） */
 const DEFAULT_JUDGE_ID = 'hu-jianbiao'

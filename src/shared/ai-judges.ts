@@ -168,6 +168,12 @@ export const JUDGES: JudgeProfile[] = [
 ]
 
 /**
+ * 评委 id 白名单（由 JUDGES 派生，供工具 parameters enum 与校验引用，
+ * 避免各工具重复硬编码；JUDGES 增删时自动同步）。
+ */
+export const JUDGE_IDS: string[] = JUDGES.map((j) => j.id)
+
+/**
  * 按 id 取评委人设；未找到返回 undefined（调用方回落默认评委）。
  */
 export function getJudgeById(id: string | undefined): JudgeProfile | undefined {

@@ -208,6 +208,22 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps): JSX.Element {
       (result as { success?: boolean }).success !== false ? (
         <DetectStageResultCard result={result as DetectStageResult} />
       ) : null}
+
+      {/* AI 裁判：simulate_opponent 成功时渲染模拟攻击卡片 */}
+      {toolName === 'simulate_opponent' &&
+      status === 'success' &&
+      result &&
+      (result as { success?: boolean }).success !== false ? (
+        <SimulateOpponentCard result={result as SimulateOpponentResult} />
+      ) : null}
+
+      {/* AI 裁判：rewrite_speech 成功时渲染改写稿卡片 */}
+      {toolName === 'rewrite_speech' &&
+      status === 'success' &&
+      result &&
+      (result as { success?: boolean }).success !== false ? (
+        <RewriteSpeechCard result={result as RewriteSpeechResult} />
+      ) : null}
     </Card>
   )
 }
@@ -687,6 +703,250 @@ function DetectStageResultCard({ result }: { result: DetectStageResult }): JSX.E
         >
           置信度较低：建议在评估稿子时明确指定环节类型（如"这是立论稿"）。
         </Typography.Text>
+      ) : null}
+    </div>
+  )
+}
+
+// ---------- 模拟攻击 / 稿子改写卡片（AI 裁判演进 批2 2026-08-18） ----------
+
+/** simulate_opponent 结果（与 simulate-opponent.tool.ts 对齐） */
+interface SimulateOpponentResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  attackMode: string
+  weaknessSummary: string
+  attackPoints: Array<{
+    layer: 'fact' | 'theory' | 'value'
+    point: string
+    target: string
+    defenseHint: string
+  }>
+}
+
+/** rewrite_speech 结果（与 rewrite-speech.tool.ts 对齐） */
+interface RewriteSpeechResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  stage: string
+  side: 'aff' | 'neg'
+  rewrittenSpeech: string
+  changeNotes: Array<{ target: string; change: string }>
+}
+
+/** 攻击方式 → 展示名与颜色 */
+const ATTACK_MODE_META: Record<string, { label: string; color: string }> = {
+  cross_exam: { label: '质询盘问', color: 'geekblue' },
+  rebuttal: { label: '驳论攻击', color: 'volcano' },
+  free_debate: { label: '自由辩突袭', color: 'purple' }
+}
+
+/** 攻击层次 → Tag 颜色 */
+const LAYER_COLOR: Record<string, string> = {
+  fact: 'blue',
+  theory: 'green',
+  value: 'purple'
+}
+
+/**
+ * simulate_opponent 模拟对方攻击结果卡片。
+ * 展示：评委 + 攻击方式 + 立场；总体弱点；攻击点按 layer 分组（默认折叠），
+ * 每条含攻击内容 + 针对部分 + 防守建议。
+ */
+function SimulateOpponentCard({ result }: { result: SimulateOpponentResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { judgeName, topic, side, attackMode, weaknessSummary, attackPoints } = result
+  const [pointsExpanded, setPointsExpanded] = useState(false)
+  const modeMeta = ATTACK_MODE_META[attackMode] ?? { label: attackMode, color: 'default' }
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：评委 + 攻击方式 + 立场 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          ⚔️ {judgeName} 模拟攻击
+        </Typography.Text>
+        <Tag color={modeMeta.color}>{modeMeta.label}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '攻正方稿' : '攻反方稿'}</Tag>
+      </div>
+
+      {topic ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+        >
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      {/* 总体弱点 */}
+      {weaknessSummary ? (
+        <Typography.Text
+          style={{ fontSize: 12, display: 'block', marginBottom: 6, whiteSpace: 'pre-wrap' }}
+        >
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            总体弱点：
+          </Typography.Text>
+          {weaknessSummary}
+        </Typography.Text>
+      ) : null}
+
+      {/* 攻击点列表（默认折叠） */}
+      <div style={{ marginTop: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: token.colorTextSecondary }}>攻击点</span>
+          <Typography.Link
+            style={{ fontSize: 12, color: token.colorPrimary, cursor: 'pointer' }}
+            onClick={() => setPointsExpanded((v) => !v)}
+          >
+            {pointsExpanded ? '收起' : `展开（${attackPoints.length} 条）`}
+          </Typography.Link>
+        </div>
+        {pointsExpanded && (
+          <div style={{ marginTop: 4 }}>
+            {attackPoints.map((p, i) => (
+              <div
+                key={i}
+                style={{
+                  fontSize: 12,
+                  marginBottom: 6,
+                  backgroundColor: token.colorFillQuaternary,
+                  borderRadius: 4,
+                  padding: '6px 8px',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.5
+                }}
+              >
+                <Tag color={LAYER_COLOR[p.layer]} style={{ marginRight: 6 }}>
+                  {p.layer === 'fact' ? '事实' : p.layer === 'theory' ? '理论' : '价值'}
+                </Tag>
+                {p.point}
+                {p.target ? (
+                  <div style={{ color: token.colorTextSecondary, marginTop: 2 }}>
+                    针对：{p.target}
+                  </div>
+                ) : null}
+                {p.defenseHint ? (
+                  <div style={{ color: token.colorSuccess, marginTop: 2 }}>
+                    防守建议：{p.defenseHint}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * rewrite_speech 稿子改写结果卡片。
+ * 展示：评委 + 环节 + 立场；改写稿全文（默认折叠展开）；改动清单。
+ */
+function RewriteSpeechCard({ result }: { result: RewriteSpeechResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { judgeName, topic, stage, side, rewrittenSpeech, changeNotes } = result
+  const [speechExpanded, setSpeechExpanded] = useState(false)
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：评委 + 环节 + 立场 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          ✏️ {judgeName} 改写稿
+        </Typography.Text>
+        <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
+      </div>
+
+      {topic ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+        >
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      {/* 改写稿全文（默认折叠） */}
+      <div style={{ marginTop: 4 }}>
+        <Typography.Link
+          style={{ fontSize: 12, color: token.colorPrimary, cursor: 'pointer' }}
+          onClick={() => setSpeechExpanded((v) => !v)}
+        >
+          {speechExpanded ? '收起改写稿' : '展开改写稿'}
+        </Typography.Link>
+        {speechExpanded && (
+          <Typography.Paragraph
+            style={{
+              fontSize: 12,
+              color: token.colorText,
+              marginTop: 6,
+              marginBottom: 8,
+              whiteSpace: 'pre-wrap',
+              backgroundColor: token.colorFillQuaternary,
+              borderRadius: 6,
+              padding: 8,
+              wordBreak: 'break-word',
+              lineHeight: 1.6
+            }}
+          >
+            {rewrittenSpeech}
+          </Typography.Paragraph>
+        )}
+      </div>
+
+      {/* 改动清单 */}
+      {changeNotes.length > 0 ? (
+        <div>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            改动清单
+          </div>
+          {changeNotes.map((n, i) => (
+            <div key={i} style={{ fontSize: 12, marginBottom: 4, lineHeight: 1.5 }}>
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                {n.target}：
+              </Typography.Text>
+              {n.change}
+            </div>
+          ))}
+        </div>
       ) : null}
     </div>
   )

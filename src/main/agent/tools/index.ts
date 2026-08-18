@@ -24,6 +24,8 @@ export { generateScheduleTool } from './generate-schedule.tool'
 export { judgeDebateTool } from './judge-debate.tool'
 export { judgeSpeechTool } from './judge-speech.tool'
 export { detectStageTool } from './detect-stage.tool'
+export { simulateOpponentTool } from './simulate-opponent.tool'
+export { rewriteSpeechTool } from './rewrite-speech.tool'
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { searchTopicsTool } from './search-topics.tool'
@@ -41,6 +43,8 @@ import { generateScheduleTool } from './generate-schedule.tool'
 import { judgeDebateTool } from './judge-debate.tool'
 import { judgeSpeechTool } from './judge-speech.tool'
 import { detectStageTool } from './detect-stage.tool'
+import { simulateOpponentTool } from './simulate-opponent.tool'
+import { rewriteSpeechTool } from './rewrite-speech.tool'
 
 /**
  * 全部 12 个工具（用于一次性注册）。
@@ -68,5 +72,7 @@ export const allTools: ToolDefinition<any, any>[] = [
   generateScheduleTool,
   judgeDebateTool,
   judgeSpeechTool,
-  detectStageTool
+  detectStageTool,
+  simulateOpponentTool,
+  rewriteSpeechTool
 ]

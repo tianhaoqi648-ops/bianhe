@@ -15,7 +15,7 @@
 
 import type { ToolDefinition } from '@shared/agent-types'
 import type { LLMConfig } from '@shared/agent-types'
-import { FIVE_DIMENSIONS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
+import { FIVE_DIMENSIONS, JUDGE_IDS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
 import { getStageDefinition, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { buildJudgeSystemPrompt, parseJsonResult } from './judge-common'
@@ -246,7 +246,7 @@ export const judgeSpeechTool: ToolDefinition<JudgeSpeechArgs, JudgeSpeechResult 
         },
         judgeId: {
           type: 'string',
-          enum: ['hu-jianbiao', 'huang-zhizhong', 'chen-ming', 'zhou-xuanyi', 'xiong-hao'],
+          enum: JUDGE_IDS,
           description: '评委人设 id（可选，默认 hu-jianbiao 胡渐彪）'
         },
         formatHint: {
