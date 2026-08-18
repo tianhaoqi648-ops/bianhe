@@ -34,15 +34,15 @@
 👉 **[前往下载页面](https://github.com/tianhaoqi648-ops/bianhe/releases)**
 
 ### Windows
-下载 `bianhe-x.y.z-setup.exe`，双击运行按提示安装。
+下载 `bianhe-x.y.z-windows-setup.exe`，双击运行按提示安装。
 
 ### macOS
-下载 `bianhe-x.y.z.dmg`，打开后将「辩盒」拖入「应用程序」文件夹。
+下载 `bianhe-x.y.z-macos.dmg`，打开后将「辩盒」拖入「应用程序」文件夹。
 > ⚠️ 首次打开若提示"无法验证开发者"：右键点击应用图标 → 选择「打开」→ 确认即可。
 
 ### Linux
-- AppImage：下载 `bianhe-x.y.z.AppImage`，`chmod +x` 后直接运行
-- deb：下载 `bianhe-x.y.z.deb`，`sudo dpkg -i` 安装
+- AppImage：下载 `bianhe-x.y.z-linux.AppImage`，`chmod +x` 后直接运行
+- deb：下载 `bianhe-x.y.z-linux.deb`，`sudo dpkg -i` 安装
 
 ## 快捷键与操作指南
 
