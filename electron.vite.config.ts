@@ -22,15 +22,19 @@ export default defineConfig({
     }
   },
   preload: {
-    // 2026-08-18 修复：把 @electron-toolkit/preload 内联进 bundle（exclude externalize）。
-    // Electron 31 的 ESM preload（.mjs）无法 import 外部 node_modules 包——
-    // 之前 externalize 后 preload 运行时 `import { electronAPI } from '@electron-toolkit/preload'`
-    // 加载失败，导致整个 preload 崩溃、contextBridge 未注入、渲染层白屏（「核心模块加载失败」）。
+    // 2026-08-18 修复：preload 输出 CJS（index.cjs）。
+    // Electron 31 的 ESM preload（.mjs）加载不稳定（cjsPreparseModuleExports 崩、
+    // 无法 import 外部包），CJS preload 是 Electron 完全成熟支持的路径。
+    // 同时内联 @electron-toolkit/preload（不 externalize）。
     plugins: [externalizeDepsPlugin({ exclude: ['@electron-toolkit/preload'] })],
     build: {
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/preload/index.ts')
+        },
+        output: {
+          format: 'cjs',
+          entryFileNames: 'index.cjs'
         }
       }
     }

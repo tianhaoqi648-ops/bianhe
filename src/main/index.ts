@@ -32,7 +32,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     title: '辩盒',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.cjs'),
       sandbox: false
     }
   })
