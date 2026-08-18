@@ -169,22 +169,6 @@ async function getCurrentSessionId(): Promise<string | null> {
 }
 
 /**
- * 同步获取当前活动会话 id（在流式事件回调内使用，不能 await）。
- * 模块加载后 agentSessionStore 的 getState 同步可用；失败返回 null。
- */
-function getActiveSessionIdSync(): string | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { useAgentSessionStore } = require('./agentSessionStore') as {
-      useAgentSessionStore: { getState: () => { currentSessionId: string | null } }
-    }
-    return useAgentSessionStore.getState().currentSessionId
-  } catch {
-    return null
-  }
-}
-
-/**
  * 从用户消息推导会话标题：折叠空白（含换行）、去首尾空格、截前 12 字。
  * 纯函数，便于单测。空文本时原样返回（调用方保证入参非空）。
  */
@@ -554,17 +538,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   cancel(sessionId) {
-    // 确定目标会话：显式传入 > 当前活动会话 > 全部（兼容）
+    // 确定目标会话：显式传入 > 全部进行中的（无参时取消所有会话，兼容旧调用。
+    // 2026-08-18 移除 require 同步读 agentSessionStore——浏览器环境无 require，
+    // 且渲染层不宜用 CJS 语法；无参 cancel 语义定为「取消全部进行中」更安全）
     let targetIds: string[] = []
     if (sessionId) {
       targetIds = [sessionId]
     } else {
-      const active = getActiveSessionIdSync()
-      if (active) {
-        targetIds = [active]
-      } else {
-        targetIds = [...cancelFns.keys()]
-      }
+      targetIds = [...cancelFns.keys()]
     }
 
     for (const sid of targetIds) {
