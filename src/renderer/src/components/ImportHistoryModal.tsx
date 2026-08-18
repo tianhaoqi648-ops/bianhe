@@ -201,7 +201,7 @@ export default function ImportHistoryModal({
             关闭
           </Button>
         }
-        destroyOnClose
+        destroyOnHidden
       >
         <BrandSpin spinning={loading}>
           {batches.length === 0 ? (

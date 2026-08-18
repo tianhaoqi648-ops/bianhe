@@ -165,7 +165,7 @@ export default function TopicEditModal({
         okButtonProps={{ size: 'middle', style: primaryButtonStyle }}
         cancelButtonProps={{ size: 'middle' }}
         width={560}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form
           key={topic?.id ?? 'new-topic'}

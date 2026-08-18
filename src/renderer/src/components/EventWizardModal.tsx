@@ -115,7 +115,7 @@ export default function EventWizardModal({
     if (event) {
       // 编辑模式：延迟到下一事件循环，确保 Form.Item 完成注册后再设值
       // P2-37 修复：queueMicrotask 在微任务阶段执行，此时 Form.Item 可能尚未完成注册
-      // （Modal 的 destroyOnClose 会让 Form.Item 在打开时重新挂载，需等注册完成）
+      // （Modal 的 destroyOnHidden 会让 Form.Item 在打开时重新挂载，需等注册完成）
       // 改用 setTimeout(0) 推到下一个宏任务，给 Form.Item 充分的注册时间
       // allow_repeat (number) -> boolean 给 Switch（0 → false, 1 → true）
       setTimeout(() => {
@@ -565,7 +565,7 @@ export default function EventWizardModal({
       open={open}
       onCancel={handleClose}
       width={720}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={!creating}
       okText={isEdit ? '保存' : '创建'}
       cancelText="取消"

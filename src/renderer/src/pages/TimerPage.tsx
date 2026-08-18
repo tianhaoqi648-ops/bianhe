@@ -1157,7 +1157,7 @@ export default function TimerPage() {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         width={isMobile ? '100%' : 640}
-        destroyOnClose
+        destroyOnHidden
       >
         <List
           size="small"

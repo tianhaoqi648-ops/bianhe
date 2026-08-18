@@ -34,7 +34,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useHotkeys } from '../../hooks/useHotkeys'
-import { useAgentStore } from '../../stores/agentStore'
+import { useAgentStore, type AgentUIMessage } from '../../stores/agentStore'
 import { useAgentSessionStore } from '../../stores/agentSessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { AgentMessage } from './AgentMessage'
@@ -59,6 +59,8 @@ export interface AgentChatPanelProps {
 const PANEL_WIDTH_EXPANDED = 400
 /** 面板收起时的宽度 */
 const PANEL_WIDTH_COLLAPSED = 48
+/** 空消息桶的稳定引用（zustand selector 必须返回缓存值，否则 useSyncExternalStore 无限循环） */
+const EMPTY_MESSAGES: AgentUIMessage[] = []
 
 /**
  * AgentChatPanel — Agent 聊天面板
@@ -76,10 +78,13 @@ export function AgentChatPanel({
   const { token } = theme.useToken()
   const navigate = useNavigate()
 
-  // 2026-08-18：消息/loading 按会话分桶读取（当前活动会话的桶）
+  // 2026-08-18：消息/loading 按会话分桶读取（当前活动会话的桶）。
+  // ⚠️ selector 必须返回缓存引用（EMPTY_MESSAGES），否则空桶时每次渲染新数组 → 无限循环
   const currentSessionId = useAgentSessionStore((s) => s.currentSessionId)
   const messages = useAgentStore((s) =>
-    currentSessionId ? s.messagesBySession[currentSessionId] : (s.messagesBySession['__default__'] ?? [])
+    currentSessionId
+      ? (s.messagesBySession[currentSessionId] ?? EMPTY_MESSAGES)
+      : (s.messagesBySession['__default__'] ?? EMPTY_MESSAGES)
   )
   const error = useAgentStore((s) => s.error)
   const isLoading = useAgentStore((s) =>

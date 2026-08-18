@@ -801,7 +801,7 @@ export default function TeamManage() {
         okText="导入"
         cancelText="取消"
         width={520}
-        destroyOnClose
+        destroyOnHidden
         okButtonProps={{ style: primaryButtonStyle, loading: batchImporting }}
       >
         <Form layout="vertical">

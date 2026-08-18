@@ -107,7 +107,7 @@ export default function FormatTemplateModal({
       onCancel={onClose}
       footer={null}
       width={920}
-      destroyOnClose
+      destroyOnHidden
     >
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
         选择一个内置赛制模板，将克隆为可编辑副本（模板本身不会被修改）。

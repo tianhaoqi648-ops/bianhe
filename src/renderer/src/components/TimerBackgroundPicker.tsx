@@ -322,7 +322,7 @@ export default function TimerBackgroundPicker({
       open={open}
       onCancel={handleCancel}
       width={560}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={!saving && !uploading}
       centered
       footer={(_, { CancelBtn }) => (

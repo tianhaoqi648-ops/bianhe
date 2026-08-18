@@ -694,7 +694,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         onCancel={handleClose}
         width={820}
         footer={footerButtons()}
-        destroyOnClose
+        destroyOnHidden
         maskClosable={false}
       >
         <Steps

@@ -212,7 +212,7 @@ export function ToolConfirmModal(_props: ToolConfirmModalProps): JSX.Element {
       closable={false}
       // 不允许键盘 ESC 关闭（与 maskClosable 语义一致）
       keyboard={false}
-      destroyOnClose
+      destroyOnHidden
       width={520}
     >
       {pendingConfirm && (

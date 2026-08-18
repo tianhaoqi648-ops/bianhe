@@ -104,7 +104,7 @@ export default function TeamEditModal({
       okText="保存"
       cancelText="取消"
       width={420}
-      destroyOnClose
+      destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
       footer={customFooter}
     >

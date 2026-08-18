@@ -287,7 +287,7 @@ export default function DedupResultModal({
             )}
           </Space>
         }
-        destroyOnClose
+        destroyOnHidden
       >
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>

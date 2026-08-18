@@ -428,7 +428,7 @@ export default function ImportEventModal({ open, onClose, onSuccess }: ImportEve
       onCancel={handleClose}
       footer={renderFooter()}
       width={560}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={false}
     >
       {renderStepContent()}

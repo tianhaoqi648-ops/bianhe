@@ -304,7 +304,7 @@ export default function TagDisplaySettingsModal({
       open={open}
       onCancel={onClose}
       width={720}
-      destroyOnClose
+      destroyOnHidden
       maskClosable={!saving}
       okText="保存"
       cancelText="取消"

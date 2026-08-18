@@ -224,7 +224,7 @@ export default function BatchEditModal({
         open={open}
         onCancel={onClose}
         width={680}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <Space>
             <Button onClick={onClose}>取消</Button>

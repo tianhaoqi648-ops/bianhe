@@ -142,7 +142,7 @@ export default function BellPreviewModal({ open, onClose, format }: BellPreviewM
       }
       footer={null}
       width={640}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Text type="secondary">

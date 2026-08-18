@@ -157,7 +157,7 @@ export default function TeamHistoryModal({
         onCancel={onClose}
         footer={null}
         width={760}
-        destroyOnClose
+        destroyOnHidden
       >
         {/* 添加历史 */}
         {adding ? (

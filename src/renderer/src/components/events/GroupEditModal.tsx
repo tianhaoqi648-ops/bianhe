@@ -74,7 +74,7 @@ export default function GroupEditModal({
       okText="保存"
       cancelText="取消"
       width={480}
-      destroyOnClose
+      destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
     >
       <Form form={form} layout="vertical" preserve={false}>

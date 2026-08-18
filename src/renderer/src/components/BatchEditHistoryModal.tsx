@@ -162,7 +162,7 @@ export default function BatchEditHistoryModal({
             关闭
           </Button>
         }
-        destroyOnClose
+        destroyOnHidden
       >
         <BrandSpin spinning={historyLoading}>
           {historyList.length === 0 ? (

@@ -80,7 +80,7 @@ export function InsufficientTopicsModal({
       onCancel={() => onSelect('cancel')}
       footer={null}
       centered
-      destroyOnClose
+      destroyOnHidden
       maskClosable={false}
     >
       {/* 顶部说明文字 */}

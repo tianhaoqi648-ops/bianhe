@@ -177,7 +177,7 @@ export default function RandomGroupAssignModal({
       open={open}
       onCancel={onCancel}
       width={680}
-      destroyOnClose
+      destroyOnHidden
       footer={
         <Space>
           <Button onClick={onCancel}>取消</Button>

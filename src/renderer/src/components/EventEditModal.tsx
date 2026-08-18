@@ -80,7 +80,7 @@ export default function EventEditModal({
       okText="保存"
       cancelText="取消"
       width={520}
-      destroyOnClose
+      destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
     >
       <Form form={form} layout="vertical" preserve={false}>
