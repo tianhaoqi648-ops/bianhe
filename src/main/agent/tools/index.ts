@@ -22,6 +22,8 @@ export { recommendFormatTool } from './recommend-format.tool'
 export { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 export { generateScheduleTool } from './generate-schedule.tool'
 export { judgeDebateTool } from './judge-debate.tool'
+export { judgeSpeechTool } from './judge-speech.tool'
+export { detectStageTool } from './detect-stage.tool'
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { searchTopicsTool } from './search-topics.tool'
@@ -37,6 +39,8 @@ import { recommendFormatTool } from './recommend-format.tool'
 import { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 import { generateScheduleTool } from './generate-schedule.tool'
 import { judgeDebateTool } from './judge-debate.tool'
+import { judgeSpeechTool } from './judge-speech.tool'
+import { detectStageTool } from './detect-stage.tool'
 
 /**
  * 全部 12 个工具（用于一次性注册）。
@@ -62,5 +66,7 @@ export const allTools: ToolDefinition<any, any>[] = [
   recommendFormatTool,
   optimizeTeamGroupsTool,
   generateScheduleTool,
-  judgeDebateTool
+  judgeDebateTool,
+  judgeSpeechTool,
+  detectStageTool
 ]

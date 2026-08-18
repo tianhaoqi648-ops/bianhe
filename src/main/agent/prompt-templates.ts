@@ -60,7 +60,9 @@ const TOOLS_PROMPT = `# 可用工具
 - generate_schedule：为赛事生成赛程对阵。format 支持 single-elimination / single-round-robin / double-elimination / swiss 四种赛制，队伍数与 teams 二选一。
 
 ## AI 裁判
-- judge_debate：按评委人设评审一场辩论。入参 topic / affSpeech（正方辩词）/ negSpeech（反方辩词）必填，judgeId 可选（hu-jianbiao / huang-zhizhong / chen-ming / zhou-xuanyi / xiong-hao，默认 hu-jianbiao），formatHint 可选。返回胜负判定、五维双方评分与点评。用户要求评审辩论时使用；可先询问用户偏好哪位评委。`
+- judge_debate：按评委人设评审一场辩论。入参 topic / affSpeech（正方辩词）/ negSpeech（反方辩词）必填，judgeId 可选（hu-jianbiao / huang-zhizhong / chen-ming / zhou-xuanyi / xiong-hao，默认 hu-jianbiao），formatHint 可选。返回胜负判定、五维双方评分与点评。用户要求评审辩论时使用；可先询问用户偏好哪位评委。
+- judge_speech：按评委人设评估己方某一环节的稿子（备赛场景：只有己方稿子）。入参 topic / stage（环节类型：opening/rebuttal/cross_exam/cross_summary/free_debate/closing）/ side（aff/neg）/ speech（稿子）必填，judgeId / formatHint 可选。返回五维评分、漏洞清单与改进建议。用户粘贴单方稿子要求评估时使用；若用户未指明环节，可先调用 detect_stage 识别。
+- detect_stage：识别一段辩论稿属于哪个环节类型（立论/驳论/质询/质询小结/自由辩论/总结陈词），返回环节类型与置信度。入参 speech 必填，stagesNames / topic 可选。用户粘贴稿子但未说明环节、或需要确认环节类型时使用。`
 
 // ---------- Part 3: 输出风格 ----------
 const STYLE_PROMPT = `# 输出风格

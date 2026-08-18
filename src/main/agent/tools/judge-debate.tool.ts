@@ -19,6 +19,7 @@ import type { ToolDefinition } from '@shared/agent-types'
 import type { LLMConfig } from '@shared/agent-types'
 import { FIVE_DIMENSIONS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
 import { chat, LLMError } from '../llm-client'
+import { buildJudgeSystemPrompt, parseJsonResult } from './judge-common'
 
 /** judge_debate 工具入参（与 parameters schema 对齐） */
 export interface JudgeDebateArgs {
@@ -129,25 +130,11 @@ ${JSON_SAMPLE}`
 }
 
 /**
- * 解析 LLM 返回的 content 为 JudgeDebateResult。
- * 容忍 ```json 围栏包裹；解析失败或结构不符抛错。
+ * 解析 LLM 返回的 content 为 JudgeDebateResult（结构校验）。
+ * JSON 围栏/提取由 judge-common.parseJsonResult 处理；失败抛错。
  */
 function parseJudgeResult(raw: string): Omit<JudgeDebateResult, 'success' | 'judgeId' | 'judgeName' | 'topic'> {
-  let text = raw.trim()
-  // 去掉可能的 ```json ... ``` 围栏
-  const fenceMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
-  if (fenceMatch) {
-    text = fenceMatch[1].trim()
-  }
-  // 提取首个 {...} 块（LLM 有时会附带说明文字）
-  const braceStart = text.indexOf('{')
-  const braceEnd = text.lastIndexOf('}')
-  if (braceStart === -1 || braceEnd === -1 || braceEnd <= braceStart) {
-    throw new Error('未找到 JSON 对象')
-  }
-  text = text.slice(braceStart, braceEnd + 1)
-
-  const parsed: unknown = JSON.parse(text)
+  const parsed: unknown = parseJsonResult(raw)
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('JSON 非对象')
   }
@@ -276,18 +263,14 @@ export const judgeDebateTool: ToolDefinition<JudgeDebateArgs, JudgeDebateResult 
         return { success: false, error: '评委人设数据缺失' }
       }
 
-      // 3. 构造评审 prompt
-      const systemPrompt = [
-        `你是${judge.name}（${judge.category}），一位华语辩论领域备受尊敬的辩手与评委。`,
-        `【背景】${judge.bio}`,
-        `【你的辩风】${judge.styleTraits.map((t) => `- ${t}`).join('\n')}`,
-        `【你的评审倾向】最看重：${judge.judgePriorities.top}；次看重：${judge.judgePriorities.secondary}；可能忽略：${judge.judgePriorities.ignored}`,
-        `【你的标志性表达】${judge.signaturePhrases.map((p) => `"${p}"`).join(' ')}`,
-        `【你的点评风格】${judge.reviewStyle}`,
-        '',
-        '现在请你作为这位评委，用你的评审标准与口吻，对下面的辩论进行评判。',
-        '请客观评分，但让分数与评语自然体现你的审美侧重。'
-      ].join('\n')
+      // 3. 构造评审 prompt（复用 judge-common 的人设 system prompt 构建）
+      const systemPrompt = buildJudgeSystemPrompt(
+        judge,
+        [
+          '现在请你作为这位评委，用你的评审标准与口吻，对下面的辩论进行评判。',
+          '请客观评分，但让分数与评语自然体现你的审美侧重。'
+        ].join('\n')
+      )
 
       const userPrompt = buildUserPrompt({ topic, affSpeech, negSpeech, formatHint: args.formatHint })
 

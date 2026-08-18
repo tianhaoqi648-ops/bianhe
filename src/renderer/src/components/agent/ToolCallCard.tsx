@@ -192,6 +192,22 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps): JSX.Element {
       (result as { success?: boolean }).success !== false ? (
         <JudgeResultCard result={result as JudgeDebateResult} />
       ) : null}
+
+      {/* AI 裁判：judge_speech 成功时渲染单方稿评估卡片 */}
+      {toolName === 'judge_speech' &&
+      status === 'success' &&
+      result &&
+      (result as { success?: boolean }).success !== false ? (
+        <JudgeSpeechResultCard result={result as JudgeSpeechResult} />
+      ) : null}
+
+      {/* AI 裁判：detect_stage 成功时渲染环节识别卡片 */}
+      {toolName === 'detect_stage' &&
+      status === 'success' &&
+      result &&
+      (result as { success?: boolean }).success !== false ? (
+        <DetectStageResultCard result={result as DetectStageResult} />
+      ) : null}
     </Card>
   )
 }
@@ -413,6 +429,264 @@ function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.Element
         >
           {summary}
         </Typography.Paragraph>
+      ) : null}
+    </div>
+  )
+}
+
+// ---------- 单方稿评估 / 环节识别卡片（AI 裁判演进 批1 2026-08-18） ----------
+
+/** judge_speech 结果（与 judge-speech.tool.ts 对齐） */
+interface JudgeSpeechResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  stage: string
+  side: 'aff' | 'neg'
+  dimensions: Array<{ key: string; name: string; score: number; comment: string }>
+  gaps: Array<{ severity: 'high' | 'medium' | 'low'; description: string; evidence?: string }>
+  improvements: Array<{ target: string; suggestion: string }>
+  summary: string
+}
+
+/** detect_stage 结果（与 detect-stage.tool.ts 对齐） */
+interface DetectStageResult {
+  stage: string
+  confidence: number
+  reasons: string
+}
+
+/** 环节类型 → 展示名（与 shared/debate-stages.ts 对齐的轻量映射） */
+const STAGE_NAMES: Record<string, string> = {
+  opening: '立论',
+  rebuttal: '驳论',
+  cross_exam: '质询',
+  cross_summary: '质询小结',
+  free_debate: '自由辩论',
+  closing: '总结陈词'
+}
+
+/** severity → Tag 颜色 */
+const GAP_SEVERITY_COLOR: Record<string, string> = {
+  high: 'red',
+  medium: 'orange',
+  low: 'default'
+}
+
+/**
+ * judge_speech 单方稿评估结果卡片。
+ * 展示：评委 + 环节 + 立场；五维单方评分（进度条）；漏洞清单（severity Tag + 可展开原文）；
+ * 改进建议；评委风格总评。
+ */
+function JudgeSpeechResultCard({ result }: { result: JudgeSpeechResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { judgeName, topic, stage, side, dimensions, gaps, improvements, summary } = result
+  const [gapsExpanded, setGapsExpanded] = useState(false)
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：评委 + 环节 + 立场 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          📝 {judgeName} 评估
+        </Typography.Text>
+        <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
+      </div>
+
+      {topic ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+        >
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      {/* 五维单方评分 */}
+      {dimensions.map((d) => (
+        <div key={d.key} style={{ marginBottom: 6 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 12,
+              marginBottom: 2
+            }}
+          >
+            <span>{d.name}</span>
+            <span>{d.score}/10</span>
+          </div>
+          <Progress
+            percent={d.score * 10}
+            size="small"
+            strokeColor={d.score >= 7 ? token.colorSuccess : d.score >= 5 ? token.colorWarning : token.colorError}
+            style={{ margin: 0 }}
+          />
+          {d.comment ? (
+            <div
+              style={{
+                fontSize: 12,
+                color: token.colorTextSecondary,
+                marginTop: 2,
+                whiteSpace: 'pre-wrap'
+              }}
+            >
+              {d.comment}
+            </div>
+          ) : null}
+        </div>
+      ))}
+
+      {/* 漏洞清单 */}
+      {gaps.length > 0 ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: token.colorTextSecondary }}>漏洞清单</span>
+            <Typography.Link
+              style={{ fontSize: 12, color: token.colorPrimary, cursor: 'pointer' }}
+              onClick={() => setGapsExpanded((v) => !v)}
+            >
+              {gapsExpanded ? '收起' : `展开（${gaps.length} 条）`}
+            </Typography.Link>
+          </div>
+          {gapsExpanded && (
+            <div style={{ marginTop: 4 }}>
+              {gaps.map((g, i) => (
+                <div
+                  key={i}
+                  style={{
+                    fontSize: 12,
+                    marginBottom: 4,
+                    backgroundColor: token.colorFillQuaternary,
+                    borderRadius: 4,
+                    padding: '4px 8px',
+                    wordBreak: 'break-word',
+                    lineHeight: 1.5
+                  }}
+                >
+                  <Tag color={GAP_SEVERITY_COLOR[g.severity]} style={{ marginRight: 6 }}>
+                    {g.severity === 'high' ? '高' : g.severity === 'medium' ? '中' : '低'}
+                  </Tag>
+                  {g.description}
+                  {g.evidence ? (
+                    <div style={{ color: token.colorTextSecondary, marginTop: 2 }}>
+                      原文：{g.evidence}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* 改进建议 */}
+      {improvements.length > 0 ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            改进建议
+          </div>
+          {improvements.map((imp, i) => (
+            <div key={i} style={{ fontSize: 12, marginBottom: 4, lineHeight: 1.5 }}>
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                {imp.target}：
+              </Typography.Text>
+              {imp.suggestion}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 总评 */}
+      {summary ? (
+        <Typography.Paragraph
+          style={{
+            fontSize: 12,
+            color: token.colorText,
+            marginTop: 8,
+            marginBottom: 0,
+            whiteSpace: 'pre-wrap'
+          }}
+        >
+          {summary}
+        </Typography.Paragraph>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * detect_stage 环节识别结果卡片。
+ * 展示：识别出的环节类型 + 置信度 + 判断依据；置信度 < 0.8 时提示用户确认。
+ */
+function DetectStageResultCard({ result }: { result: DetectStageResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { stage, confidence, reasons } = result
+  const lowConfidence = confidence < 0.8
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🔍 环节识别
+        </Typography.Text>
+        <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          置信度 {Math.round(confidence * 100)}%
+        </Typography.Text>
+        {lowConfidence ? (
+          <Tag color="orange">建议确认</Tag>
+        ) : (
+          <Tag color="green">识别明确</Tag>
+        )}
+      </div>
+      {reasons ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap' }}
+        >
+          {reasons}
+        </Typography.Text>
+      ) : null}
+      {lowConfidence ? (
+        <Typography.Text
+          style={{ fontSize: 12, display: 'block', marginTop: 4, color: token.colorWarning }}
+        >
+          置信度较低：建议在评估稿子时明确指定环节类型（如"这是立论稿"）。
+        </Typography.Text>
       ) : null}
     </div>
   )
