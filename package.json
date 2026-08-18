@@ -1,6 +1,6 @@
 {
   "name": "debate-topic-drawer",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "productName": "辩盒",
   "description": "辩盒 — 辩论赛题抽取与计时工具",
   "main": "./out/main/index.js",
