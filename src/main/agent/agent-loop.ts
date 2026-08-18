@@ -548,9 +548,9 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
         }
       }
 
-      // 执行工具
+      // 执行工具（AI 裁判 2026-08-18：透传 config/signal 供需调用 LLM 的工具使用）
       try {
-        const result = await execute(toolName, effectiveArgs)
+        const result = await execute(toolName, effectiveArgs, { config, signal })
         onEvent({
           type: 'tool_call_result',
           toolCallId: toolCall.id,

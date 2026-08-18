@@ -21,6 +21,7 @@ export { importEventBatchTool } from './import-event-batch.tool'
 export { recommendFormatTool } from './recommend-format.tool'
 export { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 export { generateScheduleTool } from './generate-schedule.tool'
+export { judgeDebateTool } from './judge-debate.tool'
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { searchTopicsTool } from './search-topics.tool'
@@ -35,6 +36,7 @@ import { importEventBatchTool } from './import-event-batch.tool'
 import { recommendFormatTool } from './recommend-format.tool'
 import { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 import { generateScheduleTool } from './generate-schedule.tool'
+import { judgeDebateTool } from './judge-debate.tool'
 
 /**
  * 全部 12 个工具（用于一次性注册）。
@@ -59,5 +61,6 @@ export const allTools: ToolDefinition<any, any>[] = [
   importEventBatchTool,
   recommendFormatTool,
   optimizeTeamGroupsTool,
-  generateScheduleTool
+  generateScheduleTool,
+  judgeDebateTool
 ]

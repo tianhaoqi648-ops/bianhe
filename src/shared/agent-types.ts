@@ -50,6 +50,18 @@ export interface ToolMeta {
 }
 
 /**
+ * 工具执行上下文（AI 裁判功能 2026-08-18 引入）。
+ * 提供给需要调用 LLM / 响应取消的工具（如 judge_debate）。
+ * 可选字段向后兼容：现有工具忽略 ctx 即可零改动。
+ */
+export interface ToolExecutionContext {
+  /** LLM 连接配置（由渲染进程经 ChatRequest 下发，主进程不持有） */
+  config?: LLMConfig
+  /** 取消信号（agent-loop 的 AbortSignal，透传给内部 LLM 调用） */
+  signal?: AbortSignal
+}
+
+/**
  * 完整工具定义（主进程内部使用，含 execute）。
  * - TArgs：工具参数类型，默认 Record<string, unknown>
  * - TResult：工具返回值类型，默认 unknown
@@ -59,7 +71,7 @@ export interface ToolDefinition<
   TResult = unknown
 > extends ToolMeta {
   /** 工具执行函数（主进程内调用，IPC 边界不传输） */
-  execute: (args: TArgs) => Promise<TResult>
+  execute: (args: TArgs, ctx?: ToolExecutionContext) => Promise<TResult>
 }
 
 // ---------- 2. 消息相关类型（SubTask 1.2） ----------

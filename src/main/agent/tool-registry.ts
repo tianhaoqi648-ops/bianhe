@@ -15,7 +15,13 @@
 //   5. 不依赖任何外部库
 // ============================================================
 
-import type { ToolDefinition, ToolMeta, ToolRiskLevel, ToolSchema } from '@shared/agent-types'
+import type {
+  ToolDefinition,
+  ToolExecutionContext,
+  ToolMeta,
+  ToolRiskLevel,
+  ToolSchema
+} from '@shared/agent-types'
 
 // ============================================================
 // 模块内工具存储（进程内单例）
@@ -90,13 +96,15 @@ export function list(): ToolMeta[] {
  * 执行工具。
  * @param name 工具名
  * @param args 入参（来自 LLM 的 tool_call.arguments 解析后）
+ * @param ctx 执行上下文（可选，含 LLM 配置/取消信号，供需要调用 LLM 的工具使用）
  * @returns 工具执行结果
  * @throws 工具不存在时抛 `Tool not found: ${name}`
  *         工具 execute 抛错时透传原始错误
  */
 export async function execute(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  ctx?: ToolExecutionContext
 ): Promise<unknown> {
   const tool = tools.get(name)
   if (!tool) {
@@ -104,7 +112,7 @@ export async function execute(
   }
   // 入参为空对象 {} 时正常传递（部分工具无入参）；
   // 工具内部抛错时透传原始错误，由 agent-loop 捕获处理
-  return await tool.execute(args)
+  return await tool.execute(args, ctx)
 }
 
 // ============================================================

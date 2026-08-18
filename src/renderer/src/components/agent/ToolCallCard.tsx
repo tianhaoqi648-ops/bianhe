@@ -25,7 +25,7 @@
 // ============================================================
 
 import React, { useState } from 'react'
-import { Card, Spin, Typography, Button, Progress, theme } from 'antd'
+import { Card, Spin, Typography, Button, Progress, Tag, theme } from 'antd'
 import { CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
 import type { AgentUIToolCall } from '../../stores/agentStore'
 import { useFormatStore } from '../../stores/formatStore'
@@ -184,6 +184,14 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps): JSX.Element {
       {toolName === 'recommend_format' && status === 'success' && result ? (
         <RecommendFormatCard result={result as RecommendFormatResult} />
       ) : null}
+
+      {/* AI 裁判：judge_debate 成功时渲染评分卡片 */}
+      {toolName === 'judge_debate' &&
+      status === 'success' &&
+      result &&
+      (result as { success?: boolean }).success !== false ? (
+        <JudgeResultCard result={result as JudgeDebateResult} />
+      ) : null}
     </Card>
   )
 }
@@ -259,6 +267,153 @@ function RecommendFormatCard({ result }: { result: RecommendFormatResult }): JSX
       >
         {hasFormat ? '应用此赛制' : '无可用赛制'}
       </Button>
+    </div>
+  )
+}
+
+// ---------- AI 裁判结果卡片（2026-08-18） ----------
+
+/** judge_debate 单维评分（与 main/agent/tools/judge-debate.tool.ts 对齐） */
+interface JudgeDimensionScore {
+  key: string
+  name: string
+  affScore: number
+  negScore: number
+  comment: string
+}
+
+/** judge_debate 成功结果（与工具返回结构对齐） */
+interface JudgeDebateResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  verdict: { winner: 'aff' | 'neg'; confidence: number; reason: string }
+  dimensions: JudgeDimensionScore[]
+  summary: string
+}
+
+/**
+ * judge_debate 工具结果卡片（AI 裁判功能 2026-08-18）。
+ *
+ * 在 ToolCallCard 内渲染 AI 裁判评分结果：
+ *   - 头部：评委姓名 + 胜负 Tag（正方胜/反方胜）+ 置信度
+ *   - 五维双方分数对比（正蓝/反橙双进度条）+ 每维评语
+ *   - 尾部：评委风格总评（summary）
+ *
+ * 仿 RecommendFormatCard 的配色与结构（colorPrimaryBg 底 + 边框）。
+ */
+function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { judgeName, topic, verdict, dimensions, summary } = result
+  const affWon = verdict.winner === 'aff'
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：评委 + 胜负 + 置信度 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          ⚖️ {judgeName} 判定
+        </Typography.Text>
+        <Tag color={affWon ? 'blue' : 'orange'}>{affWon ? '正方胜' : '反方胜'}</Tag>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          置信度 {Math.round(verdict.confidence * 100)}%
+        </Typography.Text>
+      </div>
+
+      {topic ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+        >
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+      {verdict.reason ? (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+        >
+          {verdict.reason}
+        </Typography.Text>
+      ) : null}
+
+      {/* 五维双方评分对比 */}
+      {dimensions.map((d) => (
+        <div key={d.key} style={{ marginBottom: 6 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 12,
+              marginBottom: 2
+            }}
+          >
+            <span>{d.name}</span>
+            <span>
+              <span style={{ color: token.colorInfo }}>正 {d.affScore}</span>
+              {' / '}
+              <span style={{ color: token.colorWarning }}>反 {d.negScore}</span>
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Progress
+              percent={d.affScore * 10}
+              size="small"
+              strokeColor={token.colorInfo}
+              style={{ flex: 1, margin: 0 }}
+            />
+            <Progress
+              percent={d.negScore * 10}
+              size="small"
+              strokeColor={token.colorWarning}
+              style={{ flex: 1, margin: 0 }}
+            />
+          </div>
+          {d.comment ? (
+            <div
+              style={{
+                fontSize: 12,
+                color: token.colorTextSecondary,
+                marginTop: 2,
+                whiteSpace: 'pre-wrap'
+              }}
+            >
+              {d.comment}
+            </div>
+          ) : null}
+        </div>
+      ))}
+
+      {/* 评委风格总评 */}
+      {summary ? (
+        <Typography.Paragraph
+          style={{
+            fontSize: 12,
+            color: token.colorText,
+            marginTop: 8,
+            marginBottom: 0,
+            whiteSpace: 'pre-wrap'
+          }}
+        >
+          {summary}
+        </Typography.Paragraph>
+      ) : null}
     </div>
   )
 }

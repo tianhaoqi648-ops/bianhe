@@ -57,7 +57,10 @@ const TOOLS_PROMPT = `# 可用工具
 - import_event_batch：从 Excel/CSV/DOCX 文件批量导入赛事与队伍。需提供文件路径与类型，可选 fieldMapping（含 teamName / eventName）。首次调用缺 fieldMapping 时返回列名列表，需推断后再次调用。
 - recommend_format：根据队伍数、总时长、风格推荐赛制模板。入参 teamCount 必填，totalTime / style 可选，返回 matchScore 0-100 与推荐理由。
 - optimize_team_groups：优化赛事队伍分组。strategy=balance 走蛇形分配 + 种子分散；strategy=random-seeded 走随机分组（同校避让语义待扩展）。riskLevel=high，会写入数据库。
-- generate_schedule：为赛事生成赛程对阵。format 支持 single-elimination / single-round-robin / double-elimination / swiss 四种赛制，队伍数与 teams 二选一。`
+- generate_schedule：为赛事生成赛程对阵。format 支持 single-elimination / single-round-robin / double-elimination / swiss 四种赛制，队伍数与 teams 二选一。
+
+## AI 裁判
+- judge_debate：按评委人设评审一场辩论。入参 topic / affSpeech（正方辩词）/ negSpeech（反方辩词）必填，judgeId 可选（hu-jianbiao / huang-zhizhong / chen-ming / zhou-xuanyi / xiong-hao，默认 hu-jianbiao），formatHint 可选。返回胜负判定、五维双方评分与点评。用户要求评审辩论时使用；可先询问用户偏好哪位评委。`
 
 // ---------- Part 3: 输出风格 ----------
 const STYLE_PROMPT = `# 输出风格

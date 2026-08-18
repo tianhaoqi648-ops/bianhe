@@ -331,7 +331,7 @@ describe('runAgentLoop：low risk 工具无需确认', () => {
     expect(resultEvent).toBeDefined()
     expect(resultEvent!.success).toBe(true)
     // execute 应被调用
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.anything())
   })
 })
 
@@ -385,7 +385,7 @@ describe('runAgentLoop：high risk 工具人工确认分支', () => {
     expect(resultEvent).toBeDefined()
     expect(resultEvent!.success).toBe(true)
     // execute 应以原 args 被调用
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.anything())
   })
 
   it('用户取消（confirmed=false）→ 不执行工具，反馈错误给 LLM', async () => {
@@ -471,7 +471,7 @@ describe('runAgentLoop：high risk 工具人工确认分支', () => {
     expect(resultEvent).toBeDefined()
     expect(resultEvent!.success).toBe(true)
     // execute 应以 modifiedArgs 被调用，而非 originalArgs
-    expect(mockExecute).toHaveBeenCalledWith(toolName, modifiedArgs)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, modifiedArgs, expect.anything())
     expect(mockExecute).not.toHaveBeenCalledWith(toolName, originalArgs)
   })
 
@@ -557,7 +557,7 @@ describe('runAgentLoop：默认确认规则', () => {
     await simulateConfirmResult({ toolCallId, confirmed: true })
     await loopPromise
 
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.anything())
   })
 })
 
@@ -598,7 +598,7 @@ describe('runAgentLoop：用户配置覆盖默认规则', () => {
     // 不应有 tool_call_confirm（用户配置覆盖为不需确认）
     expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(false)
     // 应直接执行
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.anything())
     // 应有 tool_call_result(success=true)
     const resultEvent = events.find(
       (e) => e.type === 'tool_call_result'
@@ -650,7 +650,7 @@ describe('runAgentLoop：用户配置覆盖默认规则', () => {
     await simulateConfirmResult({ toolCallId, confirmed: true })
     await loopPromise
 
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.anything())
   })
 })
 
