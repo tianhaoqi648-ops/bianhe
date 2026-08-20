@@ -14,7 +14,10 @@ export type ConfigResetCategory =
   | 'candidates'
   | 'hotkeys'
   | 'timerTheme'
-  | 'timerBackground';
+  | 'timerBackground'
+  | 'recording'
+  | 'autoUpdate'
+  | 'stt';
 
 /** 数据类重置类别（对应业务表） */
 export type DataResetCategory =
@@ -56,7 +59,16 @@ export const CONFIG_RESET_KEYS: Record<ConfigResetCategory, string[]> = {
   timerTheme: ['timer.theme'],
   // 计时器背景配置：1 个 key（删除后回退到默认背景 深蓝渐变）
   // 与 src/shared/timer-backgrounds.ts 中 TIMER_BACKGROUND_KEY 保持一致
-  timerBackground: ['timer.background']
+  timerBackground: ['timer.background'],
+  // 录音设置：3 个 key
+  // 与 src/shared/match-recording.ts 中 RECORDING_DIR_KEY / RECORDING_SEGMENT_KEY / RECORDING_FORMAT_KEY 保持一致
+  // 为避免 shared 层 → renderer 层循环依赖，这里硬编码字符串字面量
+  recording: ['recording.dir', 'recording.segmentMode', 'recording.format'],
+  // 自动更新设置：1 个 key（删除后回退到默认开启）
+  autoUpdate: ['auto_update_check'],
+  // 转写引擎设置：1 个 key（删除后回退到默认 userData/stt）
+  // 与 src/shared/match-recording.ts 中 STT_DIR_KEY 保持一致
+  stt: ['stt.dir']
 };
 
 /**
@@ -87,7 +99,9 @@ export const CONFIG_RESET_CATEGORIES: ConfigResetCategory[] = [
   'candidates',
   'hotkeys',
   'timerTheme',
-  'timerBackground'
+  'timerBackground',
+  'recording',
+  'autoUpdate'
 ];
 
 /** 全部可重置 key 的并集（仅配置类） */
@@ -109,6 +123,9 @@ export const RESET_CATEGORY_LABELS: Record<ResetCategory, string> = {
   hotkeys: '快捷键设置',
   timerTheme: '计时器主题',
   timerBackground: '计时器背景',
+  recording: '录音设置',
+  autoUpdate: '自动更新',
+  stt: '转写引擎',
   topics: '题库数据',
   events: '赛事数据',
   drawSessions: '抽取记录',
@@ -130,6 +147,9 @@ export const RESET_CATEGORY_DESCRIPTIONS: Record<ResetCategory, string> = {
   hotkeys: '自定义快捷键组合、禁用状态、总开关',
   timerTheme: '正反方称谓、主题色、背景图配置（回退到默认蓝红主题）',
   timerBackground: '计时器小屏与大屏的背景（回退到默认深蓝渐变）',
+  recording: '录音存放目录、分段模式、录音格式（回退：默认目录/整场一轨/wav）',
+  autoUpdate: '启动时自动检查更新开关（回退：开启）',
+  stt: '转写引擎存放目录（回退：默认 userData/stt）',
   topics: '所有用户导入与官方辩题记录（可选保留官方题库）',
   events: '赛事、轮次、队伍、队伍历史（级联删除）',
   drawSessions: '抽取会话与抽取明细（级联删除）',

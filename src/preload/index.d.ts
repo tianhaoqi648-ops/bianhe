@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // preload/index.d.ts — 全局 Window 类型声明
 //
 // 让渲染进程 TS 代码能识别 window.topicAPI / eventAPI / drawAPI / auditAPI / settingsAPI / importAPI。
@@ -73,7 +73,20 @@ import type {
   TimerSession,
   TimerRecord,
   BackgroundFile,
-  UpdateStatusPayload
+  UpdateStatusPayload,
+  Match,
+  MatchCreateInput,
+  MatchUpdateInput,
+  MatchSetResultInput,
+  MatchAiReview,
+  RecordingMeta,
+  RecordingSaveResult,
+  SttRequest,
+  SttSegment,
+  SttEngineStatus,
+  SttImportResult,
+  SttFfmpegStatus,
+  SttFunAsrStatus
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 
@@ -374,8 +387,51 @@ export interface UpdaterAPI {
   install: () => Promise<ApiResponse<void>>
   /** 设置启动时自动检查开关 */
   setAutoCheck: (value: boolean) => Promise<ApiResponse<{ ok: true }>>
+  /** 获取应用运行元信息（是否打包环境） */
+  getMeta: () => Promise<ApiResponse<{ isPackaged: boolean }>>
   /** 订阅状态变更，返回取消订阅函数 */
   onStatusChange: (cb: (payload: UpdateStatusPayload) => void) => () => void
+}
+
+export interface MatchAPI {
+  create: (input: MatchCreateInput) => Promise<ApiResponse<Match | null>>
+  get: (id: string) => Promise<ApiResponse<Match | null>>
+  listByEvent: (eventId: string) => Promise<ApiResponse<Match[]>>
+  listByRound: (roundId: string) => Promise<ApiResponse<Match[]>>
+  update: (id: string, input: MatchUpdateInput) => Promise<ApiResponse<Match | null>>
+  setResult: (id: string, input: MatchSetResultInput) => Promise<ApiResponse<Match | null>>
+  setAiReview: (id: string, review: MatchAiReview) => Promise<ApiResponse<Match | null>>
+  linkSession: (id: string, sessionId: string) => Promise<ApiResponse<Match | null>>
+  delete: (id: string) => Promise<ApiResponse<boolean>>
+}
+
+export interface RecordingAPI {
+  save: (fileName: string, data: ArrayBuffer | Uint8Array) => Promise<ApiResponse<RecordingSaveResult>>
+  list: () => Promise<ApiResponse<RecordingMeta[]>>
+  read: (filePath: string) =>
+    Promise<ApiResponse<{ ok: boolean; base64?: string; fileName?: string; error?: string }>>
+  delete: (fileName: string) => Promise<ApiResponse<boolean>>
+  pickDir: () => Promise<ApiResponse<string | null>>
+  getDir: () => Promise<ApiResponse<{ configured: string | null; effective: string }>>
+}
+
+export interface SttAPI {
+  transcribe: (req: SttRequest) => Promise<ApiResponse<SttSegment[]>>
+  status: (model?: string) => Promise<ApiResponse<SttEngineStatus>>
+  funasrStatus: () => Promise<SttFunAsrStatus>
+  funasrInstall: () => Promise<SttFunAsrInstallResult>
+  download: (model: string) => Promise<ApiResponse<{ ok: true }>>
+  cancelDownload: () => Promise<ApiResponse<{ ok: true }>>
+  remove: () => Promise<ApiResponse<{ ok: true }>>
+  importLocalModel: () => Promise<SttImportResult>
+  ffmpegStatus: () => Promise<SttFfmpegStatus>
+  downloadFfmpeg: () => Promise<SttFfmpegStatus>
+  cancelFfmpeg: () => Promise<SttFfmpegStatus>
+  removeFfmpeg: () => Promise<SttFfmpegStatus>
+  pickWhisperCli: () => Promise<SttEngineStatus>
+  clearWhisperCli: () => Promise<SttEngineStatus>
+  pickFfmpegPath: () => Promise<SttFfmpegStatus>
+  clearFfmpegPath: () => Promise<SttFfmpegStatus>
 }
 
 declare global {
@@ -396,9 +452,12 @@ declare global {
     undoAPI: UndoAPI
     formatAPI: FormatAPI
     timerAPI: TimerAPI
+    matchAPI: MatchAPI
+    recordingAPI: RecordingAPI
     bellAPI: BellAPI
     backgroundAPI: BackgroundAPI
     updaterAPI: UpdaterAPI
+    sttAPI: SttAPI
   }
 }
 

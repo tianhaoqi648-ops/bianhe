@@ -36,11 +36,31 @@ export interface StageDef {
   /** 铃声试听环节标记（仅 timingMode='untimed' 时有意义）：
    *  勾选后进入此环节时，自动收集所有倒计时环节的铃声，按剩余时间倒序展示，主席可逐条试听 */
   isBellPreview?: boolean
+  /** 该环节发言辩手（中文展示，如"正方一辩/反方四辩/双方/无"）；自由辩论可为"双方"。可选，缺省按 side 兜底 */
+  speaker?: string
+  /** 环节票权重（>0，可选）。缺省按等权处理 */
+  weight?: number
+  /**
+   * 归属的队伍时长池（后手）：'aff' 正方池 / 'neg' 反方池。
+   * 对带 teamPoolMinutes 的赛制，该环节从对应队伍池剩余中倒计时。
+   * 可选，缺省则按普通环节倒计时（自由辩论除外）。
+   */
+  poolTeam?: 'aff' | 'neg'
+  /**
+   * 建议分配的池时长（毫秒）：队伍总池为 teamPoolMinutes，各环节 poolSuggestedMs 之和 ≤ 队伍池。
+   * 仅作分配示例，可在赛制编辑器调整。可选。
+   */
+  poolSuggestedMs?: number
 }
 
 export interface DebateFormatData {
   stages: StageDef[]
   totalDurationMs: number
+  /**
+   * 每队总时长池（毫秒）：用于倒计时「自由分配」类赛制。
+   * 可选；缺省表示不使用队伍池。
+   */
+  teamPoolMinutes?: { aff: number; neg: number }
 }
 
 /** 铃声资源元数据（对应 bell_assets 表） */

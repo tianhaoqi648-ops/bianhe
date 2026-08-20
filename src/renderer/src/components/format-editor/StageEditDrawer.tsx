@@ -16,6 +16,29 @@ const SIDE_OPTIONS: { label: string; value: StageSide }[] = [
   { label: '下院反对 (CO)', value: 'co' }
 ]
 
+/** "不使用"选项的空值标记 */
+const SPEAKER_NONE = '__none__'
+
+const BP_SIDES: StageSide[] = ['og', 'oo', 'cg', 'co']
+
+/**
+ * 根据发言方返回可选的发言人列表。
+ * 中式/新国辩（aff/neg/both）展示"正/反方 X 辩"，BP 四角色（og/oo/cg/co）不展示，仅留"双方/不使用"。
+ */
+function speakerOptions(side: StageSide): { label: string; value: string }[] {
+  const opts: { label: string; value: string }[] = []
+  if (side === 'aff') {
+    opts.push({ label: '正方一辩', value: '正方一辩' }, { label: '正方二辩', value: '正方二辩' }, { label: '正方三辩', value: '正方三辩' }, { label: '正方四辩', value: '正方四辩' })
+  } else if (side === 'neg') {
+    opts.push({ label: '反方一辩', value: '反方一辩' }, { label: '反方二辩', value: '反方二辩' }, { label: '反方三辩', value: '反方三辩' }, { label: '反方四辩', value: '反方四辩' })
+  } else if (!BP_SIDES.includes(side)) {
+    // both 或其它：无单方辩手，仅双方
+  }
+  opts.push({ label: '双方', value: '双方' })
+  opts.push({ label: '不使用', value: SPEAKER_NONE })
+  return opts
+}
+
 interface StageEditDrawerProps {
   open: boolean
   stage: StageDef | null
@@ -49,6 +72,30 @@ export default function StageEditDrawer({
             value={stage.side}
             onChange={(v) => update({ side: v })}
             options={SIDE_OPTIONS}
+          />
+        </Form.Item>
+        <Form.Item
+          label="发言人"
+          tooltip={'用于录音打标记与展示；缺省时按发言方自动兜底。BP 制（OG/OO/CG/CO）无正反方辩手，可选"双方"或不使用'}
+        >
+          <Select
+            value={stage.speaker ?? SPEAKER_NONE}
+            onChange={(v) => update({ speaker: v === SPEAKER_NONE ? undefined : v })}
+            options={speakerOptions(stage.side)}
+          />
+        </Form.Item>
+        <Form.Item
+          label="权重"
+          tooltip="环节票权重（>0）。留空表示等权"
+        >
+          <InputNumber
+            min={0.1}
+            step={0.5}
+            value={stage.weight}
+            onChange={(v) => update({ weight: v == null ? undefined : v })}
+            placeholder="留空=等权"
+            style={{ width: '100%' }}
+            controls={false}
           />
         </Form.Item>
         <Form.Item label="时长（分钟）">

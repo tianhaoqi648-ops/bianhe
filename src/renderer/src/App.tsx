@@ -23,6 +23,7 @@ import { useMediaQuery } from './hooks/useMediaQuery';
 import { ToastProvider, useToast } from './hooks/useToast';
 import AppSidebar, { MENU_GROUPS } from './components/Layout/AppSidebar';
 import AppHeader from './components/Layout/AppHeader';
+import UpdaterNotifier from './components/settings/UpdaterNotifier';
 import MobileTabBar from './components/Layout/MobileTabBar';
 import HotkeyHelpModal from './components/HotkeyHelpModal';
 import UndoToast from './components/UndoToast';
@@ -210,6 +211,8 @@ function AppLayout() {
         />
       )}
       <Layout style={{ flex: 1, minWidth: 0 }}>
+        {/* 全局更新通知（启动自检可见反馈，不渲染 DOM，任何页面常驻） */}
+        <UpdaterNotifier />
         <AppHeader selectedKey={selectedKey} />
         <Content style={contentStyle}>
           <ErrorBoundary>

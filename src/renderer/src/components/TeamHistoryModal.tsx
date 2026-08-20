@@ -102,9 +102,12 @@ export default function TeamHistoryModal({
       title: '辩题',
       dataIndex: 'topic_id',
       key: 'topic',
-      render: (topicId: string) => {
-        const t = topicMap.get(topicId);
-        return t ? t.title : <Text type="secondary">（已删除辩题）</Text>;
+      render: (_: string, record: TeamHistory) => {
+        const t = topicMap.get(record.topic_id);
+        if (t) return t.title;
+        // 辩题已被删除：优先用写入历史时的标题快照，避免显示"已删除辩题"
+        if (record.topic_title) return record.topic_title;
+        return <Text type="secondary">（已删除辩题，无标题快照）</Text>;
       }
     },
     {

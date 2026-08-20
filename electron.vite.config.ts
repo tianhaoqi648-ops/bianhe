@@ -7,6 +7,10 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     resolve: {
+      // 源码目录 src/ 曾混入旧 tsc 编译产物（同名 .js/.d.ts）。Vite 默认扩展名 .js 优先于 .ts，
+      // 会导致 main 误用陈旧 .js、忽略最新的 .ts（例如新注册的 FunASR IPC handler 不生效）。
+      // 因此显式让 .ts 优先，确保始终使用真实 TypeScript 源码。
+      extensions: ['.mts', '.ts', '.mjs', '.js', '.jsx', '.tsx', '.json', '.node'],
       alias: {
         '@main': resolve(__dirname, 'src/main'),
         '@shared': resolve(__dirname, 'src/shared'),

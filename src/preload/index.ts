@@ -61,6 +61,13 @@ import {
   type TimerSession,
   type TimerRecord,
   type BackgroundFile,
+  type Match,
+  type MatchCreateInput,
+  type MatchUpdateInput,
+  type MatchSetResultInput,
+  type MatchAiReview,
+  type RecordingMeta,
+  type RecordingSaveResult,
   type DbMode,
   type ErrorLogInput,
   type BackupInfo,
@@ -82,7 +89,14 @@ import {
   type ExportResult,
   type ExportLogsResult,
   type DedupRunResult,
-  type UpdateStatusPayload
+  type UpdateStatusPayload,
+  type SttRequest,
+  type SttSegment,
+  type SttEngineStatus,
+  type SttImportResult,
+  type SttFfmpegStatus,
+  type SttFunAsrStatus,
+  type SttFunAsrInstallResult
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 import type {
@@ -395,6 +409,7 @@ const timerAPI = {
     label?: string
     eventId?: string
     roundId?: string
+    matchId?: string
     teamAffId?: string
     teamNegId?: string
     topicId?: string
@@ -405,7 +420,7 @@ const timerAPI = {
   }) => invoke<ApiResponse<TimerSession>>(IPC_CHANNELS.TIMER_CREATE_SESSION, opts),
   getSession: (id: string) => invoke<ApiResponse<TimerSession | null>>(IPC_CHANNELS.TIMER_GET_SESSION, id),
   listSessions: (limit?: number) => invoke<ApiResponse<TimerSession[]>>(IPC_CHANNELS.TIMER_LIST_SESSIONS, limit),
-  updateSession: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs'>>) =>
+  updateSession: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>) =>
     invoke<ApiResponse<TimerSession | null>>(IPC_CHANNELS.TIMER_UPDATE_SESSION, id, opts),
   deleteSession: (id: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.TIMER_DELETE_SESSION, id),
   listRecords: (sessionId: string) => invoke<ApiResponse<TimerRecord[]>>(IPC_CHANNELS.TIMER_LIST_RECORDS, sessionId),
@@ -437,6 +452,38 @@ const timerAPI = {
   /** 更新计时器主题配置（部分字段） */
   setTheme: (theme: Partial<TimerTheme>) =>
     invoke<ApiResponse<TimerTheme>>(IPC_CHANNELS.TIMER_THEME_SET, theme)
+}
+
+// ============================================================
+// 比赛 API（matches：赛事→轮次下的对阵，承载 抽题→计时→录音→赛果→AI评审）
+// ============================================================
+const matchAPI = {
+  create: (input: MatchCreateInput) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_CREATE, input),
+  get: (id: string) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_GET, id),
+  listByEvent: (eventId: string) => invoke<ApiResponse<Match[]>>(IPC_CHANNELS.MATCH_LIST_BY_EVENT, eventId),
+  listByRound: (roundId: string) => invoke<ApiResponse<Match[]>>(IPC_CHANNELS.MATCH_LIST_BY_ROUND, roundId),
+  update: (id: string, input: MatchUpdateInput) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_UPDATE, id, input),
+  setResult: (id: string, input: MatchSetResultInput) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_SET_RESULT, id, input),
+  setAiReview: (id: string, review: MatchAiReview) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_SET_AI_REVIEW, id, review),
+  linkSession: (id: string, sessionId: string) => invoke<ApiResponse<Match | null>>(IPC_CHANNELS.MATCH_LINK_SESSION, id, sessionId),
+  delete: (id: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.MATCH_DELETE, id)
+}
+
+// ============================================================
+// 录音 API（比赛/计时可选录音，userData/recordings/）
+// ============================================================
+const recordingAPI = {
+  save: (fileName: string, data: ArrayBuffer | Uint8Array) =>
+    invoke<ApiResponse<RecordingSaveResult>>(IPC_CHANNELS.RECORDING_SAVE, fileName, data),
+  list: () => invoke<ApiResponse<RecordingMeta[]>>(IPC_CHANNELS.RECORDING_LIST),
+  read: (filePath: string) =>
+    invoke<ApiResponse<{ ok: boolean; base64?: string; fileName?: string; error?: string }>>(
+      IPC_CHANNELS.RECORDING_READ,
+      filePath
+    ),
+  delete: (fileName: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.RECORDING_DELETE, fileName),
+  pickDir: () => invoke<ApiResponse<string | null>>(IPC_CHANNELS.RECORDING_PICK_DIR),
+  getDir: () => invoke<ApiResponse<{ configured: string | null; effective: string }>>(IPC_CHANNELS.RECORDING_GET_DIR)
 }
 
 // ============================================================
@@ -500,6 +547,10 @@ const updaterAPI = {
   setAutoCheck(value: boolean): Promise<ApiResponse<{ ok: true }>> {
     return invoke<ApiResponse<{ ok: true }>>(IPC_CHANNELS.UPDATER_SET_AUTO_CHECK, value)
   },
+  /** 获取应用运行元信息（是否打包环境，用于判断是否执行更新检查） */
+  getMeta(): Promise<ApiResponse<{ isPackaged: boolean }>> {
+    return invoke<ApiResponse<{ isPackaged: boolean }>>(IPC_CHANNELS.UPDATER_GET_META)
+  },
   /** 订阅状态变更（主进程通过 webContents.send 推送），返回取消订阅函数 */
   onStatusChange(cb: (payload: UpdateStatusPayload) => void): () => void {
     const listener = (_: unknown, payload: UpdateStatusPayload): void => cb(payload)
@@ -507,6 +558,77 @@ const updaterAPI = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATER_STATUS_CHANGE, listener)
     }
+  }
+}
+
+// ============================================================
+// 录音转文字（STT）API（AI 裁判整场评审原料 2026-08-20）
+// 转写引擎首次使用时按需下载到 userData/stt/，不增大安装包。
+// ============================================================
+const sttAPI = {
+  /** 对录音执行 分段→转文字，返回 SttSegment[] */
+  transcribe(req: SttRequest): Promise<ApiResponse<SttSegment[]>> {
+    return invoke<ApiResponse<SttSegment[]>>(IPC_CHANNELS.STT_TRANSCRIBE, req)
+  },
+  /** 查询转写引擎安装/下载状态（optional 指定模型） */
+  status(model?: string): Promise<ApiResponse<SttEngineStatus>> {
+    return invoke<ApiResponse<SttEngineStatus>>(IPC_CHANNELS.STT_STATUS, model)
+  },
+  /** 查询 FunASR 本地引擎运行环境状态（envOk/modelOk 等） */
+  funasrStatus(): Promise<SttFunAsrStatus> {
+    return invoke<SttFunAsrStatus>(IPC_CHANNELS.STT_FUNASR_STATUS)
+  },
+  /** 一键安装 FunASR 运行环境（自动检测 python + pip install funasr） */
+  funasrInstall(): Promise<SttFunAsrInstallResult> {
+    return invoke<SttFunAsrInstallResult>(IPC_CHANNELS.STT_FUNASR_INSTALL)
+  },
+  /** 下载转写引擎（二进制 + 模型）到 userData/stt/ */
+  download(model: string): Promise<ApiResponse<{ ok: true }>> {
+    return invoke<ApiResponse<{ ok: true }>>(IPC_CHANNELS.STT_DOWNLOAD, model)
+  },
+  /** 取消进行中的下载 */
+  cancelDownload(): Promise<ApiResponse<{ ok: true }>> {
+    return invoke<ApiResponse<{ ok: true }>>(IPC_CHANNELS.STT_CANCEL)
+  },
+  /** 删除已下载的转写引擎 */
+  remove(): Promise<ApiResponse<{ ok: true }>> {
+    return invoke<ApiResponse<{ ok: true }>>(IPC_CHANNELS.STT_REMOVE)
+  },
+  /** 手动导入本地 whisper 模型（ggml-<model>.bin，离线兜底） */
+  importLocalModel(): Promise<SttImportResult> {
+    return invoke<SttImportResult>(IPC_CHANNELS.STT_IMPORT_MODEL)
+  },
+  /** 查询 ffmpeg 转码器安装/下载状态 */
+  ffmpegStatus(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_STATUS)
+  },
+  /** 下载 ffmpeg 转码器（非 win32-x64 平台返回带 error 状态，不抛错） */
+  downloadFfmpeg(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_DOWNLOAD)
+  },
+  /** 取消进行中的 ffmpeg 下载 */
+  cancelFfmpeg(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_CANCEL)
+  },
+  /** 删除已下载的 ffmpeg 转码器 */
+  removeFfmpeg(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_REMOVE)
+  },
+  /** 手动选择本机已有的 whisper 转写器（whisper-cli） */
+  pickWhisperCli(): Promise<SttEngineStatus> {
+    return invoke<SttEngineStatus>(IPC_CHANNELS.STT_WHISPER_PICK)
+  },
+  /** 清除手动 whisper 转写器路径 */
+  clearWhisperCli(): Promise<SttEngineStatus> {
+    return invoke<SttEngineStatus>(IPC_CHANNELS.STT_WHISPER_CLEAR)
+  },
+  /** 手动选择本机已有的 ffmpeg（离线兜底） */
+  pickFfmpegPath(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_PICK)
+  },
+  /** 清除手动指定的 ffmpeg 路径 */
+  clearFfmpegPath(): Promise<SttFfmpegStatus> {
+    return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_CLEAR)
   }
 }
 
@@ -762,10 +884,13 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('undoAPI', undoAPI)
     contextBridge.exposeInMainWorld('formatAPI', formatAPI)
     contextBridge.exposeInMainWorld('timerAPI', timerAPI)
+    contextBridge.exposeInMainWorld('matchAPI', matchAPI)
+    contextBridge.exposeInMainWorld('recordingAPI', recordingAPI)
     contextBridge.exposeInMainWorld('bellAPI', bellAPI)
     contextBridge.exposeInMainWorld('backgroundAPI', backgroundAPI)
     contextBridge.exposeInMainWorld('updaterAPI', updaterAPI)
     contextBridge.exposeInMainWorld('agent', agentAPI)
+    contextBridge.exposeInMainWorld('sttAPI', sttAPI)
   } catch (error) {
     console.error(error)
   }
@@ -791,10 +916,13 @@ if (process.contextIsolated) {
     undoAPI: typeof undoAPI
     formatAPI: typeof formatAPI
     timerAPI: typeof timerAPI
+    matchAPI: typeof matchAPI
+    recordingAPI: typeof recordingAPI
     bellAPI: typeof bellAPI
     backgroundAPI: typeof backgroundAPI
     updaterAPI: typeof updaterAPI
     agent: typeof agentAPI
+    sttAPI: typeof sttAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = extendedElectronAPI
@@ -813,8 +941,11 @@ if (process.contextIsolated) {
   w.undoAPI = undoAPI
   w.formatAPI = formatAPI
   w.timerAPI = timerAPI
+  w.matchAPI = matchAPI
+  w.recordingAPI = recordingAPI
   w.bellAPI = bellAPI
   w.backgroundAPI = backgroundAPI
   w.updaterAPI = updaterAPI
   w.agent = agentAPI
+  w.sttAPI = sttAPI
 }

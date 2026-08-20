@@ -16,6 +16,8 @@ import { fixStancePairing } from './20260801_fix_stance_pairing'
 import { addAllowRepeatAndTestFlag } from './20260901_add_allow_repeat_and_test_flag'
 import { fixFkAndAddSnapshotColumns } from './20260902_fix_fk_and_add_snapshot_columns'
 import { addMissingIndexes } from './20260903_add_missing_indexes'
+import { createMatchesTable } from './20260904_create_matches'
+import { addTeamHistoryTopicTitle } from './20260905_add_team_history_topic_title'
 
 interface Migration {
   id: string
@@ -175,6 +177,8 @@ const MIGRATIONS: Migration[] = [
           stage_remaining_cache TEXT,
           aff_remaining_ms      INTEGER,
           neg_remaining_ms      INTEGER,
+          aff_pool_remaining_ms INTEGER,
+          neg_pool_remaining_ms INTEGER,
           FOREIGN KEY (format_id) REFERENCES debate_formats(id)
         );
 
@@ -437,6 +441,46 @@ const MIGRATIONS: Migration[] = [
       // P4-2: events.status 缺索引
       // P4-3: team_history.topic_id 缺索引
       addMissingIndexes(db)
+    }
+  },
+  {
+    id: '20260904_create_matches',
+    up: (db) => {
+      createMatchesTable(db)
+    }
+  },
+  {
+    id: '20260905_add_team_history_topic_title',
+    up: (db) => {
+      addTeamHistoryTopicTitle(db)
+    }
+  },
+  {
+    id: '20260906_ensure_match_multijudge_schema',
+    up: (db) => {
+      // 兼容旧库：20260904_create_matches 曾在部分用户库按旧 schema 建过 matches 并记为已应用，
+      // 其 id 不变导致改写后的多裁判模型（match_judges / match_judge_votes /
+      // matches.format_id / judge_system / recording_meta / timer_sessions.match_id）不会重跑。
+      // 用新 id 幂等补齐（createMatchesTable 内部 CREATE IF NOT EXISTS + pragma 校验加列）。
+      createMatchesTable(db)
+    }
+  },
+  {
+    id: '20260910_add_pool_remaining_to_timer_sessions',
+    up: (db) => {
+      // 为 timer_sessions 表添加每队总时长池剩余字段（正方/反方池，毫秒）。
+      // 带 teamPoolMinutes 的赛制（如新国辩官方 17 分钟自由分配版）用于持久化池剩余。
+      // 采用独立列，避免与自由辩论的 aff_remaining_ms / neg_remaining_ms 冲突。
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_pool_remaining_ms INTEGER')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_pool_remaining_ms INTEGER')
+      } catch {
+        /* 字段已存在 */
+      }
     }
   }
 ].sort((a, b) => a.id.localeCompare(b.id))

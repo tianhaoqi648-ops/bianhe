@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Layout,
   Card,
@@ -46,6 +47,7 @@ import {
   RestOutlined,
   KeyOutlined,
   BellOutlined,
+  AudioOutlined,
   BulbOutlined,
   InfoCircleOutlined,
   MailOutlined,
@@ -59,7 +61,8 @@ import {
   FolderOpenOutlined,
   RocketOutlined,
   PlayCircleOutlined,
-  RobotOutlined
+  RobotOutlined,
+  ImportOutlined
 } from '@ant-design/icons';
 import { version } from '../../../../package.json';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -78,7 +81,27 @@ import UpdateCard from '../components/settings/UpdateCard';
 import { statCardStyle, cardStyle } from '../styles/shared';
 import { spacing, fontSize, radius } from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
-import type { ExportFormat } from '../../../shared/types';
+import type {
+  ExportFormat,
+  SttEngine,
+  SttEngineStatus,
+  SttFfmpegStatus,
+  SttFunAsrStatus,
+  SttLocalEngine
+} from '../../../shared/types';
+
+// 本地扩展：FunASR 缺失的推理运行时依赖（如 ["torchaudio"]），由 funasrStatus() 返回
+interface SttFunAsrStatusWithDeps extends SttFunAsrStatus {
+  missingDeps?: string[]
+}
+import {
+  STT_ENGINE_KEY,
+  STT_MODEL_KEY,
+  STT_LOCAL_ENGINE_KEY,
+  STT_FUNASR_MODEL_KEY,
+  WHISPER_MODELS,
+  FUNASR_MODELS
+} from '../../../shared/types';
 import { LLM_PROVIDER_PRESETS } from '../../../shared/agent-types';
 import type {
   LLMProvider,
@@ -96,6 +119,13 @@ import {
   type ConfigResetCategory,
   type DataResetCategory
 } from '../../../shared/settings-defaults';
+import {
+  RECORDING_DIR_KEY,
+  RECORDING_SEGMENT_KEY,
+  RECORDING_FORMAT_KEY,
+  resolveRecordingFormat
+} from '../../../shared/match-recording';
+import { STT_DIR_KEY } from '../../../shared/match-recording';
 
 const { Content } = Layout;
 const { Text, Paragraph, Title } = Typography;
@@ -263,6 +293,14 @@ function buildDefaultConfirmRules(): ToolConfirmRule[] {
   }))
 }
 
+/** 把字节数格式化为可读体积（KB/MB），非法输入返回 '-' */
+function formatSize(bytes: number | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return '-'
+  const mb = bytes / (1024 * 1024)
+  if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${mb.toFixed(1)} MB`
+}
+
 /**
  * 获取 preload 暴露的 Agent 配置 API。
  *
@@ -286,6 +324,17 @@ export default function Settings() {
   // 当前激活的 Tab（持久化到 localStorage）
   const [activeTab, setActiveTab] = useState<SettingsTab>(loadActiveTab);
 
+  // 支持 URL query ?tab=about 直达「关于」页（由全局更新通知「去更新」跳转而来）
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('tab') === 'about') {
+      setActiveTab('about');
+    }
+    // 仅在挂载时读取一次，避免路由变化反复覆盖用户手动切换的 Tab
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 本地表单状态（与 store 同步）
   const [dedupEnabled, setDedupEnabled] = useState<boolean>(DEFAULTS.dedupEnabled);
   const [levenshtein, setLevenshtein] = useState<number>(DEFAULTS.dedupLevenshtein);
@@ -306,6 +355,33 @@ export default function Settings() {
   const [dedupOpen, setDedupOpen] = useState(false);
   const [tagDisplayOpen, setTagDisplayOpen] = useState(false);
   const [exporting, setExporting] = useState<null | 'topics' | 'sessions'>(null);
+
+  // 录音存放位置
+  const [recDirEffective, setRecDirEffective] = useState('');
+  const [recDirConfigured, setRecDirConfigured] = useState(false);
+  const [recDirPicking, setRecDirPicking] = useState(false);
+  // 录音分段模式（whole 整场一轨 / split 按环节分段）
+  const [recSegmentMode, setRecSegmentMode] = useState<'whole' | 'split'>('whole');
+  // 录音格式（wav 可拖动进度条，体积大 / webm 体积小，进度条不可拖 / m4a AAC 体积小且可拖，需平台支持）
+  const [recFormat, setRecFormat] = useState<'wav' | 'webm' | 'm4a'>('wav');
+  // M4A（AAC）依赖 MediaRecorder 的 audio/mp4 支持，运行期检测
+  const m4aSupported = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4');
+  // AI 转写（STT）：引擎选择 / 模型 / 本地引擎安装与下载状态
+  const [sttEngine, setSttEngine] = useState<SttEngine>('local-first');
+  const [sttModel, setSttModel] = useState<string>('base');
+  const [sttStatus, setSttStatus] = useState<SttEngineStatus | null>(null);
+  const [sttDownloading, setSttDownloading] = useState(false);
+  // 本地引擎实现（whisper.cpp / FunASR）与 FunASR 模型/运行环境状态
+  const [sttLocalEngine, setSttLocalEngine] = useState<SttLocalEngine>('whisper');
+  const [sttFunAsrModel, setSttFunAsrModel] = useState<string>('paraformer-zh');
+  const [sttFunAsrStatus, setSttFunAsrStatus] = useState<SttFunAsrStatusWithDeps | null>(null);
+  const [funAsrInstalling, setFunAsrInstalling] = useState(false);
+  // AI 转写（STT）：ffmpeg 转码器安装/下载状态
+  const [sttFfmpegStatus, setSttFfmpegStatus] = useState<SttFfmpegStatus | null>(null);
+  const [sttFfmpegDownloading, setSttFfmpegDownloading] = useState(false);
+  // AI 转写（STT）：存放目录（配置值；空 = 默认 userData/stt）
+  const [sttDirConfigured, setSttDirConfigured] = useState('');
+  const [sttDirPicking, setSttDirPicking] = useState(false);
   // P3.4 Task 20：备份管理弹窗 + 备份中 loading
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -355,6 +431,22 @@ export default function Settings() {
       setAiEnabled(s[KEYS.aiDedupEnabled] ?? DEFAULTS.aiDedupEnabled);
       setAiApiKey(s[KEYS.aiApiKey] ?? DEFAULTS.aiApiKey);
       setAiThreshold(Number(s[KEYS.aiThreshold] ?? DEFAULTS.aiThreshold));
+
+      setRecSegmentMode(s[RECORDING_SEGMENT_KEY] === 'split' ? 'split' : 'whole');
+
+      const sttEng = s[STT_ENGINE_KEY];
+      setSttEngine(sttEng === 'local' || sttEng === 'api' ? sttEng : 'local-first');
+      const sttMdl = s[STT_MODEL_KEY];
+      setSttModel(typeof sttMdl === 'string' && sttMdl.trim() ? sttMdl.trim() : 'base');
+      const localEng = s[STT_LOCAL_ENGINE_KEY];
+      setSttLocalEngine(localEng === 'funasr' ? 'funasr' : 'whisper');
+      const funAsrMdl = s[STT_FUNASR_MODEL_KEY];
+      setSttFunAsrModel(
+        typeof funAsrMdl === 'string' &&
+          (FUNASR_MODELS as readonly string[]).includes(funAsrMdl.trim())
+          ? funAsrMdl.trim()
+          : FUNASR_MODELS[0]
+      );
 
       setOfficialInfo({
         seeded: s[KEYS.officialSeeded] === true,
@@ -774,6 +866,374 @@ export default function Settings() {
     }
   };
 
+  // ====== 录音存放位置 ======
+  const refreshRecDir = async () => {
+    try {
+      const res = await window.recordingAPI.getDir();
+      if (res.success && res.data) {
+        setRecDirEffective(res.data.effective);
+        setRecDirConfigured(!!res.data.configured);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handlePickRecDir = async () => {
+    setRecDirPicking(true);
+    try {
+      const res = await window.recordingAPI.pickDir();
+      if (res.success && res.data) {
+        await window.settingsAPI.set(RECORDING_DIR_KEY, res.data);
+        toast.success('录音目录已更新');
+      } else if (res.success) {
+        toast.info('已取消选择');
+      } else {
+        toast.error(res.error || '选择目录失败');
+      }
+      await refreshRecDir();
+    } finally {
+      setRecDirPicking(false);
+    }
+  };
+
+  const handleResetRecDir = async () => {
+    await window.settingsAPI.set(RECORDING_DIR_KEY, '');
+    toast.success('已恢复默认录音目录');
+    await refreshRecDir();
+  };
+
+  // 录音分段模式：切换后立即持久化
+  const handleRecSegmentModeChange = async (v: 'whole' | 'split') => {
+    setRecSegmentMode(v);
+    await window.settingsAPI.set(RECORDING_SEGMENT_KEY, v);
+    toast.success(v === 'split' ? '已切换为按环节分段' : '已切换为整场一轨');
+  };
+
+  // 录音格式：切换后立即持久化到 settings 'recording.format'
+  const handleRecFormatChange = async (v: 'wav' | 'webm' | 'm4a') => {
+    setRecFormat(v);
+    await window.settingsAPI.set(RECORDING_FORMAT_KEY, v);
+    const label = v === 'wav' ? 'WAV（可拖动进度条）' : v === 'm4a' ? 'M4A（AAC · 体积小且可拖）' : 'WebM（体积小，进度条不可拖）';
+    toast.success(`已切换为 ${label}`);
+  };
+
+  // 录音格式：本页加载时读取，缺失/未识别默认 'wav'
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await window.settingsAPI.get(RECORDING_FORMAT_KEY);
+        setRecFormat(resolveRecordingFormat(res.data));
+      } catch {
+        // 静默失败
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    void refreshRecDir();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 转到「通用」Tab 时刷新 STT 存放目录
+  useEffect(() => {
+    if (activeTab === 'basic') void refreshSttDir();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // ====== AI 转写（STT）：引擎状态 / 下载 / 取消 / 删除 ======
+  const refreshSttStatus = useCallback(async (model: string) => {
+    try {
+      const res = await window.sttAPI.status(model);
+      if (res.success && res.data) setSttStatus(res.data);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  // 切到「通用」Tab 或模型变化时刷新本地引擎状态
+  useEffect(() => {
+    if (activeTab === 'basic') void refreshSttStatus(sttModel);
+  }, [activeTab, sttModel, refreshSttStatus]);
+
+  // 下载进行中轮询进度（stt:status 返回模块级实时进度）
+  useEffect(() => {
+    if (!sttDownloading) return;
+    const timer = setInterval(() => void refreshSttStatus(sttModel), 600);
+    return () => clearInterval(timer);
+  }, [sttDownloading, sttModel, refreshSttStatus]);
+
+  // 引擎选择：切换后立即持久化到 settings（后端缺省也从未通过 req 传）
+  const handleSttEngineChange = async (v: SttEngine) => {
+    setSttEngine(v);
+    try {
+      await settingsStore.set(STT_ENGINE_KEY, v);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存引擎选择失败');
+    }
+  };
+
+  // 模型选择：持久化 + 刷新对应模型状态
+  const handleSttModelChange = async (v: string) => {
+    setSttModel(v);
+    try {
+      await settingsStore.set(STT_MODEL_KEY, v);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存模型选择失败');
+    }
+    await refreshSttStatus(v);
+  };
+
+  // 下载转写引擎（二进制 + 模型）
+  const handleSttDownload = async () => {
+    setSttDownloading(true);
+    try {
+      const res = await window.sttAPI.download(sttModel);
+      if (!res.success) throw new Error(res.error || '下载失败');
+      toast.success(`转写引擎下载完成（模型 ${sttModel}）`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '下载失败');
+    } finally {
+      setSttDownloading(false);
+      await refreshSttStatus(sttModel);
+    }
+  };
+
+  const handleSttCancelDownload = async () => {
+    setSttDownloading(false);
+    try {
+      await window.sttAPI.cancelDownload();
+      toast.info('已取消下载');
+    } catch {
+      // ignore
+    }
+    await refreshSttStatus(sttModel);
+  };
+
+  const handleSttRemove = async () => {
+    try {
+      const res = await window.sttAPI.remove();
+      if (!res.success) throw new Error(res.error || '删除失败');
+      toast.success('已删除本地转写引擎');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '删除失败');
+    }
+    await refreshSttStatus(sttModel);
+  };
+
+  // 导入本地 whisper 模型（ggml-<model>.bin，离线兜底）
+  const handleSttImport = async () => {
+    try {
+      const res = await window.sttAPI.importLocalModel();
+      if (res?.ok) {
+        toast.success(`已导入本地模型（${res.model ?? '未知模型'}）`);
+      } else if (res?.error) {
+        toast.error(res.error);
+      }
+      // 用户取消（ok:false 且无 error）静默
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导入本地模型失败');
+    } finally {
+      await refreshSttStatus(sttModel);
+    }
+  };
+
+  // 手动选择本机已有的 whisper 转写器（whisper-cli，离线兜底，规避 bench 错选/网络不可达）
+  const handleWhisperPick = async () => {
+    try {
+      const s = await window.sttAPI.pickWhisperCli();
+      if (s?.binaryOk) toast.success('已使用本机 whisper 转写器');
+      else toast.error(s?.error || '所选 whisper 不可用（可能缺少配套 DLL，或仍是 bench 版）');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '选择失败');
+    }
+    await refreshSttStatus(sttModel);
+  };
+  const handleWhisperClear = async () => {
+    try {
+      await window.sttAPI.clearWhisperCli();
+      toast.info('已清除手动 whisper 路径');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '清除失败');
+    }
+    await refreshSttStatus(sttModel);
+  };
+
+  // 刷新 FunASR 本地引擎运行环境状态
+  const refreshSttFunAsrStatus = useCallback(async () => {
+    try {
+      const s = await window.sttAPI.funasrStatus();
+      if (s) setSttFunAsrStatus(s);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  // 切到「通用」Tab 时刷新 FunASR 状态
+  useEffect(() => {
+    if (activeTab === 'basic') void refreshSttFunAsrStatus();
+  }, [activeTab, refreshSttFunAsrStatus]);
+
+  // 本地引擎实现选择：持久化 + 按引擎刷新对应状态（whisper 恢复 whisper 状态，funasr 显示 funasr 状态）
+  const handleSttLocalEngineChange = async (v: SttLocalEngine) => {
+    setSttLocalEngine(v);
+    try {
+      await settingsStore.set(STT_LOCAL_ENGINE_KEY, v);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存本地引擎选择失败');
+    }
+    if (v === 'funasr') await refreshSttFunAsrStatus();
+    else await refreshSttStatus(sttModel);
+  };
+
+  // FunASR 模型选择：持久化 + 刷新对应模型状态
+  const handleSttFunAsrModelChange = async (v: string) => {
+    setSttFunAsrModel(v);
+    try {
+      await settingsStore.set(STT_FUNASR_MODEL_KEY, v);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存 FunASR 模型选择失败');
+    }
+    await refreshSttFunAsrStatus();
+  };
+
+  // 一键安装 FunASR 依赖（pip install funasr）
+  const handleFunAsrInstall = async () => {
+    if (funAsrInstalling) return;
+    setFunAsrInstalling(true);
+    try {
+      const res = await window.sttAPI.funasrInstall();
+      if (res.ok) {
+        toast.success(res.detail ?? '已安装 funasr 运行环境');
+      } else {
+        toast.error(res.detail ?? '安装失败');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '安装 FunASR 失败');
+    } finally {
+      setFunAsrInstalling(false);
+      await refreshSttFunAsrStatus();
+    }
+  };
+
+  // ====== AI 转写（STT）：ffmpeg 转码器 状态 / 下载 / 取消 / 删除 ======
+  const refreshSttFfmpegStatus = useCallback(async () => {
+    try {
+      const s = await window.sttAPI.ffmpegStatus();
+      if (s) setSttFfmpegStatus(s);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  // 切到「通用」Tab 时刷新 ffmpeg 状态
+  useEffect(() => {
+    if (activeTab === 'basic') void refreshSttFfmpegStatus();
+  }, [activeTab, refreshSttFfmpegStatus]);
+
+  // ffmpeg 下载进行中轮询进度（stt:ffmpeg-status 返回实时进度）
+  useEffect(() => {
+    if (!sttFfmpegDownloading) return;
+    const timer = setInterval(() => void refreshSttFfmpegStatus(), 600);
+    return () => clearInterval(timer);
+  }, [sttFfmpegDownloading, refreshSttFfmpegStatus]);
+
+  const handleFfmpegDownload = async () => {
+    setSttFfmpegDownloading(true);
+    try {
+      const s = await window.sttAPI.downloadFfmpeg();
+      if (s?.error) throw new Error(s.error);
+      toast.success('转码器（ffmpeg）下载完成');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'ffmpeg 下载失败');
+    } finally {
+      setSttFfmpegDownloading(false);
+      await refreshSttFfmpegStatus();
+    }
+  };
+
+  const handleFfmpegCancelDownload = async () => {
+    setSttFfmpegDownloading(false);
+    try {
+      const s = await window.sttAPI.cancelFfmpeg();
+      if (s?.error) throw new Error(s.error);
+      toast.info('已取消 ffmpeg 下载');
+    } catch {
+      // ignore
+    }
+    await refreshSttFfmpegStatus();
+  };
+
+  const handleFfmpegRemove = async () => {
+    try {
+      const s = await window.sttAPI.removeFfmpeg();
+      if (s?.error) throw new Error(s.error);
+      toast.success('已删除 ffmpeg 转码器');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '删除失败');
+    }
+    await refreshSttFfmpegStatus();
+  };
+
+  // 手动选择本机已有 ffmpeg（网络不可用时的离线兜底）
+  const handleFfmpegPick = async () => {
+    try {
+      const s = await window.sttAPI.pickFfmpegPath();
+      if (s?.error) throw new Error(s.error);
+      if (s?.installed) toast.success('已使用本机 ffmpeg');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '选择 ffmpeg 失败');
+    }
+    await refreshSttFfmpegStatus();
+  };
+  // 清除手动指定的 ffmpeg 路径
+  const handleFfmpegClearPath = async () => {
+    try {
+      await window.sttAPI.clearFfmpegPath();
+      toast.info('已清除手动 ffmpeg 路径');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '清除失败');
+    }
+    await refreshSttFfmpegStatus();
+  };
+
+  // ====== AI 转写存放位置（STT 引擎目录） ======
+  const refreshSttDir = async () => {
+    try {
+      const res = await window.settingsAPI.get(STT_DIR_KEY);
+      const v = res?.data;
+      setSttDirConfigured(typeof v === 'string' && v.trim() ? v.trim() : '');
+    } catch {
+      // 静默失败
+    }
+  };
+
+  const handlePickSttDir = async () => {
+    setSttDirPicking(true);
+    try {
+      const res = await window.recordingAPI.pickDir();
+      if (res.success && res.data) {
+        await window.settingsAPI.set(STT_DIR_KEY, res.data);
+        toast.success('转写引擎目录已更新');
+        await refreshSttStatus(sttModel);
+      } else if (res.success) {
+        toast.info('已取消选择');
+      } else {
+        toast.error(res.error || '选择目录失败');
+      }
+      await refreshSttDir();
+    } finally {
+      setSttDirPicking(false);
+    }
+  };
+
+  const handleResetSttDir = async () => {
+    await window.settingsAPI.set(STT_DIR_KEY, '');
+    toast.success('已恢复默认转写引擎目录');
+    await refreshSttDir();
+    await refreshSttStatus(sttModel);
+  };
+
   // ====== 渲染：通用 Tab（去重设置 + 铃声管理） ======
   const renderBasicTab = () => (
     <div>
@@ -962,6 +1422,375 @@ export default function Settings() {
         }
       >
         <BellManager />
+      </Card>
+
+      {/* 录音存放位置 */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <AudioOutlined style={{ color: '#1677ff' }} />
+            <span>录音存放位置</span>
+          </Space>
+        }
+        style={{ marginTop: spacing.md }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>
+            <Text type="secondary">当前目录：</Text>
+            <Text code>{recDirEffective || '加载中…'}</Text>
+          </div>
+          <Space>
+            <Button onClick={() => void handlePickRecDir()} loading={recDirPicking}>
+              选择目录…
+            </Button>
+            <Button onClick={() => void handleResetRecDir()} disabled={!recDirConfigured}>
+              恢复默认（用户数据目录）
+            </Button>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              比赛/计时录音的存放路径，可在设置中随时更换。
+            </Text>
+          </Space>
+          <div>
+            <Text type="secondary">录音分段：</Text>
+            <Radio.Group
+              value={recSegmentMode}
+              onChange={(e) => void handleRecSegmentModeChange(e.target.value as 'whole' | 'split')}
+              optionType="button"
+              buttonStyle="solid"
+              size="small"
+            >
+              <Radio value="whole">整场一轨</Radio>
+              <Radio value="split">按环节分段</Radio>
+            </Radio.Group>
+            <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+              整场一轨为单一录音；按环节分段会在每个环节切换时独立成轨。
+            </Text>
+          </div>
+          <div>
+            <Text type="secondary">录音格式：</Text>
+            <div style={{ marginTop: 4 }}>
+              <Radio.Group
+                value={recFormat}
+                onChange={(e) => void handleRecFormatChange(e.target.value as 'wav' | 'webm' | 'm4a')}
+              >
+                <Radio value="wav">WAV（可拖动进度条 · 体积大 · 推荐）</Radio>
+                <br />
+                <Radio value="webm">WebM（体积小 · 进度条不可拖动）</Radio>
+                <br />
+                <Radio value="m4a" disabled={!m4aSupported}>M4A（AAC · 体积小且可拖动）{!m4aSupported && ' · 当前系统不支持'}</Radio>
+              </Radio.Group>
+            </div>
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              WAV 录音可拖动进度条但体积较大（推荐）；M4A（AAC）体积小且可拖动；WebM 体积更小但进度条不可拖动。
+            </Text>
+          </div>
+        </Space>
+      </Card>
+
+      {/* AI 转写（录音转文字） */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <AudioOutlined style={{ color: '#1677ff' }} />
+            <span>AI 转写（录音转文字）</span>
+          </Space>
+        }
+        style={{ marginTop: spacing.md }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <Text type="secondary">转写引擎：</Text>
+            <div style={{ marginTop: 4 }}>
+              <Radio.Group
+                value={sttEngine}
+                onChange={(e) => void handleSttEngineChange(e.target.value as SttEngine)}
+              >
+                <Radio value="local-first">本地优先（免费离线）</Radio>
+                <br />
+                <Radio value="local">仅本地</Radio>
+                <br />
+                <Radio value="api">仅 API</Radio>
+              </Radio.Group>
+            </div>
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              本地优先：先用本地 Whisper，本地缺失或转写失败时自动用已配置的 AI API 兜底。
+            </Text>
+          </div>
+
+          <div>
+            <Text type="secondary">本地引擎（本地实现）：</Text>
+            <div style={{ marginTop: 4 }}>
+              <Select
+                style={{ width: 320 }}
+                value={sttLocalEngine}
+                onChange={(v) => void handleSttLocalEngineChange(v as SttLocalEngine)}
+                options={[
+                  { value: 'whisper', label: 'whisper.cpp（本地离线）' },
+                  { value: 'funasr', label: 'FunASR（阿里 · 需 Python 环境）' }
+                ]}
+              />
+            </div>
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              whisper.cpp 全程本地离线；FunASR 需本机已装 Python + funasr 包，两者不可同时作为本地实现。
+            </Text>
+          </div>
+
+          <div>
+            <Text type="secondary">存放位置：</Text>
+            <div style={{ marginTop: 4 }}>
+              <Text type="secondary">当前目录：</Text>
+              <Text code>{sttDirConfigured || '默认 userData/stt'}</Text>
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <Space>
+                <Button onClick={() => void handlePickSttDir()} loading={sttDirPicking}>
+                  选择目录…
+                </Button>
+                <Button onClick={() => void handleResetSttDir()} disabled={!sttDirConfigured}>
+                  恢复默认（用户数据目录）
+                </Button>
+              </Space>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                默认 userData/stt；可改为其它盘符/目录。
+              </Text>
+            </div>
+          </div>
+
+          {sttLocalEngine === 'whisper' ? (
+            <div>
+              <Text type="secondary">转写模型：</Text>
+              <div style={{ marginTop: 4 }}>
+                <Select
+                  style={{ width: 320 }}
+                  value={sttModel}
+                  onChange={(v) => void handleSttModelChange(v)}
+                  options={(WHISPER_MODELS as readonly string[]).map((m) => ({
+                    value: m,
+                    label:
+                      m === 'base'
+                        ? 'base（约 142MB · 推荐）'
+                        : m === 'small'
+                          ? 'small（体积更大 · 更精准）'
+                          : 'medium（体积更大 · 中文更准）'
+                  }))}
+                />
+              </div>
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                模型文件随引擎一起下载，切换模型后需重新下载对应文件才可使用该模型的本地转写。small 属入门级，medium 更准。
+              </Text>
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                模型下载需网络。无网络或镜像不可达时，可“导入本地模型”（ggml-*.bin），或改用“仅 API”。
+              </Text>
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 2, display: 'block' }}>
+                本地 whisper 不支持 m4a/webm 解码：本地转写建议用 WAV 录音；若用 m4a 请把引擎设为“仅 API”。
+              </Text>
+            </div>
+          ) : (
+            <div>
+              <Text type="secondary">FunASR 模型：</Text>
+              <div style={{ marginTop: 4 }}>
+                <Select
+                  style={{ width: 320 }}
+                  value={sttFunAsrModel}
+                  onChange={(v) => void handleSttFunAsrModelChange(v)}
+                  options={(FUNASR_MODELS as readonly string[]).map((m) => ({
+                    value: m,
+                    label: m === 'paraformer-zh' ? 'paraformer-zh（推荐 · 中文）' : 'sensevoicesmall-zh（体积更小）'
+                  }))}
+                />
+              </div>
+              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                FunASR 模型由本机 funasr 首次运行时自动拉取（需联网），无需在此单独下载；若未装运行环境请先 pip install funasr。
+              </Text>
+            </div>
+          )}
+
+          <div>
+            <Text type="secondary">本地引擎状态：</Text>
+            <div style={{ marginTop: 6 }}>
+              {sttLocalEngine === 'whisper' ? (
+                sttStatus ? (
+                  sttStatus.downloading || sttDownloading ? (
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Progress
+                        percent={Math.round(sttStatus.progress ?? 0)}
+                        size="small"
+                        status="active"
+                      />
+                      <Space>
+                        <Button loading>正在下载（模型 {sttModel}）…</Button>
+                        <Button danger onClick={() => void handleSttCancelDownload()}>
+                          取消下载
+                        </Button>
+                      </Space>
+                    </Space>
+                  ) : sttStatus.installed ? (
+                    <Space wrap>
+                      <Tag color="green" icon={<CheckCircleOutlined />}>已安装</Tag>
+                      <span style={{ fontSize: 12 }}>
+                        模型 {sttStatus.model ?? sttModel} · 体积 {formatSize(sttStatus.fileSize)}
+                      </span>
+                      <Button onClick={() => void refreshSttStatus(sttModel)}>刷新</Button>
+                      <Button icon={<ImportOutlined />} onClick={() => void handleSttImport()}>
+                        导入本地模型
+                      </Button>
+                      <Button icon={<FolderOpenOutlined />} onClick={() => void handleWhisperPick()}>
+                        选择本机 whisper 转写器
+                      </Button>
+                      <Button onClick={() => void handleWhisperClear()}>清除手动路径</Button>
+                      <Popconfirm
+                        title="确认删除本地转写引擎？"
+                        description="将删除 whisper 二进制与「当前模型」，不影响其它模型与 ffmpeg 转码器。"
+                        onConfirm={() => void handleSttRemove()}
+                        okText="删除"
+                        cancelText="取消"
+                      >
+                        <Button danger>删除</Button>
+                      </Popconfirm>
+                    </Space>
+                  ) : (
+                    <Space wrap>
+                      <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => void handleSttDownload()}>
+                        下载转写引擎（模型 {sttModel}）
+                      </Button>
+                      <Button icon={<ImportOutlined />} onClick={() => void handleSttImport()}>
+                        导入本地模型
+                      </Button>
+                      <Button icon={<FolderOpenOutlined />} onClick={() => void handleWhisperPick()}>
+                        选择本机 whisper 转写器
+                      </Button>
+                    </Space>
+                  )
+                ) : (
+                  <Button onClick={() => void refreshSttStatus(sttModel)}>检查引擎状态</Button>
+                )
+              ) : (
+                <div>
+                  {sttFunAsrStatus ? (
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Space wrap>
+                        {sttFunAsrStatus.envOk ? (
+                          <Tag color="green" icon={<CheckCircleOutlined />}>
+                            FunASR 运行环境就绪（需 Python + funasr）
+                          </Tag>
+                        ) : (
+                          <Tag color="red">FunASR 运行环境未就绪</Tag>
+                        )}
+                        <span style={{ fontSize: 12 }}>模型 {sttFunAsrStatus.model ?? sttFunAsrModel}</span>
+                        <Button onClick={() => void refreshSttFunAsrStatus()}>刷新</Button>
+                      </Space>
+                      {!sttFunAsrStatus.envOk &&
+                        (sttFunAsrStatus.missingDeps && sttFunAsrStatus.missingDeps.length > 0 ? (
+                          <div>
+                            <Text type="danger" style={{ fontSize: 12 }}>
+                              已检测到 Python 与 funasr，但缺少推理依赖，真转写会因缺模块失败：
+                            </Text>
+                            <Space wrap style={{ marginTop: 6 }}>
+                              {sttFunAsrStatus.missingDeps.map((dep) => (
+                                <Tag color="red" key={dep}>{dep}</Tag>
+                              ))}
+                            </Space>
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                              点击下方“一键安装 FunASR 依赖”补全后即可转写。
+                            </Text>
+                          </div>
+                        ) : (
+                          <Text type="danger" style={{ fontSize: 12 }}>
+                            {sttFunAsrStatus.hasPython === false
+                              ? '未检测到 Python：请先安装 Python（python.org 勾选 “Add to PATH” 或微软商店），装好后回到本页点击“一键安装 FunASR 依赖”。'
+                              : sttFunAsrStatus.hasPython === true
+                                ? '已检测到 Python，但缺少 funasr 包 → 点击“一键安装 FunASR 依赖”。'
+                                : '需安装 Python 并执行 pip install funasr，首次使用会自动拉取模型；或切回 whisper.cpp 本地引擎。'}
+                          </Text>
+                        ))}
+                      {!sttFunAsrStatus.envOk && (
+                        <Button
+                          type="primary"
+                          loading={funAsrInstalling}
+                          disabled={funAsrInstalling}
+                          onClick={() => void handleFunAsrInstall()}
+                        >
+                          {funAsrInstalling ? '正在安装（pip install funasr）…' : '一键安装 FunASR 依赖'}
+                        </Button>
+                      )}
+                    </Space>
+                  ) : (
+                    <Button onClick={() => void refreshSttFunAsrStatus()}>检查 FunASR 环境</Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <Text type="secondary">转码器（ffmpeg）状态：</Text>
+            <div style={{ marginTop: 6 }}>
+              {sttFfmpegStatus ? (
+                sttFfmpegStatus.downloading || sttFfmpegDownloading ? (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Progress
+                      percent={Math.round(sttFfmpegStatus.progress ?? 0)}
+                      size="small"
+                      status="active"
+                    />
+                    {sttFfmpegStatus.error && (
+                      <Text type="danger" style={{ fontSize: 12 }}>{sttFfmpegStatus.error}</Text>
+                    )}
+                    <Space>
+                      <Button loading>正在下载转码器…</Button>
+                      <Button danger onClick={() => void handleFfmpegCancelDownload()}>
+                        取消下载
+                      </Button>
+                    </Space>
+                  </Space>
+                ) : sttFfmpegStatus.installed ? (
+                  <Space wrap>
+                    <Tag color="green" icon={<CheckCircleOutlined />}>已安装</Tag>
+                    <span style={{ fontSize: 12 }}>
+                      体积 {formatSize(sttFfmpegStatus.fileSize)}
+                    </span>
+                    <Button onClick={() => void refreshSttFfmpegStatus()}>刷新</Button>
+                    <Button onClick={() => void handleFfmpegPick()}>选择本机已有 ffmpeg</Button>
+                    <Button onClick={() => void handleFfmpegClearPath()}>清除手动路径</Button>
+                    <Popconfirm
+                      title="确认删除 ffmpeg 转码器？"
+                      description="将删除已下载的 ffmpeg 二进制（不增大安装包）。"
+                      onConfirm={() => void handleFfmpegRemove()}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button danger>删除</Button>
+                    </Popconfirm>
+                  </Space>
+                ) : (
+                  <Space wrap>
+                    <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => void handleFfmpegDownload()}>
+                      下载转码器
+                    </Button>
+                    <Button onClick={() => void handleFfmpegPick()}>选择本机已有 ffmpeg</Button>
+                    {sttFfmpegStatus.error && (
+                      <Text type="danger" style={{ fontSize: 12 }}>下载提示：{sttFfmpegStatus.error}</Text>
+                    )}
+                  </Space>
+                )
+              ) : (
+                <Button onClick={() => void refreshSttFfmpegStatus()}>检查转码器状态</Button>
+              )}
+            </div>
+            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              m4a/webm 本地转写需 ffmpeg 转码器（免费，按需下载，不增大安装包）；无 ffmpeg 时自动回退 AI API。
+            </Text>
+          </div>
+
+          <Alert
+            type="info"
+            showIcon
+            banner
+            message="转写引擎（Whisper）不在安装包内，首次使用时按需下载到本地，不会增大应用安装包体积。"
+          />
+        </Space>
       </Card>
     </div>
   );

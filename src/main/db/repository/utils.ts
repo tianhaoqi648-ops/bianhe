@@ -59,7 +59,8 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
     'format_id', 'format_snapshot', 'status', 'started_at', 'ended_at',
     'current_stage_index', 'current_side', 'remaining_ms', 'theme_snapshot',
     'label', 'created_at', 'stage_remaining_cache', 'aff_remaining_ms',
-    'neg_remaining_ms', 'event_name', 'team_aff_name', 'team_neg_name', 'topic_title'
+    'neg_remaining_ms', 'aff_pool_remaining_ms', 'neg_pool_remaining_ms',
+    'event_name', 'team_aff_name', 'team_neg_name', 'topic_title'
   ],
   timer_records: [
     'id', 'session_id', 'stage_index', 'stage_name', 'side', 'duration_ms',

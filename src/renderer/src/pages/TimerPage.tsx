@@ -13,7 +13,7 @@
 // ============================================================
 
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
-import { Card, Button, Space, Input, Typography, Alert, Row, Col, Modal, Drawer, List, Tag, Popconfirm, Progress, Tooltip, theme as antdTheme } from 'antd'
+import { Card, Button, Space, Input, Typography, Alert, Row, Col, Modal, Drawer, List, Tag, Popconfirm, Progress, Tooltip, Select, theme as antdTheme } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
 import EmptyState from '../components/common/EmptyState'
 import AccentCard from '../components/common/AccentCard'
@@ -34,7 +34,8 @@ import {
   BellOutlined,
   ExpandOutlined,
   CompressOutlined,
-  SoundOutlined
+  SoundOutlined,
+  AudioOutlined
 } from '@ant-design/icons'
 import { useFormatStore } from '../stores/formatStore'
 import { useTimerStore } from '../stores/timerStore'
@@ -60,8 +61,21 @@ import { useToast } from '../hooks/useToast'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useStickyBg } from '../hooks/useThemeMode'
 import { formatTime } from '../utils/timer-bells'
+import { useTimerRecorder } from '../utils/useTimerRecorder'
+import { useWavRecorder } from '../utils/useWavRecorder'
+import {
+  buildMarker,
+  buildWholeMeta,
+  buildSplitMeta,
+  buildRecordingFileName,
+  resolveSegmentMode,
+  resolveRecordingFormat,
+  RECORDING_SEGMENT_KEY,
+  RECORDING_FORMAT_KEY,
+  type RecordingFormat
+} from '../../../shared/match-recording'
 import { resolveBackgroundCss } from '../../../shared/timer-backgrounds'
-import type { TimerTheme, BackgroundFile, DrawSessionItem } from '../../../shared/types'
+import type { TimerTheme, BackgroundFile, DrawSessionItem, MatchRecordingMarker, Event as SharedEvent, Round as SharedRound, Match as SharedMatch, DebateFormat } from '../../../shared/types'
 import type { StageDef, BellDef } from '../../../shared/debate-formats/types'
 
 /**
@@ -73,6 +87,7 @@ export interface TimerPageLocationState {
   sessionId?: string
   eventId?: string
   roundId?: string
+  matchId?: string
   eventName?: string
   topicId?: string
   topicTitle?: string
@@ -85,6 +100,13 @@ export interface TimerPageLocationState {
 }
 
 const { Text, Title } = Typography
+
+// === T6.1 赛事·轮次·场次绑定的内部特殊轮次选项 ===
+const ROUND_ALL = '__all'
+const ROUND_NONE = '__none'
+function roundOptionLabel(r: SharedRound): string {
+  return r.name?.trim() || (r.round_number != null ? `第${r.round_number}轮` : '未命名轮次')
+}
 
 export default function TimerPage() {
   // === selector 订阅 store（避免全量订阅导致 timerStore 引用每次渲染都变） ===
@@ -141,6 +163,8 @@ export default function TimerPage() {
   const [negName, setNegName] = useState('')
   // 历史抽屉
   const [historyOpen, setHistoryOpen] = useState(false)
+  // 历史会话加载时覆盖当前赛制显示：兼容 formatId 不在当前格式列表中的会话快照
+  const [historyFormat, setHistoryFormat] = useState<DebateFormat | null>(null)
   // Task 20：历史 Drawer 宽度响应式 — 移动端 100%，桌面端 640
   const isMobile = useMediaQuery('(max-width: 767px)')
   // 大屏覆盖层开关（组件式覆盖，替代原 window.open 新窗口方案）
@@ -198,10 +222,14 @@ export default function TimerPage() {
   // 初始化 affName/negName（若 state 中有值），并保留 ctx 到 ref 供 handleStart 使用
   // 消费后清除 location.state，避免后退/刷新时重复应用
   const drawStateRef = useRef<TimerPageLocationState | null>(null)
+  // 关联的比赛 id（从跳转上下文取得；录音结束据此写回 matches.recording_meta）
+  const matchIdRef = useRef<string | null>(null)
   useEffect(() => {
     const state = location.state as TimerPageLocationState | null
     if (!state) return
     drawStateRef.current = state
+    matchIdRef.current = state.matchId ?? null
+    if (state.matchId) setBoundBanner(state)
     if (state.teamAffName) setAffName(state.teamAffName)
     if (state.teamNegName) setNegName(state.teamNegName)
     if (state.eventName) {
@@ -232,8 +260,8 @@ export default function TimerPage() {
   }, [matchup, setMatchup])
 
   const selectedFormat = useMemo(
-    () => formats.find((f) => f.id === selectedFormatId) ?? null,
-    [formats, selectedFormatId]
+    () => historyFormat ?? (formats.find((f) => f.id === selectedFormatId) ?? null),
+    [historyFormat, formats, selectedFormatId]
   )
 
   const formatSnapshot = selectedFormat?.formatData ?? null
@@ -247,11 +275,191 @@ export default function TimerPage() {
   // === 状态指纹守卫：避免 onStateChange 在状态未变化时重复触发 updateSessionState 导致死循环 ===
   const lastStateFingerprintRef = useRef<string>('')
 
+  // ============================================================
+  // 计时录音（T2）：环节/发言人标记 + 可选分段 + 落盘写回 match
+  // ============================================================
+  // T7.3：按「录音格式」选择实现。两个 recorder hook 无条件挂载（hook 规则），
+  // 运行期经 activeRecorder 由 recFormatRef 选其一做 start/stop。
+  const webmRecorder = useTimerRecorder()
+  const wavRecorder = useWavRecorder()
+  // 当前录音格式（开始录音时读取 settings recording.format，缺失默认 'wav'）
+  const recFormatRef = useRef<RecordingFormat>('wav')
+  const recorder = recFormatRef.current === 'wav' ? wavRecorder : webmRecorder
+  // 用户是否处于"录音会话"（start 后到 stop 前恒为 true；split 期间切换分片保持 true）
+  const recSessionRef = useRef(false)
+  const [recOn, setRecOn] = useState(false)
+  // 分段模式（开始录音时读取设置）
+  const recSegmentModeRef = useRef<'whole' | 'split'>('whole')
+  // 录音会话起点（标记 tsMs 用；split 全程不重置，保证时间线连续）
+  const recSessionStartMsRef = useRef(0)
+  // 当前音轨是否在采集中（MediaRecorder active）
+  const recTapeActiveRef = useRef(false)
+  // 环节标记缓冲（whole/split 共用；split 时各标记附带分片 filePath）
+  const markersRef = useRef<MatchRecordingMarker[]>([])
+  // split 切换分片的并发/再入保护
+  const recSwitchingRef = useRef(false)
+
+  // ---- 开始录音会话 ----
+  const startRecordingSession = async () => {
+    if (recSessionRef.current) return
+    recSessionRef.current = true
+    markersRef.current = []
+    recSwitchingRef.current = false
+    let mode: 'whole' | 'split' = 'whole'
+    try {
+      const res = await window.settingsAPI.get(RECORDING_SEGMENT_KEY)
+      if (res.success) mode = resolveSegmentMode(res.data)
+    } catch {
+      /* 默认 whole */
+    }
+    recSegmentModeRef.current = mode
+    // T7.3：开始录音时读取当前录音格式（缺失默认 'wav'），本次会话固定该格式
+    try {
+      const fRes = await window.settingsAPI.get(RECORDING_FORMAT_KEY)
+      recFormatRef.current = fRes.success ? resolveRecordingFormat(fRes.data) : 'wav'
+    } catch {
+      recFormatRef.current = 'wav'
+    }
+    // T7.3/T7-m4a：按格式选实现；m4a 走 MediaRecorder audio/mp4，wav 走 Web Audio
+    const fmt = recFormatRef.current
+    let ok: boolean
+    if (fmt === 'wav') {
+      ok = await wavRecorder.start()
+    } else {
+      ok = await webmRecorder.start(fmt === 'm4a' ? 'm4a' : 'webm')
+    }
+    recTapeActiveRef.current = ok
+    if (!ok) {
+      recSessionRef.current = false
+      toast.error(fmt === 'wav' ? (wavRecorder.error || '无法开始录音（请检查麦克风权限）') : (webmRecorder.error || '无法开始录音（请检查麦克风权限）'))
+      return
+    }
+    recSessionStartMsRef.current = Date.now()
+    setRecOn(true)
+    // 若计时已在某环节进行中，为当前环节立即打一条初始标记
+    const curStage = stableFormat.stages[engine.state.currentStageIndex]
+    if (curStage && engine.state.status !== 'idle') {
+      markersRef.current.push(buildMarker(curStage, 0))
+    }
+    toast.info(`开始录音（${mode === 'split' ? '按环节分段' : '整场一轨'}）`)
+  }
+
+  // ---- 停止录音会话（取回音频、落盘、写回 match） ----
+  const stopRecordingSession = async () => {
+    recSessionRef.current = false
+    setRecOn(false)
+    const matchId = matchIdRef.current
+    const markers = markersRef.current
+    const isSplit = recSegmentModeRef.current === 'split'
+
+    // 取回当前音轨（split 时最后一段也在这里落库）
+    const out = await recorder.stop()
+    recTapeActiveRef.current = false
+    if (!out) {
+      toast.error('未取回录音数据')
+      return
+    }
+
+    try {
+      if (!isSplit) {
+        // 整场一轨：一次性落盘
+        const fileName = buildRecordingFileName(matchId ?? undefined, Date.now(), out.mimeType, undefined, recFormatRef.current)
+        const saved = await window.recordingAPI.save(fileName, out.data)
+        if (!saved.success || !saved.data?.ok || !saved.data.path) {
+          toast.error(saved.data?.message || saved.error || '录音保存失败')
+          return
+        }
+        const meta = buildWholeMeta(saved.data.path, markers)
+        if (matchId) {
+          await window.matchAPI.update(matchId, { recordingMeta: meta, recordingRef: saved.data.path })
+        } else {
+          toast.success('录音已保存（未关联比赛）')
+          return
+        }
+        toast.success('录音已保存并关联本场')
+        return
+      }
+
+      // 按环节分段：当前音轨归属最近一个标记的环节
+      let list = markers
+      let target = list[list.length - 1]
+      if (!target) {
+        // 从未进入环节（录音中途无环节切换）：用当前环节兜底补一条标记
+        const stage = stableFormat.stages[engine.state.currentStageIndex]
+        if (stage) {
+          const m = buildMarker(stage, Date.now() - recSessionStartMsRef.current)
+          list = [...list, m]
+          markersRef.current = list
+          target = m
+        }
+      }
+      if (target) {
+        const segName = buildRecordingFileName(matchId ?? undefined, Date.now(), out.mimeType, target.stageId, recFormatRef.current)
+        const saved = await window.recordingAPI.save(segName, out.data)
+        if (saved.success && saved.data?.ok && saved.data.path) {
+          target.filePath = saved.data.path
+        }
+      }
+      const meta = buildSplitMeta(list)
+      if (matchId) {
+        await window.matchAPI.update(matchId, { recordingMeta: meta, recordingRef: meta.filePath || null })
+      }
+      toast.success(matchId ? '录音分片已保存并关联本场' : '录音分片已保存（未关联比赛）')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '录音保存失败')
+    }
+  }
+
+  // ---- 录音开关（开始/停止） ----
+  const handleToggleRecording = async () => {
+    if (recSessionRef.current) await stopRecordingSession()
+    else await startRecordingSession()
+  }
+
+  // ---- 进入新环节：追加环节/发言人标记（split 时按环节切分音轨） ----
+  const handleStageEnter = async (stageIndex: number) => {
+    if (!recSessionRef.current) return
+    const stage = stableFormat.stages[stageIndex]
+    if (!stage) return
+    const tsMs = Date.now() - recSessionStartMsRef.current
+    const marker = buildMarker(stage, tsMs)
+    if (recSegmentModeRef.current === 'split' && !recSwitchingRef.current && recTapeActiveRef.current) {
+      // 把当前音轨存为"上一环节"的分片，再启动本环节新音轨
+      recSwitchingRef.current = true
+      try {
+        const prevMarker = markersRef.current[markersRef.current.length - 1]
+        const out = await recorder.stop()
+        recTapeActiveRef.current = false
+        if (out && prevMarker) {
+          const segName = buildRecordingFileName(matchIdRef.current ?? undefined, Date.now(), out.mimeType, prevMarker.stageId, recFormatRef.current)
+          const saved = await window.recordingAPI.save(segName, out.data)
+          if (saved.success && saved.data?.ok && saved.data.path) {
+            prevMarker.filePath = saved.data.path
+          }
+        }
+        const segFmt = recFormatRef.current
+        let ok: boolean
+        if (segFmt === 'wav') {
+          ok = await wavRecorder.start()
+        } else {
+          ok = await webmRecorder.start(segFmt === 'm4a' ? 'm4a' : 'webm')
+        }
+        recTapeActiveRef.current = ok
+      } finally {
+        recSwitchingRef.current = false
+      }
+    }
+    markersRef.current.push(marker)
+  }
+
   const engine = useTimerEngine({
     format: stableFormat,
     callbacks: {
       onBell: (_stageIdx, bell) => {
         playBell(bell)
+      },
+      onStageStart: (stageIdx) => {
+        void handleStageEnter(stageIdx)
       },
       onStageEnd: (stageIdx) => {
         toast.info(`环节 ${stageIdx + 1} 结束`)
@@ -269,7 +477,10 @@ export default function TimerPage() {
           stageRemainingCache: state.stageRemainingMsCache ?? null,
           // 持久化自由辩论双方独立时间（修复：原代码遗漏导致会话恢复时双方时间丢失）
           affRemainingMs: state.affRemainingMs ?? null,
-          negRemainingMs: state.negRemainingMs ?? null
+          negRemainingMs: state.negRemainingMs ?? null,
+          // 持久化每队总时长池剩余
+          affPoolRemainingMs: state.affPoolRemainingMs ?? null,
+          negPoolRemainingMs: state.negPoolRemainingMs ?? null
         }
         // 指纹守卫：若状态未变化则跳过 updateSessionState，避免循环
         const fingerprint = JSON.stringify(opts)
@@ -296,6 +507,7 @@ export default function TimerPage() {
       formatSnapshot: selectedFormat.formatData,
       eventId: ctx?.eventId,
       roundId: ctx?.roundId,
+      matchId: ctx?.matchId,
       eventName: ctx?.eventName,
       teamAffId: ctx?.teamAffId,
       teamNegId: ctx?.teamNegId,
@@ -305,6 +517,10 @@ export default function TimerPage() {
       teamNegName: ctx?.teamNegName
     })
     if (session) {
+      // 从赛事「比赛」启动计时：把会话与比赛双向关联（matches.session_id ←→ timer_sessions.match_id）
+      if (ctx?.matchId) {
+        void window.matchAPI.linkSession(ctx.matchId, session.id)
+      }
       // 防止 useEffect([currentSession, engine]) 误调用 restoreState 覆盖 running 状态
       prevSessionIdRef.current = session.id
       engine.start(session.id)
@@ -312,7 +528,104 @@ export default function TimerPage() {
     }
   }, [selectedFormat, createSession, engine, toast])
 
+  // === T6.1 计时器「赛事 → 轮次 → 场次」绑定（路由未带 matchId 时可用） ===
+  // 路由自带 matchId（从赛事「启动计时」进入）时显示当前场次提示，而非选择器
+  const [boundBanner, setBoundBanner] = useState<TimerPageLocationState | null>(null)
+  const [boundEvents, setBoundEvents] = useState<SharedEvent[]>([])
+  const [boundRounds, setBoundRounds] = useState<SharedRound[]>([])
+  const [boundMatches, setBoundMatches] = useState<SharedMatch[]>([])
+  const [selEventId, setSelEventId] = useState<string>()
+  const [selRoundId, setSelRoundId] = useState<string>()
+  const [selMatchId, setSelMatchId] = useState<string>()
+  const [boundLoading, setBoundLoading] = useState(false)
+
+  const adjustableMatches = useMemo(
+    () => boundMatches.filter((m) => m.status !== 'resulted'),
+    [boundMatches]
+  )
+  const visibleMatches = useMemo(() => {
+    if (!selEventId) return []
+    if (!selRoundId || selRoundId === ROUND_ALL) return adjustableMatches
+    if (selRoundId === ROUND_NONE) return adjustableMatches.filter((m) => !m.roundId)
+    return adjustableMatches.filter((m) => m.roundId === selRoundId)
+  }, [selEventId, selRoundId, adjustableMatches])
+
+  const loadBoundEvents = useCallback(async () => {
+    try {
+      const res = await window.eventAPI.listEvents({ pageSize: 1000 })
+      if (res.success && res.data) setBoundEvents(res.data.items)
+    } catch {
+      /* 忽略加载失败 */
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadBoundEvents()
+  }, [loadBoundEvents])
+
+  const handleBoundEventChange = async (eventId: string) => {
+    setSelEventId(eventId || undefined)
+    setSelRoundId(undefined)
+    setSelMatchId(undefined)
+    setBoundRounds([])
+    setBoundMatches([])
+    if (!eventId) return
+    setBoundLoading(true)
+    try {
+      const [roundsRes, matchesRes] = await Promise.all([
+        window.eventAPI.listRoundsByEvent(eventId),
+        window.matchAPI.listByEvent(eventId)
+      ])
+      if (roundsRes.success) setBoundRounds(roundsRes.data ?? [])
+      if (matchesRes.success) setBoundMatches(matchesRes.data ?? [])
+    } finally {
+      setBoundLoading(false)
+    }
+  }
+
+  const handleBoundRoundChange = (roundId: string) => {
+    setSelRoundId(roundId)
+    setSelMatchId(undefined)
+  }
+
+  // 选中场次后写入本地上下文 ref：matchIdRef 供录音写回 / startSession 关联
+  const handleBindMatch = (matchId: string) => {
+    const m = boundMatches.find((x) => x.id === matchId)
+    if (!m) return
+    setSelMatchId(matchId)
+    matchIdRef.current = m.id
+    // 把该场 eventId/roundId/topicId 等写入 drawStateRef，供 handleStart(startSession) 透传
+    drawStateRef.current = {
+      ...(drawStateRef.current ?? {}),
+      eventId: m.eventId,
+      roundId: m.roundId ?? undefined,
+      matchId: m.id,
+      topicId: m.topicId ?? undefined,
+      eventName: m.eventName ?? undefined,
+      teamAffName: m.teamAffName ?? undefined,
+      teamNegName: m.teamNegName ?? undefined
+    }
+    if (m.teamAffName) setAffName(m.teamAffName)
+    if (m.teamNegName) setNegName(m.teamNegName)
+    toast.success(`已绑定比赛：${m.teamAffName ?? '正方'} vs ${m.teamNegName ?? '反方'}`)
+  }
+
+  const handleUnbindMatch = () => {
+    setSelMatchId(undefined)
+    matchIdRef.current = null
+    setAffName('')
+    setNegName('')
+    if (drawStateRef.current) {
+      const { eventId, roundId, matchId, topicId, eventName, teamAffName, teamNegName, ...rest } = drawStateRef.current
+      drawStateRef.current = { ...rest } as TimerPageLocationState
+    }
+  }
+
   const currentStage = formatSnapshot?.stages[engine.state.currentStageIndex]
+
+  // === 每队总时长池（后手）：带 teamPoolMinutes 的赛制展示双方池剩余，pool 环节高亮扣除方 ===
+  const hasTeamPool = !!formatSnapshot?.teamPoolMinutes
+  const currentPoolTeam = hasTeamPool && currentStage?.poolTeam ? currentStage.poolTeam : null
 
   // === Task 6.4：铃声试听环节 — 收集所有倒计时环节的铃声（去重 + 倒序） ===
   const bellPreviewBells = useMemo(
@@ -559,16 +872,72 @@ export default function TimerPage() {
     })
   }, [])
 
-  // 历史会话点击加载
+  // 历史会话点击加载 → 断点续计：联动赛制/对阵/环节/剩余恢复
   const handleLoadHistorySession = useCallback(async (id: string) => {
-    const session = await loadSession(id)
-    if (session) {
-      toast.success(`已加载会话：${session.id.slice(0, 8)}…`)
+    const doLoad = async () => {
+      // 加载前清理当前运行上下文，避免与目标会话串扰
+      if (recSessionRef.current) await stopRecordingSession()
+      if (engine.state.status === 'running') engine.pause()
+
+      const session = await loadSession(id)
+      if (!session) {
+        toast.error('加载会话失败')
+        return
+      }
+      // 1) 切赛制：优先用格式列表中的真实赛制；否则用会话快照合成（保证主区/倒计时口径 = 该会话）
+      const matched = formats.find((f) => f.id === session.formatId)
+      if (matched) {
+        selectFormat(matched.id)
+        setHistoryFormat(null)
+      } else {
+        selectFormat(null)
+        setHistoryFormat({
+          id: session.formatId ?? session.id,
+          name: session.label ?? `${session.formatSnapshot?.stages.length ?? 0} 环节赛制`,
+          description: null,
+          isPreset: false,
+          formatData: session.formatSnapshot,
+          createdAt: session.createdAt,
+          updatedAt: session.createdAt
+        })
+      }
+      // 2) 回填对阵/辩题（优先用会话冗余快照）
+      if (session.teamAffName) setAffName(session.teamAffName)
+      if (session.teamNegName) setNegName(session.teamNegName)
+      drawStateRef.current = {
+        ...(drawStateRef.current ?? {}),
+        eventId: session.eventId ?? undefined,
+        roundId: session.roundId ?? undefined,
+        matchId: session.matchId ?? undefined,
+        topicId: session.topicId ?? undefined,
+        eventName: session.eventName ?? undefined,
+        teamAffId: session.teamAffId ?? undefined,
+        teamNegId: session.teamNegId ?? undefined,
+        teamAffName: session.teamAffName ?? undefined,
+        teamNegName: session.teamNegName ?? undefined,
+        topicTitle: session.topicTitle ?? undefined
+      }
+      // 3) 恢复断点：由下方 useEffect([currentSession, engine]) 统一调用 engine.restoreState
+      // 4) 反馈 + 关抽屉
+      const stageCount = session.formatSnapshot?.stages.length ?? 0
+      const fmtName = matched?.name ?? `${stageCount} 环节`
+      const remain = session.remainingMs ?? session.formatSnapshot?.stages[session.currentStageIndex]?.durationMs ?? 0
+      toast.success(`已恢复：${fmtName} · 环节 ${session.currentStageIndex + 1} · 剩余 ${formatTime(Math.max(0, remain))}`)
       setHistoryOpen(false)
-    } else {
-      toast.error('加载会话失败')
     }
-  }, [loadSession, toast])
+
+    if (engine.state.status === 'running' || recSessionRef.current) {
+      Modal.confirm({
+        title: '切换历史会话',
+        content: '当前计时/录音进行中，加载历史将切换到所选会话。确定继续？',
+        okText: '继续加载',
+        cancelText: '取消',
+        onOk: () => void doLoad()
+      })
+    } else {
+      void doLoad()
+    }
+  }, [loadSession, toast, engine, formats, selectFormat, stopRecordingSession])
 
   // === 环节列表试听铃声：依次播放该环节 bells（按 atMs 升序，间隔约 1 秒） ===
   // 与 StageCard 中的实现保持一致；点击同一环节按钮可停止
@@ -826,6 +1195,73 @@ export default function TimerPage() {
             </Space>
           </Card>
 
+          {/* T6.1 赛事·轮次·场次绑定：路由未带 matchId 时显示选择器，已带入则展示当前场次 */}
+          {boundBanner?.matchId ? (
+            <Card title="当前场次" size="small" style={{ marginBottom: spacing.md }}>
+              <Text>
+                {boundBanner.teamAffName ?? '正方'} <Tag color="purple">VS</Tag> {boundBanner.teamNegName ?? '反方'}
+              </Text>
+            </Card>
+          ) : (
+            <Card title="绑定比赛（可选）" size="small" style={{ marginBottom: spacing.md }}>
+              <Space direction="vertical" style={{ width: '100%' }} size="small">
+                <Select
+                  placeholder="选择赛事"
+                  style={{ width: '100%' }}
+                  loading={boundLoading}
+                  value={selEventId}
+                  onChange={(v) => void handleBoundEventChange(v)}
+                  options={boundEvents.map((e) => ({ label: e.name, value: e.id }))}
+                  showSearch
+                  optionFilterProp="label"
+                />
+                <Select
+                  placeholder="选择轮次（可全部/未定轮）"
+                  style={{ width: '100%' }}
+                  disabled={!selEventId}
+                  value={selRoundId}
+                  onChange={handleBoundRoundChange}
+                  options={[
+                    { label: '全部轮次', value: ROUND_ALL },
+                    { label: '未定轮', value: ROUND_NONE },
+                    ...boundRounds.map((r) => ({ label: roundOptionLabel(r), value: r.id }))
+                  ]}
+                  showSearch
+                  optionFilterProp="label"
+                />
+                <Select
+                  placeholder="选择场次（比赛）"
+                  style={{ width: '100%' }}
+                  disabled={!selEventId || !selRoundId}
+                  loading={boundLoading}
+                  value={selMatchId}
+                  onChange={handleBindMatch}
+                  options={visibleMatches.map((m) => ({
+                    label: `${m.teamAffName ?? '正方'} vs ${m.teamNegName ?? '反方'}${m.roundName ? `（${m.roundName}）` : ''}`,
+                    value: m.id
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
+                  notFoundContent="暂无可绑定场次"
+                />
+                {selMatchId && (
+                  <Space size="small">
+                    <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                      已绑定：{boundMatches.find((m) => m.id === selMatchId)?.teamAffName ?? '正方'} vs{' '}
+                      {boundMatches.find((m) => m.id === selMatchId)?.teamNegName ?? '反方'}
+                    </Text>
+                    <Button size="small" type="link" onClick={handleUnbindMatch}>解绑</Button>
+                  </Space>
+                )}
+                <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                  {selMatchId
+                    ? '录音停止后会自动写回该场；开始计时时关联本场比赛。'
+                    : '可为本场计时预绑定比赛，便于录音与赛果回写。'}
+                </Text>
+              </Space>
+            </Card>
+          )}
+
           {/* 对阵信息设置（简化为输入框） */}
           <Card title="对阵信息（可选）" size="small" style={{ marginBottom: spacing.md }}>
             <Space direction="vertical" style={{ width: '100%' }} size="small">
@@ -858,7 +1294,7 @@ export default function TimerPage() {
                 size="small"
                 split={false}
                 dataSource={formatSnapshot.stages}
-                renderItem={(stage, idx) => {
+                renderItem={(stage: StageDef, idx: number) => {
                   const isCurrent = idx === engine.state.currentStageIndex
                   const isPast = idx < engine.state.currentStageIndex
                   return (
@@ -887,6 +1323,11 @@ export default function TimerPage() {
                                 {idx + 1}. {stage.name}
                               </Text>
                               {stage.isFreeDebate && <Tag color="purple" style={{ marginInlineStart: 0 }}>自由</Tag>}
+                              {stage.poolTeam && (
+                                <Tag color={stage.poolTeam === 'aff' ? 'processing' : 'error'} style={{ marginInlineStart: 0 }}>
+                                  {stage.poolTeam === 'aff' ? '正方池' : '反方池'}
+                                </Tag>
+                              )}
                             </Space>
                             <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                               {stage.timingMode === 'untimed'
@@ -986,6 +1427,16 @@ export default function TimerPage() {
                   </Button>
                 </KbdHint>
               )}
+              {/* 计时录音开关（T2）：环节切换自动打标记，停止时落盘写回 match */}
+              <Button
+                type={recOn ? 'primary' : 'default'}
+                danger={recOn}
+                icon={<AudioOutlined />}
+                loading={recorder.starting}
+                onClick={(e) => { e.currentTarget.blur(); void handleToggleRecording() }}
+              >
+                {recOn ? '停止录音' : '开始录音'}
+              </Button>
             </Space>
             {currentStage?.isFreeDebate && engine.state.status !== 'idle' && engine.state.status !== 'finished' && (
               <Alert
@@ -1084,6 +1535,25 @@ export default function TimerPage() {
                       isFreeDebate={!!currentStage?.isFreeDebate}
                     />
 
+                    {/* 每队总时长池（后手）：展示双方池剩余，当前 pool 环节高亮扣除方 */}
+                    {hasTeamPool && (
+                      <div style={{ textAlign: 'center', marginTop: spacing.md }}>
+                        <Space size="middle">
+                          <Tag color={currentPoolTeam === 'aff' ? 'processing' : 'default'} style={{ fontSize: fontSize.caption, marginInlineEnd: 0 }}>
+                            正方池 {formatTime(Math.max(0, engine.state.affPoolRemainingMs ?? 0))}
+                          </Tag>
+                          <Tag color={currentPoolTeam === 'neg' ? 'error' : 'default'} style={{ fontSize: fontSize.caption, marginInlineEnd: 0 }}>
+                            反方池 {formatTime(Math.max(0, engine.state.negPoolRemainingMs ?? 0))}
+                          </Tag>
+                        </Space>
+                        <Text type="secondary" style={{ display: 'block', fontSize: fontSize.caption, marginTop: spacing.xs }}>
+                          {currentPoolTeam
+                            ? `当前从「${currentPoolTeam === 'aff' ? '正方' : '反方'}池」扣除`
+                            : '当前环节不占用总池（自由辩论各 4 分钟）'}
+                        </Text>
+                      </div>
+                    )}
+
                     {/* 进度条：当前环节已用时间 / 总时间 */}
                     <div style={{ marginTop: spacing.lg, padding: `0 ${spacing.lg}` }}>
                       <Progress
@@ -1164,38 +1634,54 @@ export default function TimerPage() {
           loading={sessionsLoading}
           dataSource={sessions}
           locale={{ emptyText: '暂无历史会话' }}
-          renderItem={(session) => (
-            <List.Item
-              actions={[
-                <Button
-                  size="small"
-                  type="link"
-                  onClick={(e) => { e.currentTarget.blur(); void handleLoadHistorySession(session.id) }}
-                >
-                  加载
-                </Button>
-              ]}
-            >
-              <List.Item.Meta
-                title={session.label ?? `会话 ${session.id.slice(0, 8)}…`}
-                description={
-                  <Space size="small" wrap>
-                    <Tag color={session.status === 'finished' ? 'green' : session.status === 'running' ? 'blue' : 'default'}>
-                      {session.status === 'running' ? '进行中' : session.status === 'paused' ? '已暂停' : session.status === 'finished' ? '已结束' : '空闲'}
-                    </Tag>
-                    <Text type="secondary" style={{ fontSize: fontSize.caption }}>
-                      环节 {session.currentStageIndex + 1}
-                    </Text>
-                    {session.startedAt && (
+          renderItem={(session) => {
+            const fmtStages = session.formatSnapshot?.stages ?? []
+            const fmtName = fmtStages.length ? `${fmtStages.length} 环节` : '未知赛制'
+            const firstStageName = fmtStages[0]?.name
+            const vs = session.teamAffName || session.teamNegName
+              ? `${session.teamAffName ?? '正方'} vs ${session.teamNegName ?? '反方'}`
+              : null
+            const isFinished = session.status === 'finished'
+            const actionLabel = session.status === 'running' || session.status === 'paused' ? '加载/继续' : '加载'
+            return (
+              <List.Item
+                actions={[
+                  isFinished
+                    ? <Button key="fin" size="small" type="link" disabled>已结束</Button>
+                    : <Button key="load" size="small" type="link" onClick={(e) => { e.currentTarget.blur(); void handleLoadHistorySession(session.id) }}>{actionLabel}</Button>
+                ]}
+              >
+                <List.Item.Meta
+                  title={session.label ?? (vs ? vs : `会话 ${session.id.slice(0, 8)}…`)}
+                  description={
+                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                      <Space size="small" wrap>
+                        <Tag color={isFinished ? 'green' : session.status === 'running' ? 'blue' : 'default'}>
+                          {session.status === 'running' ? '进行中' : session.status === 'paused' ? '已暂停' : isFinished ? '已结束' : '空闲'}
+                        </Tag>
+                        <Tag color="geekblue">{fmtName}{firstStageName ? ` · ${firstStageName}` : ''}</Tag>
+                        {!!vs && (
+                          <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                            {vs}
+                          </Text>
+                        )}
+                      </Space>
+                      {!!session.topicTitle && (
+                        <Text type="secondary" style={{ fontSize: fontSize.caption }}>
+                          辩题：{session.topicTitle}
+                        </Text>
+                      )}
                       <Text type="secondary" style={{ fontSize: fontSize.caption }}>
-                        开始：{new Date(session.startedAt).toLocaleString()}
+                        第 {session.currentStageIndex + 1} 环节
+                        {session.remainingMs != null ? ` · 剩余 ${formatTime(Math.max(0, session.remainingMs))}` : ''}
+                        {session.startedAt ? ` · 开始：${new Date(session.startedAt).toLocaleString()}` : ''}
                       </Text>
-                    )}
-                  </Space>
-                }
-              />
-            </List.Item>
-          )}
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )
+          }}
         />
       </Drawer>
 

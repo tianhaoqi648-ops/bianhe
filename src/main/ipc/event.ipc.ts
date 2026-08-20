@@ -14,6 +14,7 @@
 import { ipcMain } from 'electron'
 import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
+import { matchRepo } from '../db/repository/match.repo'
 import { getDb } from '../db/index'
 import type {
   EventFilter,
@@ -440,6 +441,27 @@ export function registerEventIpc(): void {
                 played_at: playedAt,
                 session_id: sessionId,
                 stance: stances[i] ?? null
+              })
+            }
+          }
+        }
+
+        // 3.5 抽题结果自动归入该轮相应「比赛」（以比赛为中心联动）
+        // 仅非测试、versus 对阵（team_a_id + team_b_id）时，为该轮创建/更新 matches，
+        // 实现 "抽题结果计入那个轮次的相应比赛"。group/multi_team 无双方对阵，跳过。
+        if (!detail.settings?.is_test) {
+          const roundId = detail.round_id ?? null
+          for (const item of detail.items) {
+            if (item.team_a_id && item.team_b_id) {
+              matchRepo.upsertFromDraw({
+                eventId: detail.event_id,
+                roundId,
+                teamAffId: item.team_a_id,
+                teamNegId: item.team_b_id,
+                topicId: item.topic_id,
+                drawItemId: item.id,
+                stanceAff: item.stance_a ?? null,
+                stanceNeg: item.stance_b ?? null
               })
             }
           }

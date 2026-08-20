@@ -1,7 +1,7 @@
 // ============================================================
 // judge-result-cards.tsx — AI 裁判结果卡片（2026-08-18）
 //
-// 从 ToolCallCard.tsx 抽出的 4 个 AI 裁判结果卡片组件（2026-08-18 移除 rewrite_speech），
+// 从 ToolCallCard.tsx 抽出的 5 个 AI 裁判结果卡片组件（2026-08-18 移除 rewrite_speech，T3.1 增 judge_match），
 // 供两处复用：
 //   1. Agent 聊天流的 ToolCallCard（工具调用结果卡片）
 //   2. AI 裁判工作台独立页面（JudgeArena）
@@ -12,7 +12,7 @@
 // ============================================================
 
 import React, { useState } from 'react'
-import { Typography, Tag, Progress, theme } from 'antd'
+import { Alert, Typography, Tag, Progress, theme } from 'antd'
 import { STAGE_DEFINITIONS } from '../../../../shared/debate-stages'
 import { getJudgeById } from '../../../../shared/ai-judges'
 
@@ -48,6 +48,26 @@ export interface JudgeDebateResult {
     confidence: number
     comment: string
   }>
+}
+
+/** judge_match 整场评审结果（与 main agent/tools/judge-match.tool.ts 的 JudgeMatchResult 对齐） */
+export interface JudgeMatchResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  /** 素材足以判定时为对象；素材不足时为 null（配合 success:true + insufficientReason） */
+  verdict: { winner: 'aff' | 'neg'; confidence: number; reason: string } | null
+  dimensions: Array<{ key: string; name: string; affScore: number; negScore: number; comment: string }>
+  summary: string
+  stageVerdicts?: Array<{
+    stage: string
+    winner: 'aff' | 'neg'
+    confidence: number
+    comment: string
+  }>
+  bestSpeaker?: string | null
+  /** 素材不足时的原因（verdict 为 null 时提供） */
+  insufficientReason?: string
 }
 
 /** judge_speech 结果 */
@@ -267,6 +287,78 @@ export function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.
         >
           {summary}
         </Typography.Paragraph>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * judge_match 整场评审结果卡片。
+ * 复用 JudgeResultCard 的判定/环节/五维/总评展示，并额外展示全场最佳辩手。
+ */
+export function JudgeMatchResultCard({ result }: { result: JudgeMatchResult }): JSX.Element {
+  const { token } = theme.useToken()
+
+  // 素材不足以判定：verdict 为 null（success:true + insufficientReason）
+  if (!result.verdict) {
+    const reason = result.insufficientReason?.trim()
+    return (
+      <div
+        style={{
+          marginTop: 8,
+          padding: 8,
+          borderRadius: 6,
+          backgroundColor: token.colorPrimaryBg,
+          border: `1px solid ${token.colorWarningBorder}`
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 4,
+            flexWrap: 'wrap'
+          }}
+        >
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            ⚖️ {judgeCategoryOf(result.judgeId)} · 判定
+          </Typography.Text>
+          <Tag color="orange">无法判定</Tag>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            素材不足
+          </Typography.Text>
+        </div>
+        {result.topic ? (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+          >
+            辩题：{result.topic}
+          </Typography.Text>
+        ) : null}
+        <Alert
+          type="warning"
+          showIcon
+          message="素材不足，无法判定"
+          description={
+            reason ??
+            '素材过短或与辩题无关，无法进行有效判定。请补充完整的辩论录音/转写后再试。'
+          }
+          style={{ fontSize: 12 }}
+        />
+      </div>
+    )
+  }
+
+  const bestSpeaker = result.bestSpeaker
+  return (
+    <div>
+      <JudgeResultCard result={result as unknown as JudgeDebateResult} />
+      {bestSpeaker ? (
+        <div style={{ marginTop: 6, fontSize: 12, color: token.colorText }}>
+          全场最佳辩手：<Typography.Text strong>{bestSpeaker}</Typography.Text>
+        </div>
       ) : null}
     </div>
   )
@@ -619,6 +711,8 @@ export function JudgeResultCardByTool({
   if (r.success === false) return null
 
   switch (toolName) {
+    case 'judge_match':
+      return <JudgeMatchResultCard result={result as JudgeMatchResult} />
     case 'judge_debate':
       return <JudgeResultCard result={result as JudgeDebateResult} />
     case 'judge_speech':

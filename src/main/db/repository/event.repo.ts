@@ -97,6 +97,8 @@ export interface TeamHistory {
   session_id?: string | null
   /** 持方快照：正方/反方（确认抽取结果时从 DrawSessionItem.stance_a/stance_b 复制） */
   stance?: string | null
+  /** 冗余快照：辩题标题（辩题被删除后历史仍可显示原标题） */
+  topic_title?: string | null
 }
 
 // 输入类型
@@ -573,9 +575,14 @@ function addTeamHistory(data: TeamHistoryCreateInput): TeamHistory {
   const db = getDb()
   const id = uuidv4()
 
+  // topic_title 未显式传入时从 topics 回填，保证辩题被删除后历史仍可显示原标题
+  const topicTitle = data.topic_title ?? (
+    db.prepare('SELECT title FROM topics WHERE id = ?').get(data.topic_id) as { title: string } | undefined
+  )?.title ?? null
+
   const stmt = db.prepare(`
-    INSERT INTO team_history (id, team_id, topic_id, event_id, played_at, session_id, stance)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO team_history (id, team_id, topic_id, event_id, played_at, session_id, stance, topic_title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   stmt.run(
@@ -585,7 +592,8 @@ function addTeamHistory(data: TeamHistoryCreateInput): TeamHistory {
     data.event_id,
     data.played_at ?? null,
     data.session_id ?? null,
-    data.stance ?? null
+    data.stance ?? null,
+    topicTitle
   )
 
   const created = getTeamHistoryById(id)

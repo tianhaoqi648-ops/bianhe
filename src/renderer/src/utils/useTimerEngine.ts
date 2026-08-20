@@ -15,12 +15,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BellDef, DebateFormatData, StageSide, StageCacheValue, TimerSession, TimerState } from '../../../shared/types'
+import type { StageDef } from '../../../shared/debate-formats/types'
 import { checkBells } from './timer-bells'
 import { resolveInitialSide } from '../../../shared/debate-formats/utils'
 
 export interface TimerEngineCallbacks {
   onBell: (stageIndex: number, bell: BellDef) => void
   onStageEnd: (stageIndex: number) => void
+  /** 进入/开始某环节时回调（start、next/prev/finishStage 与倒计时自动切换统一触发），用于计时录音标记环节 */
+  onStageStart?: (stageIndex: number) => void
   onFinish: () => void
   onStateChange: (state: TimerState) => void
 }
@@ -42,6 +45,39 @@ function getNegFromCache(v: StageCacheValue | null, fallback: number): number {
   if (v == null) return fallback
   if (typeof v === 'number') return fallback
   return v.neg
+}
+
+// ============ 每队总时长池（后手） ============
+
+/** 是否启用队伍总时长池（formatData.teamPoolMinutes 存在） */
+function hasTeamPool(format: DebateFormatData): boolean {
+  return !!format.teamPoolMinutes
+}
+
+/** 计算某队总池初始值（毫秒）：优先 teamPoolMinutes（分钟），否则按该队所有 poolSuggestedMs 之和 */
+function poolInitMs(format: DebateFormatData, team: 'aff' | 'neg'): number {
+  const provided = format.teamPoolMinutes?.[team]
+  if (provided != null && provided > 0) return provided * 60000
+  const sum = format.stages
+    .filter((s) => s.poolTeam === team)
+    .reduce((acc, s) => acc + (s.poolSuggestedMs ?? 0), 0)
+  return sum > 0 ? sum : 0
+}
+
+/**
+ * pool 环节：返回该队当前池剩余（作为 remainingMs 与展示来源）；非 pool 环节返回 null。
+ * 自由辩论（isFreeDebate）不占用总池，仍走各自 4' 逻辑。
+ */
+function poolRemainingForStage(
+  format: DebateFormatData,
+  stage: StageDef | undefined,
+  affPool: number | undefined,
+  negPool: number | undefined
+): number | null {
+  if (!hasTeamPool(format) || !stage || stage.isFreeDebate) return null
+  if (stage.poolTeam === 'aff') return affPool ?? 0
+  if (stage.poolTeam === 'neg') return negPool ?? 0
+  return null
 }
 
 /**
@@ -74,16 +110,23 @@ function createInitialState(
   } else if (cache[0] === undefined) {
     cache[0] = firstStage?.durationMs ?? 0
   }
+  // 队伍总时长池：带 teamPoolMinutes 的赛制初始化双方池剩余
+  const poolAff = hasTeamPool(format) ? poolInitMs(format, 'aff') : undefined
+  const poolNeg = hasTeamPool(format) ? poolInitMs(format, 'neg') : undefined
+  // 首环节为 pool 环节时，剩余时间 = 该队池剩余
+  const firstPoolRemaining = poolRemainingForStage(format, firstStage, poolAff, poolNeg)
   const state: TimerState = {
     sessionId,
     status: 'idle',
     currentStageIndex: 0,
     currentSide: resolveInitialSide(firstStage),
-    remainingMs: firstStage?.durationMs ?? 0,
+    remainingMs: firstPoolRemaining ?? firstStage?.durationMs ?? 0,
     elapsedMs: 0,
     pausedAt: null,
     lastBellIndex: 0,
-    stageRemainingMsCache: cache
+    stageRemainingMsCache: cache,
+    affPoolRemainingMs: poolAff,
+    negPoolRemainingMs: poolNeg
   }
   if (firstStage?.isFreeDebate) {
     state.affRemainingMs = firstStage.durationMs
@@ -133,6 +176,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
   const handleStageStart = useCallback(async (stageIndex: number) => {
     const stage = format.stages[stageIndex]
     if (!stage || !sessionIdRef.current) return
+    // 进入环节通知（计时录音在此打环节/发言人标记）
+    callbacksRef.current.onStageStart?.(stageIndex)
     stageStartedAtRef.current = Date.now()
     pauseCountRef.current = 0
     // P4 修复：新环节开始时重置累计暂停时长
@@ -301,6 +346,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
           }
           const nextCacheVal = tickNewCache[nextIndex]
           const nextRemaining = typeof nextCacheVal === 'number' ? nextCacheVal : nextCacheVal.aff
+          // 下一环节为 pool 环节：剩余时间 = 该队池剩余（自由辩论不占池，池在 prev 中保持不变）
+          const nextPoolRemaining = poolRemainingForStage(format, nextStage, prev.affPoolRemainingMs, prev.negPoolRemainingMs)
+          const finalNextRemaining = nextPoolRemaining ?? nextRemaining
           pendingStageStart.push(nextIndex)
           return {
             ...prev,
@@ -308,7 +356,7 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
             pausedAt: new Date().toISOString(),
             currentStageIndex: nextIndex,
             currentSide: resolveInitialSide(nextStage),
-            remainingMs: nextRemaining,
+            remainingMs: finalNextRemaining,
             affRemainingMs: nextStage.isFreeDebate
               ? getAffFromCache(nextCacheVal, nextStage.durationMs)
               : undefined,
@@ -333,10 +381,20 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       }
 
       // ===== 非自由辩论：单计时器模型（原逻辑） =====
-      const newRemaining = prev.remainingMs - delta
+      // 队伍总时长池：pool 环节从该队池剩余倒计时并消耗，非 pool 环节走原 remainingMs
+      const poolRemaining = poolRemainingForStage(format, stage, prev.affPoolRemainingMs, prev.negPoolRemainingMs)
+      const isPoolStage = poolRemaining !== null
+      let newAffPool = prev.affPoolRemainingMs
+      let newNegPool = prev.negPoolRemainingMs
+      const sourceRemaining = isPoolStage ? (poolRemaining as number) : prev.remainingMs
+      const newRemaining = sourceRemaining - delta
+      if (isPoolStage) {
+        if (stage.poolTeam === 'aff') newAffPool = newRemaining
+        else newNegPool = newRemaining
+      }
       const { bellsToPlay, newLastBellIndex } = checkBells(
         stage,
-        prev.remainingMs,
+        sourceRemaining,
         newRemaining,
         prev.lastBellIndex
       )
@@ -352,6 +410,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
           return {
             ...prev,
             remainingMs: 0,
+            affPoolRemainingMs: newAffPool,
+            negPoolRemainingMs: newNegPool,
             elapsedMs: newElapsed,
             status: 'finished',
             lastBellIndex: newLastBellIndex
@@ -360,10 +420,14 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
         const nextStage = format.stages[nextIndex]
         const tickNewCache: Record<number, StageCacheValue> = { ...(prev.stageRemainingMsCache ?? {}) }
         if (tickNewCache[nextIndex] === undefined) {
-          tickNewCache[nextIndex] = nextStage.durationMs
+          tickNewCache[nextIndex] = nextStage.isFreeDebate
+            ? { aff: nextStage.durationMs, neg: nextStage.durationMs }
+            : nextStage.durationMs
         }
         const nextCacheVal = tickNewCache[nextIndex]
-        const nextRemaining = typeof nextCacheVal === 'number' ? nextCacheVal : nextCacheVal.aff
+        // 下一环节为 pool 环节：剩余时间 = 该队池剩余；否则用缓存
+        const nextPoolRemaining = poolRemainingForStage(format, nextStage, newAffPool, newNegPool)
+        const nextRemaining = nextPoolRemaining ?? (typeof nextCacheVal === 'number' ? nextCacheVal : nextCacheVal.aff)
         pendingStageStart.push(nextIndex)
         return {
           ...prev,
@@ -372,6 +436,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
           currentStageIndex: nextIndex,
           currentSide: resolveInitialSide(nextStage),
           remainingMs: nextRemaining,
+          affPoolRemainingMs: newAffPool,
+          negPoolRemainingMs: newNegPool,
           affRemainingMs: nextStage.isFreeDebate
             ? getAffFromCache(nextCacheVal, nextStage.durationMs)
             : undefined,
@@ -387,6 +453,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       return {
         ...prev,
         remainingMs: newRemaining,
+        affPoolRemainingMs: newAffPool,
+        negPoolRemainingMs: newNegPool,
         elapsedMs: newElapsed,
         lastBellIndex: newLastBellIndex
       }
@@ -529,13 +597,21 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
           : nextStageDef.durationMs
       }
 
+      // 下一环节为 pool 环节：剩余时间 = 该队池剩余（覆盖 cache 值）
+      const nextPoolRemaining = nextStageDef.isFreeDebate
+        ? null
+        : poolRemainingForStage(format, nextStageDef, prev.affPoolRemainingMs, prev.negPoolRemainingMs)
+      const finalRemaining = nextPoolRemaining ?? cachedRemaining
+
       const nextState: TimerState = {
         ...prev,
         status: 'paused',
         pausedAt: new Date().toISOString(),
         currentStageIndex: nextIndex,
         currentSide: resolveInitialSide(nextStageDef),
-        remainingMs: cachedRemaining,
+        remainingMs: finalRemaining,
+        affPoolRemainingMs: prev.affPoolRemainingMs,
+        negPoolRemainingMs: prev.negPoolRemainingMs,
         lastBellIndex: 0,
         stageRemainingMsCache: newCache
       }
@@ -597,13 +673,21 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
           : prevStageDef.durationMs
       }
 
+      // 上一环节为 pool 环节：剩余时间 = 该队池剩余（覆盖 cache 值）
+      const prevPoolRemaining = prevStageDef.isFreeDebate
+        ? null
+        : poolRemainingForStage(format, prevStageDef, prev.affPoolRemainingMs, prev.negPoolRemainingMs)
+      const finalRemaining = prevPoolRemaining ?? cachedRemaining
+
       const nextState: TimerState = {
         ...prev,
         status: 'paused',
         pausedAt: new Date().toISOString(),
         currentStageIndex: prevIdx,
         currentSide: resolveInitialSide(prevStageDef),
-        remainingMs: cachedRemaining,
+        remainingMs: finalRemaining,
+        affPoolRemainingMs: prev.affPoolRemainingMs,
+        negPoolRemainingMs: prev.negPoolRemainingMs,
         lastBellIndex: 0,
         stageRemainingMsCache: newCache
       }
@@ -652,6 +736,13 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
         }
       }
       // 非自由辩论环节，允许 remainingMs 为负（宽限期内）
+      // pool 环节：加时同时加到该队池剩余与 remainingMs
+      if (stage?.poolTeam === 'aff') {
+        return { ...prev, remainingMs: newRemaining, affPoolRemainingMs: newRemaining }
+      }
+      if (stage?.poolTeam === 'neg') {
+        return { ...prev, remainingMs: newRemaining, negPoolRemainingMs: newRemaining }
+      }
       return { ...prev, remainingMs: newRemaining }
     })
   }, [format])
@@ -735,6 +826,11 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     const cachedRemaining = typeof cachedVal === 'number'
       ? cachedVal
       : (cachedVal?.aff ?? nextStageDef.durationMs)
+    // 下一环节为 pool 环节：剩余时间 = 该队池剩余（覆盖 cache 值）
+    const nextPoolRemaining = nextStageDef.isFreeDebate
+      ? null
+      : poolRemainingForStage(format, nextStageDef, prev.affPoolRemainingMs, prev.negPoolRemainingMs)
+    const finalRemaining = nextPoolRemaining ?? cachedRemaining
     stopRaf()
     setState((s) => ({
       ...s,
@@ -742,7 +838,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       pausedAt: new Date().toISOString(),
       currentStageIndex: nextIndex,
       currentSide: resolveInitialSide(nextStageDef),
-      remainingMs: cachedRemaining,
+      remainingMs: finalRemaining,
+      affPoolRemainingMs: s.affPoolRemainingMs,
+      negPoolRemainingMs: s.negPoolRemainingMs,
       affRemainingMs: nextStageDef.isFreeDebate
         ? (typeof cachedVal === 'number' ? cachedVal : (cachedVal?.aff ?? nextStageDef.durationMs))
         : undefined,
@@ -770,7 +868,7 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       const nextState: TimerState = {
         ...prev,
         status: 'idle',
-        remainingMs: stage.durationMs,
+        remainingMs: poolRemainingForStage(format, stage, prev.affPoolRemainingMs, prev.negPoolRemainingMs) ?? stage.durationMs,
         lastBellIndex: 0,
         pausedAt: null
       }
@@ -816,6 +914,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     stageRemainingCache?: Record<number, StageCacheValue> | null
     affRemainingMs?: number | null
     negRemainingMs?: number | null
+    affPoolRemainingMs?: number | null
+    negPoolRemainingMs?: number | null
     pausedAt?: string | null
   }) => {
     stopRaf()
@@ -828,6 +928,13 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
         ? { aff: session.remainingMs ?? stage?.durationMs ?? 0, neg: session.remainingMs ?? stage?.durationMs ?? 0 }
         : (session.remainingMs ?? stage?.durationMs ?? 0)
     }
+    // 队伍总时长池：从 DB 恢复（缺省则按赛制初始化）
+    const restoredAffPool = session.affPoolRemainingMs
+      ?? (hasTeamPool(session.formatSnapshot) ? poolInitMs(session.formatSnapshot, 'aff') : undefined)
+    const restoredNegPool = session.negPoolRemainingMs
+      ?? (hasTeamPool(session.formatSnapshot) ? poolInitMs(session.formatSnapshot, 'neg') : undefined)
+    // pool 环节：剩余时间 = 该队池剩余（覆盖 remainingMs）
+    const restoredPool = poolRemainingForStage(session.formatSnapshot, stage, restoredAffPool, restoredNegPool)
     const restoredRemaining = session.remainingMs ?? stage?.durationMs ?? 0
     // L2 修复：所有环节都处理 'both'，自由辩论 fallback 到 'aff'，非自由辩论 fallback 到 resolveInitialSide
     // 原逻辑仅在 isFreeDebate 时处理 'both'，导致非自由辩论环节残留 'both' 进入 tick 后行为异常
@@ -850,7 +957,7 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       status: session.status === 'running' ? 'paused' : session.status,
       currentStageIndex: session.currentStageIndex,
       currentSide: restoredSide,
-      remainingMs: restoredRemaining,
+      remainingMs: restoredPool ?? restoredRemaining,
       // P4 修复：原代码硬编码 elapsedMs: 0，丢失已耗时。
       // elapsedMs = 当前环节总时长 - 剩余时间，越界或无数据时兜底 0
       elapsedMs:
@@ -869,7 +976,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       lastBellIndex: 0,
       stageRemainingMsCache: cache,
       affRemainingMs: restoredAff,
-      negRemainingMs: restoredNeg
+      negRemainingMs: restoredNeg,
+      affPoolRemainingMs: restoredAffPool,
+      negPoolRemainingMs: restoredNegPool
     })
     // Critical-5 修复：从 DB 恢复后跳过一次 onStateChange，避免立即写回 DB
     skipPersistRef.current = true

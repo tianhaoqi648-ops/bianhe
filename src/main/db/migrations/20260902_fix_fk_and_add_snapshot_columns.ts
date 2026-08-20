@@ -150,7 +150,9 @@ function rebuildTimerSessions(db: Database): void {
   const optionalColumns = [
     'stage_remaining_cache',
     'aff_remaining_ms',
-    'neg_remaining_ms'
+    'neg_remaining_ms',
+    'aff_pool_remaining_ms',
+    'neg_pool_remaining_ms'
   ]
 
   const oldCols = new Set(getTableColumns(db, 'timer_sessions').map((c) => c.name))
@@ -184,6 +186,8 @@ function rebuildTimerSessions(db: Database): void {
         stage_remaining_cache TEXT,
         aff_remaining_ms     INTEGER,
         neg_remaining_ms     INTEGER,
+        aff_pool_remaining_ms INTEGER,
+        neg_pool_remaining_ms INTEGER,
         event_name           TEXT,
         team_aff_name        TEXT,
         team_neg_name        TEXT,

@@ -26,3 +26,42 @@ export function resolveInitialSide(
   if (stage.isFreeDebate && stage.side === 'both') return 'aff'
   return stage.side
 }
+
+/**
+ * 计算各环节的归一化权重，供环节票累计与亮牌展示使用。
+ *
+ * 规则：无 weight 的环节记为 1；若全部环节均缺省 weight，则每项均为 1（等权）。
+ * 若部分环节提供了自定义 weight，则保留该数值并写回 Record，供调用方按需归一化。
+ */
+export function normalizeStageWeights(
+  stages: Array<{ id: string; weight?: number }>
+): Record<string, number> {
+  const hasAnyWeight = stages.some((s) => s.weight !== undefined)
+  const result: Record<string, number> = {}
+  for (const s of stages) {
+    result[s.id] = hasAnyWeight ? (s.weight ?? 1) : 1
+  }
+  return result
+}
+
+/**
+ * 返回该环节发言人的展示文案。
+ * stage.speaker 非空则直接返回；否则按 side 兜底返回默认"正方/反方"（双方环节返回"双方"，BP 四角色返回空串）。
+ */
+export function stageSpeakerLabel(stage: { side?: string; speaker?: string; name?: string }): string {
+  if (stage.speaker) return stage.speaker
+  switch (stage.side) {
+    case 'og':
+    case 'oo':
+    case 'cg':
+    case 'co':
+      return ''
+    case 'neg':
+      return '反方'
+    case 'both':
+      return '双方'
+    case 'aff':
+    default:
+      return '正方'
+  }
+}

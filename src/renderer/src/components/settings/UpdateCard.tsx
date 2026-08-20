@@ -22,6 +22,7 @@ import {
 } from '@ant-design/icons'
 import { version } from '../../../../../package.json'
 import { useUpdater } from '../../hooks/useUpdater'
+import { useToast } from '../../hooks/useToast'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { spacing } from '../../styles/tokens'
 
@@ -53,8 +54,30 @@ export default function UpdateCard(): JSX.Element {
   const { status, info, progress, error, isMacos, checkForUpdates, downloadUpdate, installUpdate, setAutoCheck } =
     useUpdater()
   const settingsStore = useSettingsStore()
+  const toast = useToast()
   const [autoCheckEnabled, setAutoCheckEnabled] = useState<boolean>(true)
   const [loadingSetting, setLoadingSetting] = useState<boolean>(true)
+  /** 是否打包环境（开发环境不执行更新检查） */
+  const [isPackaged, setIsPackaged] = useState<boolean>(true)
+
+  // 读取应用运行元信息（是否打包环境）
+  useEffect(() => {
+    let mounted = true
+    window.updaterAPI
+      ?.getMeta()
+      .then((res) => {
+        if (mounted && res.success) {
+          setIsPackaged(res.data?.isPackaged ?? true)
+        }
+      })
+      .catch(() => {
+        // 忽略失败，默认视为打包环境
+      })
+    return () => {
+      mounted = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 加载 auto_update_check 设置项
   useEffect(() => {
@@ -102,6 +125,17 @@ export default function UpdateCard(): JSX.Element {
     try {
       await setAutoCheck(checked)
       await settingsStore.set(AUTO_CHECK_KEY, checked)
+      if (checked) {
+        if (isPackaged) {
+          // 打包环境：立即检查一次并备忘
+          void checkForUpdates()
+          toast.info('已开启，下次启动将自动检查（已立即检查一次）')
+        } else {
+          toast.info('已开启，下次启动生效（开发环境不执行更新检查）')
+        }
+      } else {
+        toast.info('已关闭，下次启动不再自动检查')
+      }
     } catch (e) {
       // 持久化失败回滚 UI
       setAutoCheckEnabled(!checked)
@@ -254,6 +288,16 @@ export default function UpdateCard(): JSX.Element {
           onChange={handleToggleAutoCheck}
         />
       </div>
+
+      {/* 开发（未打包）环境提示：不执行更新检查，开关仍可切换 */}
+      {!isPackaged && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: spacing.md }}
+          message="开发（未打包）环境不执行更新检查，安装包版本才生效"
+        />
+      )}
 
       {/* 中部：检查按钮 + 当前版本 */}
       <div style={{ marginBottom: spacing.md }}>

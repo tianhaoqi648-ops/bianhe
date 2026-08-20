@@ -257,6 +257,10 @@ export interface TeamHistory {
   played_at: string | null
   /** 关联抽取会话 id，用于确认结果时关联去重（重抽时先按 session_id 删旧再写新） */
   session_id?: string | null
+  /** 持方快照：正方/反方 */
+  stance?: string | null
+  /** 冗余快照：辩题标题（辩题被删除后历史仍可显示原标题，避免显示"已删除辩题"） */
+  topic_title?: string | null
 }
 
 export interface TeamHistoryCreateInput {
@@ -268,6 +272,8 @@ export interface TeamHistoryCreateInput {
   session_id?: string | null
   /** 持方快照：正方/反方（确认抽取结果时从 DrawSessionItem.stance_a/stance_b 复制） */
   stance?: string | null
+  /** 冗余快照：辩题标题（可选，缺省时仓库自动从 topics 回填） */
+  topic_title?: string | null
 }
 
 export interface DrawSessionSettings {
@@ -647,8 +653,385 @@ export interface TagDisplayConfig {
   scenes: Record<TagDisplayScene, SceneTagConfig>;
 }
 
+// ---------- 比赛（match）：一轮下的对阵，链路承载（抽题→计时→录音→赛果→AI评审） ----------
+
+/** 比赛状态机 */
+export type MatchStatus = 'planned' | 'resulted'
+/** 赛果（人工评审权威）：aff 正方胜 / neg 反方胜 / draw 平 / abandoned 弃赛 */
+export type MatchWinner = 'aff' | 'neg' | 'draw' | 'abandoned'
+/** 评决制度：三票制（印象/环节/决胜） 或 百分制（可切换，用户决策） */
+export type MatchJudgeSystem = 'three_votes' | 'percentage'
+
+/** 录音环节/发言人标记（整轨按切换顺序累积，供 AI 评审区分环节与发言人，如"辨之竹"） */
+export interface MatchRecordingMarker {
+  /** 距录音起点毫秒 */
+  tsMs: number
+  stageId: string
+  stageName: string
+  side: StageSide | null
+  /** 发言辩手（赛制配置，如"正方一辩"） */
+  speaker: string | null
+  /** 分片文件绝对路径（仅 segmentMode='split' 时该环节单独成轨才有值） */
+  filePath?: string | null
+}
+
+/** 录音元信息（落盘路径 + 分段模式 + 环节/发言人标记） */
+export interface MatchRecordingMeta {
+  /** 录音文件绝对路径 */
+  filePath: string
+  /** 分段模式：whole 整轨 / split 按环节分段 */
+  segmentMode: 'whole' | 'split'
+  /** 环节/发言人标记 */
+  markers: MatchRecordingMarker[]
+}
+
+/** 单环节评分（环节加权可配置，缺省等权） */
+export interface MatchStageScore {
+  stageId: string
+  stageName: string
+  weight: number
+  aff: number
+  neg: number
+}
+
+/** 裁判 */
+export interface MatchJudge {
+  id: string
+  matchId: string
+  name: string
+  sortOrder: number
+  isAi: boolean
+  createdAt: string
+}
+
+/** 裁判评决（每裁判每场一条） */
+export interface MatchJudgeVote {
+  id: string
+  matchId: string
+  judgeId: string
+  judgeSystem: MatchJudgeSystem
+  /** 印象票：aff/neg（三票制） */
+  impressionVote: 'aff' | 'neg' | null
+  /** 决胜票：aff/neg（三票制） */
+  decisionVote: 'aff' | 'neg' | null
+  /** 正方/反方得分：三票制=环节加权累计；百分制=直接分 */
+  affTotal: number | null
+  negTotal: number | null
+  /** 环节明细 */
+  stageScores: MatchStageScore[] | null
+  /** 该裁判投出的最佳辩手 */
+  bestSpeaker: string | null
+  comment: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** AI 评审单人五维双方评分（保存 judge_match 输出） */
+export interface MatchAiDimensionScore {
+  /** 维度 key（对应 FIVE_DIMENSIONS） */
+  key: string
+  /** 维度展示名 */
+  name: string
+  /** 正方得分 0-10 */
+  affScore: number
+  /** 反方得分 0-10 */
+  negScore: number
+  /** 该维度评语 */
+  comment: string
+}
+
+/** AI 评审按环节逐段判定（保存 judge_match 的 stageVerdicts） */
+export interface MatchAiStageVerdict {
+  /** 环节类型（六类之一） */
+  stage: string
+  /** 该环节胜方 */
+  winner: 'aff' | 'neg'
+  /** 置信度 0-1 */
+  confidence: number
+  /** 一句评语 */
+  comment: string
+}
+
+/** 单场可选的 AI 评审结果（不覆盖人工赛果） */
+export interface MatchAiReview {
+  /** 建议判定：aff/neg/draw */
+  winner: MatchWinner | null
+  /** 双方得分（可选） */
+  affScore?: number | null
+  negScore?: number | null
+  /** 环节评估明细（可选） */
+  stageReview?: MatchStageScore[] | null
+  /** 判定说明 / 摘要 */
+  explanation: string
+  /** 疑似最佳辩手（可选） */
+  bestSpeaker?: string | null
+  /** 五维双方评分（可选，保存 judge_match 完整输出） */
+  dimensions?: MatchAiDimensionScore[] | null
+  /** 按环节逐段判定（可选，保存 judge_match 的 stageVerdicts） */
+  stageVerdicts?: MatchAiStageVerdict[] | null
+  /** 评审素材来源：整场录音/时间线 或 转文字全文 */
+  source?: 'recording' | 'transcript'
+  /** 使用的人设评委姓名（含回落，可选） */
+  judgeName?: string
+  /** 评审时间 ISO */
+  reviewedAt: string
+}
+
+export interface Match {
+  id: string
+  eventId: string
+  roundId: string | null
+  /** 轮内序号（展示用） */
+  matchNumber: number | null
+  teamAffId: string | null
+  teamNegId: string | null
+  /** 辩题 id（抽题后填入） */
+  topicId: string | null
+  /** 持方快照 */
+  stanceAff: string | null
+  stanceNeg: string | null
+  /** 使用赛制 id（环节/权重/发言人来源） */
+  formatId: string | null
+  /** 评决制度（三票制/百分制） */
+  judgeSystem: MatchJudgeSystem
+  /** 关联的抽取对阵项（DrawSessionItem.id），实现"抽题结果计入该轮比赛" */
+  drawItemId: string | null
+  /** 关联的计时会话（从比赛启动计时时回写） */
+  sessionId: string | null
+  /** 可选录音引用（旧字段，保留兼容） */
+  recordingRef: string | null
+  /** 录音元信息（路径+分段模式+环节/发言人标记） */
+  recordingMeta: MatchRecordingMeta | null
+  status: MatchStatus
+  // 赛果（多裁判聚合，linquan）
+  winner: MatchWinner | null
+  affScore: number | null
+  negScore: number | null
+  bestSpeaker: string | null
+  notes: string | null
+  /** 可选 AI 评审（JSON 序列化） */
+  aiReview: MatchAiReview | null
+  createdAt: string
+  updatedAt: string
+  /** 裁判（完整读取时预载） */
+  judges?: MatchJudge[]
+  /** 评决（完整读取时预载） */
+  votes?: MatchJudgeVote[]
+  // 冗余快照
+  teamAffName: string | null
+  teamNegName: string | null
+  topicTitle: string | null
+  eventName: string | null
+  roundName: string | null
+}
+
+export interface MatchCreateInput {
+  eventId: string
+  roundId?: string | null
+  teamAffId?: string | null
+  teamNegId?: string | null
+  topicId?: string | null
+  stanceAff?: string | null
+  stanceNeg?: string | null
+  matchNumber?: number | null
+  formatId?: string | null
+  judgeSystem?: MatchJudgeSystem
+}
+
+export interface MatchUpdateInput {
+  teamAffId?: string | null
+  teamNegId?: string | null
+  topicId?: string | null
+  stanceAff?: string | null
+  stanceNeg?: string | null
+  formatId?: string | null
+  judgeSystem?: MatchJudgeSystem
+  drawItemId?: string | null
+  recordingRef?: string | null
+  recordingMeta?: MatchRecordingMeta | null
+}
+
+/** 计入赛果（多裁判 + 亮牌） */
+export interface MatchSetResultInput {
+  winner: MatchWinner
+  affScore?: number | null
+  negScore?: number | null
+  bestSpeaker?: string | null
+  notes?: string | null
+  /** 裁判列表（重建该场比赛的裁判与评决） */
+  judges?: Array<{
+    id?: string
+    name: string
+    isAi?: boolean
+    vote?: MatchJudgeVoteInput
+  }>
+}
+
+/** 单裁判评决入参 */
+export interface MatchJudgeVoteInput {
+  judgeSystem?: MatchJudgeSystem
+  impressionVote?: 'aff' | 'neg' | null
+  decisionVote?: 'aff' | 'neg' | null
+  affTotal?: number | null
+  negTotal?: number | null
+  stageScores?: MatchStageScore[] | null
+  bestSpeaker?: string | null
+  comment?: string | null
+}
+
+// ---------- AI 裁判「录音转文字」（整场评审原料，2026-08-20） ----------
+
+/** 转写引擎选择：'local-first' 本地 whisper 优先 + API 兜底 / 'local' 仅本地 / 'api' 仅 API */
+export type SttEngine = 'local-first' | 'local' | 'api'
+
+/** 录音转写请求（录音文件 + 可选环节/发言人标记 + 引擎/模型选择） */
+export interface SttRequest {
+  /** 录音文件绝对路径（wav：整段切片 / webm·m4a：整段转写为一段） */
+  filePath: string
+  /** 环节/发言人标记（wav 按 atMs 用 JS 字节切片；webm/m4a 仅作标注不切片） */
+  markers?: Array<{ stage: string; speaker?: string; atMs: number }>
+  /** 引擎选择（缺省读 settings stt.engine，再缺省 local-first） */
+  engine?: SttEngine
+  /** 本地引擎实现：'whisper'|'funasr'（缺省读 settings stt.localEngine，再缺省 whisper） */
+  localEngine?: SttLocalEngine
+  /** whisper 模型名（如 'base'/'small'；缺省读 settings stt.model，再缺省 base） */
+  model?: string
+  /**
+   * AI 转写兜底所需的镜像配置（baseURL/apiKey/model）。
+   * API 兜底时优先用它；未传才回读 settings 表（agent.llm / ai.*）。
+   * 渲染端可把 localStorage 里的 AI 配置带过来，避免依赖 settings 表。
+   */
+  aiConfig?: { baseURL?: string; apiKey?: string; model?: string }
+}
+
+/** 转写出的一个文本段（可对上环节/发言人/时间） */
+export interface SttSegment {
+  stage?: string
+  speaker?: string
+  atMs?: number
+  text: string
+}
+
+/** 转写引擎安装/下载状态（本地 whisper.cpp + 模型） */
+export interface SttEngineStatus {
+  /** binary + 模型齐备 */
+  installed: boolean
+  /** whisper 二进制存在 */
+  binaryOk: boolean
+  /** 对应模型文件存在且体积 > 0 */
+  modelOk: boolean
+  /** 当前检测的模型名 */
+  model?: string
+  binaryPath?: string
+  modelPath?: string
+  /** 模型文件体积（字节） */
+  fileSize?: number
+  /** 是否有下载进行中 */
+  downloading: boolean
+  /** 下载进度 0-100（download 进行中时有效） */
+  progress?: number
+  /** 最近错误信息 */
+  error?: string
+}
+
+/** ffmpeg 转码器安装/下载状态（按需下载到 userData/stt/，用于把 m4a/webm 转成 16k mono wav） */
+export interface SttFfmpegStatus {
+  /** ffmpeg 二进制已安装 */
+  installed: boolean
+  /** 已安装时的绝对路径 */
+  path?: string
+  /** 已安装时的体积（字节） */
+  fileSize?: number
+  /** 是否有下载进行中 */
+  downloading: boolean
+  /** 下载进度 0-100（download 进行中时有效） */
+  progress?: number
+  /** 最近错误信息 */
+  error?: string
+}
+
+/** settings 表里 STT 引擎选择 key（值：local-first/local/api） */
+export const STT_ENGINE_KEY = 'stt.engine'
+/** settings 表里 STT whisper 模型名 key（值：base/small/...） */
+export const STT_MODEL_KEY = 'stt.model'
+/** userData 下转写引擎与模型目录名 */
+export const STT_DIR_NAME = 'stt'
+
+// ---- 本地引擎「实现选择」维度（与 STT_ENGINE_KEY 的策略维度正交）----
+// STT_ENGINE_KEY 决定是否用 API 兜底（local-first/local/api）；STT_LOCAL_ENGINE_KEY
+// 决定本地实现用哪个引擎（whisper.cpp / funasr python）。两者互不冲突，分别持久化。
+
+/** 本地转写引擎实现：'whisper'（默认，whisper.cpp embedded）| 'funasr'（python funasr 环境） */
+export type SttLocalEngine = 'whisper' | 'funasr'
+/** settings 表里「本地引擎实现」key（值：whisper/funasr；缺省 whisper） */
+export const STT_LOCAL_ENGINE_KEY = 'stt.localEngine'
+/** settings 表里 FunASR 模型名 key（值：FUNASR_MODELS 之一；缺省 paraformer-zh） */
+export const STT_FUNASR_MODEL_KEY = 'stt.funasrModel'
+
+/** whisper.cpp 候选模型清单（本地 .bin 模型；small 起中文效果更好，medium 更大更准） */
+export const WHISPER_MODELS = ['base', 'small', 'medium'] as const
+/** FunASR 候选模型清单（经由本机 python funasr 环境按需拉取） */
+export const FUNASR_MODELS = ['paraformer-zh', 'sensevoicesmall-zh'] as const
+
+/** FunASR 本地转写引擎安装/运行环境状态（T7） */
+export interface SttFunAsrStatus {
+  /** 运行环境齐备：本机能跑 python + import funasr（模型由 funasr 首次运行时自动拉取） */
+  envOk: boolean
+  /** envOk 前提下模型可用（funasr 由 AutoModel 运行时拉取） */
+  modelOk: boolean
+  /** 当前检测的模型名 */
+  model?: string
+  /** 是否有下载进行中（当前未实现 funasr 模型手动下载，恒 false） */
+  downloading: boolean
+  /** 下载进度 0-100（unused） */
+  progress?: number
+  /** 最近错误信息（含未安装运行环境的引导文案） */
+  error?: string
+  /** 是否已检测到本机 Python（UI 据此区分「没装 Python」还是「有 Python 但缺 funasr 包」） */
+  hasPython?: boolean
+  /** 缺失的推理依赖（torch/torchaudio/torchvision），envOk=false 且为「缺依赖」时非空，
+   *   UI 据此读取并展示缺失项；探针环境异常时为空数组 */
+  missingDeps?: string[]
+}
+
+/** FunASR 一键安装运行环境的结果（T-安装） */
+export interface SttFunAsrInstallResult {
+  /** 是否安装成功（以 pip 退出码为准，不得伪造） */
+  ok: boolean
+  /** true 表示未检测到 Python（需先安装 Python）；unset/false 表示 Python 存在但 pip 安装失败/成功 */
+  needPython?: boolean
+  /** 成功时的提示，或失败时的报错/引导文案 */
+  detail?: string
+}
+
+/** 手动导入本地 whisper 模型的结果（离线兜底） */
+export interface SttImportResult {
+  ok: boolean
+  /** 成功时推断出的模型名（ggml-<model>.bin 中间段，去 .bin） */
+  model?: string
+  /** 成功时复制到的目标绝对路径 */
+  path?: string
+  /** 失败时的提示信息（用户取消返回 ok:false 且无 error，不计为错误） */
+  error?: string
+}
+
 // ---------- 通道名常量 ----------
 // 命名规范：'<domain>:<action>'，例 'topic:list'、'draw:execute'
+
+/** recordings 目录下的一份录音 */
+export interface RecordingMeta {
+  fileName: string
+  size: number
+  modifiedAt: string
+}
+
+export interface RecordingSaveResult {
+  ok: boolean
+  path?: string
+  size?: number
+  code?: string
+  message?: string
+}
 
 export const IPC_CHANNELS = {
   // topic
@@ -772,6 +1155,25 @@ export const IPC_CHANNELS = {
   TIMER_EXPORT_RECORDS: 'timer:exportRecords',
   TIMER_THEME_GET: 'timer:themeGet',
   TIMER_THEME_SET: 'timer:themeSet',
+
+  // match（比赛：赛道内一轮下的对阵，承载 抽题→计时→录音→赛果→AI评审）
+  MATCH_CREATE: 'match:create',
+  MATCH_GET: 'match:get',
+  MATCH_LIST_BY_EVENT: 'match:listByEvent',
+  MATCH_LIST_BY_ROUND: 'match:listByRound',
+  MATCH_UPDATE: 'match:update',
+  MATCH_SET_RESULT: 'match:setResult',
+  MATCH_SET_AI_REVIEW: 'match:setAiReview',
+  MATCH_LINK_SESSION: 'match:linkSession',
+  MATCH_DELETE: 'match:delete',
+
+  // recording（比赛/计时可选录音，userData/recordings/）
+  RECORDING_SAVE: 'recording:save',
+  RECORDING_LIST: 'recording:list',
+  RECORDING_DELETE: 'recording:delete',
+  RECORDING_READ: 'recording:read',
+  RECORDING_PICK_DIR: 'recording:pickDir',
+  RECORDING_GET_DIR: 'recording:getDir',
   BELL_ASSET_LIST: 'bell:list',
   BELL_ASSET_UPLOAD: 'bell:upload',
   BELL_ASSET_DELETE: 'bell:delete',
@@ -803,7 +1205,26 @@ export const IPC_CHANNELS = {
   UPDATER_DOWNLOAD: 'updater:download',
   UPDATER_INSTALL: 'updater:install',
   UPDATER_SET_AUTO_CHECK: 'updater:setAutoCheck',
-  UPDATER_STATUS_CHANGE: 'updater:statusChange'
+  UPDATER_GET_META: 'updater:getMeta',
+  UPDATER_STATUS_CHANGE: 'updater:statusChange',
+  // stt（AI 裁判录音转文字：整场评审原料）
+  STT_TRANSCRIBE: 'stt:transcribe',
+  STT_STATUS: 'stt:status',
+  STT_FUNASR_STATUS: 'stt:funasr-status',
+  STT_FUNASR_INSTALL: 'stt:funasr-install',
+  STT_DOWNLOAD: 'stt:download',
+  STT_CANCEL: 'stt:cancel-download',
+  STT_REMOVE: 'stt:remove',
+  STT_IMPORT_MODEL: 'stt:import-model',
+  STT_WHISPER_PICK: 'stt:whisper-pick',
+  STT_WHISPER_CLEAR: 'stt:whisper-clear',
+  // ffmpeg 转码器（按需下载，把 m4a/webm 转 16k mono wav 供本地 whisper 转写）
+  STT_FFMPEG_STATUS: 'stt:ffmpeg-status',
+  STT_FFMPEG_DOWNLOAD: 'stt:ffmpeg-download',
+  STT_FFMPEG_CANCEL: 'stt:ffmpeg-cancel',
+  STT_FFMPEG_REMOVE: 'stt:ffmpeg-remove',
+  STT_FFMPEG_PICK: 'stt:ffmpeg-pick',
+  STT_FFMPEG_CLEAR: 'stt:ffmpeg-clear'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -1200,6 +1621,8 @@ export interface TimerSession {
   id: string
   eventId?: string | null
   roundId?: string | null
+  /** 关联的比赛（matches）id：从赛事某轮「比赛」启动的计时会回写该字段，便于归集到该场 */
+  matchId?: string | null
   teamAffId?: string | null
   teamNegId?: string | null
   topicId?: string | null
@@ -1222,6 +1645,10 @@ export interface TimerSession {
   affRemainingMs?: number | null
   /** 自由辩论环节：反方剩余时间（毫秒）。仅 isFreeDebate=true 环节使用 */
   negRemainingMs?: number | null
+  /** 每队总时长池（后手）：正方池剩余（毫秒）。带 teamPoolMinutes 的赛制使用 */
+  affPoolRemainingMs?: number | null
+  /** 每队总时长池（后手）：反方池剩余（毫秒）。带 teamPoolMinutes 的赛制使用 */
+  negPoolRemainingMs?: number | null
   /** 冗余快照：赛事名称（删除事件后仍可显示） */
   eventName?: string | null
   /** 冗余快照：正方队伍名称（删除队伍后仍可显示） */
@@ -1258,6 +1685,10 @@ export interface TimerState {
   affRemainingMs?: number
   /** 自由辩论环节：反方剩余时间（毫秒）。仅在 isFreeDebate=true 的环节使用 */
   negRemainingMs?: number
+  /** 每队总时长池（后手）：正方池剩余（毫秒）。带 teamPoolMinutes 赛制时使用 */
+  affPoolRemainingMs?: number
+  /** 每队总时长池（后手）：反方池剩余（毫秒）。带 teamPoolMinutes 赛制时使用 */
+  negPoolRemainingMs?: number
   /** 各环节最近离开时的 remainingMs 缓存，key=stageIndex，value=remainingMs。
    *  用于 prevStage 完全保留策略。
    *  自由辩论环节下，value 为 { aff, neg } 双方独立时间；其他环节为 number */

@@ -15,7 +15,7 @@
 //   - 环节「自动识别」：detect_stage 识别当前稿子环节并回填下拉
 // ============================================================
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Typography,
   Button,
@@ -36,12 +36,16 @@ import {
   ExperimentOutlined,
   ThunderboltOutlined,
   CloseOutlined,
-  UploadOutlined
+  UploadOutlined,
+  AudioOutlined
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import { JUDGES } from '../../../shared/ai-judges'
 import { STAGE_DEFINITIONS, type DebateStageType } from '../../../shared/debate-stages'
+import type { Event, Match, MatchAiReview, Round, SttEngine } from '../../../shared/types'
+import { STT_ENGINE_KEY, STT_MODEL_KEY } from '../../../shared/types'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useToast } from '../hooks/useToast'
 import {
   JudgeResultCardByTool,
   STAGE_NAMES
@@ -66,6 +70,16 @@ interface ArenaResult {
   actionLabel: string
   result: unknown
   error?: string
+}
+
+/** 整场时间线片段（由录音环节/发言人标记载入，content 由用户补转文字） */
+interface MatchTimelineSeg {
+  stage?: string
+  stageName?: string
+  side?: string | null
+  speaker?: string | null
+  tsMs?: number
+  content: string
 }
 
 /** 攻击方式选项 */
@@ -106,10 +120,25 @@ export default function JudgeArena(): JSX.Element {
   const [negSpeech, setNegSpeech] = useState('')
   const [attackMode, setAttackMode] = useState('cross_exam')
 
+  // ---------- 赛事绑定（T6.2：赛事→轮次→场次，可选） ----------
+  const [events, setEvents] = useState<Event[]>([])
+  const [rounds, setRounds] = useState<Round[]>([])
+  const [matchList, setMatchList] = useState<Match[]>([])
+  const [boundEventId, setBoundEventId] = useState<string | undefined>(undefined)
+  const [boundRoundId, setBoundRoundId] = useState<string | undefined>(undefined)
+  const [boundMatchId, setBoundMatchId] = useState<string | undefined>(undefined)
+  const [boundMatch, setBoundMatch] = useState<Match | null>(null)
+  /** 由该场录音标记载入的时间线素材（content 需用户补转文字） */
+  const [timeline, setTimeline] = useState<MatchTimelineSeg[]>([])
+
+  const toast = useToast()
+
   // ---------- 执行状态 ----------
   const [results, setResults] = useState<ArenaResult[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 「本场录音转文字」进行中（独立于 runTool 的 running） */
+  const [transcribing, setTranscribing] = useState(false)
 
   // ---------- 配置 ----------
   const apiKey = useSettingsStore((s) => s.aiConfig.apiKey)
@@ -130,6 +159,254 @@ export default function JudgeArena(): JSX.Element {
   }
   const available = getAvailableActions(formState)
   const currentSpeechText = currentSpeech(formState)
+
+  // ---------- 赛事绑定逻辑（T6.2） ----------
+  // 进入页面时加载赛事列表（复用 window.eventAPI）
+  useEffect(() => {
+    const w = window as unknown as {
+      eventAPI?: {
+        listEvents: (filter?: unknown) => Promise<{ success: boolean; data?: { items?: Event[] } }>
+      }
+    }
+    const api = w.eventAPI
+    if (!api) return
+    void api
+      .listEvents()
+      .then((res) => {
+        if (res.success && Array.isArray(res.data?.items)) setEvents(res.data?.items ?? [])
+      })
+      .catch(() => {
+        // 忽略赛事加载失败，绑定区保持为空
+      })
+  }, [])
+
+  // 缓存同步：绑定状态或 match 变化后刷新本场快照（含 teamNames/recordingMeta/markers）
+  const boundMatchRef = useMemo(() => boundMatch, [boundMatch])
+
+  /** 选择赛事 → 加载轮次 + 全部场次；清空下级绑定 */
+  const handleEventChange = async (val?: string): Promise<void> => {
+    setBoundEventId(val)
+    setBoundRoundId(undefined)
+    setBoundMatchId(undefined)
+    setBoundMatch(null)
+    setTimeline([])
+    setRounds([])
+    setMatchList([])
+    if (!val) return
+    const w = window as unknown as {
+      eventAPI?: { listRoundsByEvent: (id: string) => Promise<{ success: boolean; data?: Round[] }> }
+      matchAPI?: { listByEvent: (id: string) => Promise<{ success: boolean; data?: Match[] }> }
+    }
+    const results = await Promise.all([
+      w.eventAPI?.listRoundsByEvent(val),
+      w.matchAPI?.listByEvent(val)
+    ])
+    const [rRes, mRes] = results
+    if (rRes?.success && Array.isArray(rRes.data)) setRounds(rRes.data ?? [])
+    if (mRes?.success && Array.isArray(mRes.data)) setMatchList(mRes.data ?? [])
+  }
+
+  /** 选择轮次（仅记录 roundId 用于上下文；场次不受轮次过滤） */
+  const handleRoundChange = (val?: string): void => {
+    setBoundRoundId(val)
+  }
+
+  /** 选择场次 → 保存 boundMatchId + 上下文（eventId/roundId/topicId/teamNames） */
+  const handleMatchChange = (val?: string): void => {
+    const m = matchList.find((x) => x.id === val)
+    if (!m) {
+      setBoundMatchId(undefined)
+      setBoundMatch(null)
+      setTimeline([])
+      return
+    }
+    setBoundMatchId(m.id)
+    setBoundMatch(m)
+    // 切换场次后清空旧时间线素材
+    setTimeline([])
+  }
+
+  /** 载入本场录音标记 → 时间线素材（content 留空供用户补转文字） */
+  const handleLoadMarkers = (): void => {
+    const markers = boundMatchRef?.recordingMeta?.markers
+    if (!markers || markers.length === 0) {
+      toast.warning('该场暂无录音环节标记')
+      return
+    }
+    const segs: MatchTimelineSeg[] = markers.map((mk) => ({
+      stage: mk.stageId || undefined,
+      stageName: mk.stageName || undefined,
+      side: mk.side ?? null,
+      speaker: mk.speaker ?? null,
+      tsMs: mk.tsMs,
+      content: ''
+    }))
+    setTimeline(segs)
+    toast.success(`已载入本场 ${segs.length} 段录音标记`)
+  }
+
+  /** 本场录音 → 转文字：取 recordingMeta.filePath + markers，调 sttAPI.transcribe，组装时间线 */
+  const handleTranscribeRecording = async (): Promise<void> => {
+    const meta = boundMatchRef?.recordingMeta
+    if (!meta?.filePath) {
+      toast.warning('该场暂未录制到录音文件（recordingMeta.filePath 为空）')
+      return
+    }
+    const markers = (meta.markers ?? []).map((mk) => ({
+      stage: mk.stageName ?? mk.stageId ?? '未命名环节',
+      speaker: mk.speaker ?? undefined,
+      atMs: mk.tsMs
+    }))
+    // 引擎/模型偏好：缺省读 settings（后端仅在 req 未传时回读）
+    let engine: SttEngine | undefined
+    let model: string | undefined
+    try {
+      engine = (await useSettingsStore.getState().get(STT_ENGINE_KEY)) as SttEngine | undefined
+      model = (await useSettingsStore.getState().get(STT_MODEL_KEY)) as string | undefined
+    } catch {
+      // 读取失败忽略，走后端缺省
+    }
+    setTranscribing(true)
+    setError(null)
+    try {
+      // 预检本地引擎，给用户清晰的兜底说明
+      const statusRes = await window.sttAPI.status(model)
+      const localReady = statusRes.success ? !!statusRes.data?.installed : false
+      const effEngine = engine === 'api'
+        ? 'api'
+        : engine === 'local'
+          ? 'local'
+          : localReady
+            ? 'local-first(local)'
+            : 'local-first(api)'
+
+      const res = await window.sttAPI.transcribe({
+        filePath: meta.filePath,
+        markers,
+        engine,
+        model,
+        aiConfig: {
+          baseURL: aiConfig.baseURL,
+          apiKey: aiConfig.apiKey,
+          model: 'whisper-1'
+        }
+      })
+      if (!res.success) {
+        // 明确引导：本地未装 → 去下载；无 API → 提示去配置
+        setError(`${res.error ?? '转写失败'}${effEngine.includes('api') ? '（如需本地转写，请到 设置→AI 转写 下载转写引擎）' : ''}`)
+        return
+      }
+      const segs = res.data ?? []
+      if (segs.length === 0) {
+        toast.warning('转写结果为空，请检查录音内容')
+        return
+      }
+      // 组装整场时间线（沿用 timeline 结构，content 直接填转文字）
+      setTimeline(
+        segs.map((s) => ({
+          stage: s.stage,
+          stageName: s.stage,
+          side: undefined,
+          speaker: s.speaker ?? null,
+          tsMs: s.atMs,
+          content: s.text
+        }))
+      )
+      toast.success(`转写完成：${segs.length} 段（${effEngine === 'api'
+        ? 'AI API'
+        : effEngine === 'local' || effEngine === 'local-first(local)'
+          ? '本地引擎'
+          : 'AI API（本地引擎未装，已自动兜底）'}）`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  /** 更新时间线某段转文字 */
+  const handleTimelineContent = (index: number, value: string): void => {
+    setTimeline((prev) => prev.map((t, i) => (i === index ? { ...t, content: value } : t)))
+  }
+
+  /** 整场评审（judge_match）：以时间线为素材，需至少一段 content 非空 */
+  const handleJudgeMatch = async (): Promise<void> => {
+    const filled = timeline.filter((t) => t.content.trim() !== '')
+    if (filled.length === 0) {
+      toast.warning('请先为时间线中至少一段补充转文字内容，再发起整场评审')
+      return
+    }
+    const baseTopic =
+      boundMatchRef?.topicTitle ??
+      topic.trim() ??
+      `${boundMatchRef?.teamAffName ?? '正方'} vs ${boundMatchRef?.teamNegName ?? '反方'}`
+    const segs = filled.map((t) => ({
+      stage: t.stage,
+      stageName: t.stageName,
+      side: t.side ?? undefined,
+      speaker: t.speaker ?? undefined,
+      tsMs: t.tsMs,
+      content: t.content
+    }))
+    await runJudge('judge_match', { topic: baseTopic, timeline: segs, judgeId }, '整场评审')
+  }
+
+  /** 获取最近一次 judge_match 结果 */
+  const lastJudgeMatchResult = useMemo<unknown | null>(() => {
+    for (let i = results.length - 1; i >= 0; i--) {
+      const r = results[i]
+      if (r.toolName === 'judge_match' && !r.error) return r.result
+    }
+    return null
+  }, [results])
+
+  /** 写回该场 AI 评审（复用 EventMatchesTab 映射口径；不覆盖人工赛果） */
+  const handleWriteBack = async (): Promise<void> => {
+    if (!boundMatchId) {
+      toast.warning('未绑定场次，无法写回')
+      return
+    }
+    if (!lastJudgeMatchResult || typeof lastJudgeMatchResult !== 'object') {
+      toast.warning('尚未执行整场评审（judge_match），请先执行后再写回')
+      return
+    }
+    const data = lastJudgeMatchResult as Record<string, unknown>
+    const verdict = data.verdict as { winner?: 'aff' | 'neg'; reason?: string } | null | undefined
+    // 素材不足以判定的整场评审（verdict===null）无可写回的赛果，直接中止
+    if (!verdict || typeof verdict !== 'object') {
+      toast.warning('本次整场评审素材不足、无法判定，暂无有效赛果可写回')
+      return
+    }
+    const summary = typeof data.summary === 'string' ? data.summary : ''
+    const reason = typeof verdict?.reason === 'string' ? verdict.reason : ''
+    const source: MatchAiReview['source'] = timeline.some((t) => t.content.trim() !== '')
+      ? 'recording'
+      : 'transcript'
+    const review: MatchAiReview = {
+      winner: verdict?.winner === 'aff' || verdict?.winner === 'neg' ? verdict.winner : 'draw',
+      explanation: reason || summary || '（AI 评审完成，无判定说明）',
+      reviewedAt: new Date().toISOString(),
+      judgeName: typeof data.judgeName === 'string' ? data.judgeName : undefined,
+      bestSpeaker:
+        typeof data.bestSpeaker === 'string' && data.bestSpeaker !== ''
+          ? data.bestSpeaker
+          : null,
+      dimensions:
+        Array.isArray(data.dimensions) ? (data.dimensions as MatchAiReview['dimensions']) : null,
+      stageVerdicts:
+        Array.isArray(data.stageVerdicts) ? (data.stageVerdicts as MatchAiReview['stageVerdicts']) : null,
+      source
+    }
+    const w = window as unknown as {
+      matchAPI?: { setAiReview: (id: string, r: MatchAiReview) => Promise<{ success: boolean; error?: string }> }
+    }
+    const res = await w.matchAPI?.setAiReview(boundMatchId, review)
+    if (res?.success) {
+      toast.success('AI 整场评审已写回该场（不覆盖人工赛果）')
+    } else {
+      toast.error(res?.error || 'AI 评审写回失败')
+    }
+  }
 
   /** 执行一个裁判工具 */
   const runJudge = async (toolName: string, args: Record<string, unknown>, actionLabel: string): Promise<void> => {
@@ -238,6 +515,123 @@ export default function JudgeArena(): JSX.Element {
 
       {/* 表单区 */}
       <Card size="small" style={{ marginBottom: 16 }}>
+        {/* 赛事绑定：赛事 → 轮次 → 场次（可空；未绑定时原就地查看行为不变） */}
+        <Typography.Text strong style={{ fontSize: 13 }}>赛事绑定</Typography.Text>
+        <div style={{ display: 'flex', gap: 8, marginTop: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+          <Select
+            allowClear
+            placeholder="选择赛事"
+            style={{ minWidth: 150 }}
+            value={boundEventId}
+            onChange={(v) => void handleEventChange(v)}
+            options={events.map((e) => ({ value: e.id, label: e.name }))}
+          />
+          <Select
+            allowClear
+            placeholder="选择轮次"
+            style={{ minWidth: 140 }}
+            value={boundRoundId}
+            disabled={!boundEventId}
+            onChange={(v) => handleRoundChange(v)}
+            options={rounds.map((r) => ({
+              value: r.id,
+              label: r.name || `第 ${r.round_number ?? '?'} 轮`
+            }))}
+          />
+          <Select
+            allowClear
+            placeholder="选择场次"
+            style={{ minWidth: 220 }}
+            value={boundMatchId}
+            disabled={!boundEventId}
+            onChange={(v) => void handleMatchChange(v)}
+            options={matchList.map((m) => ({
+              value: m.id,
+              label: `${m.teamAffName ?? '正方'} vs ${m.teamNegName ?? '反方'}`
+            }))}
+          />
+        </div>
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          {boundMatch ? `已绑定场次：${boundMatch.teamAffName ?? '正方'} vs ${boundMatch.teamNegName ?? '反方'}` : '未绑定赛事/场次，评审结果仅就地查看'}
+        </Typography.Text>
+
+        {/* 场次素材：载入录音标记 → 时间线 + 整场评审 + 写回 */}
+        {boundMatch ? (
+          <div style={{ marginBottom: 14 }}>
+            <Space wrap style={{ marginBottom: 8 }}>
+              <Button
+                disabled={running || transcribing || !boundMatch.recordingMeta?.markers?.length}
+                onClick={handleLoadMarkers}
+                icon={<UploadOutlined />}
+              >
+                {boundMatch.recordingMeta?.markers?.length ? `载入本场录音标记（${boundMatch.recordingMeta.markers.length} 段）` : '本场无录音标记'}
+              </Button>
+              <Button
+                type="primary"
+                loading={transcribing}
+                disabled={transcribing || running || !boundMatch.recordingMeta?.filePath}
+                onClick={() => void handleTranscribeRecording()}
+                icon={<AudioOutlined />}
+              >
+                {boundMatch.recordingMeta?.filePath ? '本场录音转文字' : '本场无录音'}
+              </Button>
+              <Button
+                type="primary"
+                ghost
+                disabled={transcribing || running || !apiKeyConfigured || timeline.filter((t) => t.content.trim() !== '').length === 0}
+                loading={running}
+                onClick={() => void handleJudgeMatch()}
+                icon={<AuditOutlined />}
+              >
+                整场评审（judge_match）
+              </Button>
+              <Button
+                disabled={running || transcribing || !lastJudgeMatchResult}
+                onClick={() => void handleWriteBack()}
+                icon={<ThunderboltOutlined />}
+              >
+                写回该场 AI 评审
+              </Button>
+            </Space>
+            {timeline.length > 0 ? (
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                  整场时间线（为每段补充转文字 content，至少一段非空才能发起整场评审）
+                </Typography.Text>
+                {timeline.map((seg, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      marginBottom: 6,
+                      fontSize: 12
+                    }}
+                  >
+                    <div style={{ minWidth: 110, paddingTop: 5 }}>
+                      <Tag>{seg.stageName || seg.stage || `段 ${i + 1}`}</Tag>
+                      <div style={{ color: token.colorTextSecondary, fontSize: 11, lineHeight: 1.4 }}>
+                        {[seg.side === 'aff' ? '正方' : seg.side === 'neg' ? '反方' : '', seg.speaker ?? '']
+                          .filter(Boolean)
+                          .join(' · ')}
+                        {seg.tsMs != null ? ` · ${Math.round(seg.tsMs / 1000)}s` : ''}
+                      </div>
+                    </div>
+                    <Input.TextArea
+                      rows={2}
+                      value={seg.content}
+                      placeholder="粘贴该段转文字…"
+                      onChange={(e) => handleTimelineContent(i, e.target.value)}
+                      style={{ flex: 1, fontSize: 12 }}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* 辩题 */}
         <Typography.Text strong style={{ fontSize: 13 }}>辩题</Typography.Text>
         <Input
@@ -429,7 +823,7 @@ export default function JudgeArena(): JSX.Element {
 
       {running ? (
         <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
-          <Spin /> <span style={{ marginLeft: 8 }}>正在执行 {judge.category} 判定中…</span>
+          <Spin /> <span style={{ marginLeft: 8 }}>{transcribing ? '正在转写本场录音…' : `正在执行 ${judge.category} 判定中…`}</span>
         </div>
       ) : null}
 

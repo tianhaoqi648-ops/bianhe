@@ -12,7 +12,7 @@
 // 会调用 shell.openExternal 打开对应 GitHub Release 页面，由用户手动下载 dmg。
 // ============================================================
 
-import { ipcMain, shell } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { IPC_CHANNELS, type ApiResponse } from '../../shared/types'
 import {
   checkForUpdates,
@@ -97,6 +97,15 @@ export function registerUpdaterIpc(): void {
         }
       }
     }
+  )
+
+  // 获取应用运行元信息（是否打包环境，供渲染进程判断是否执行更新检查）
+  ipcMain.handle(
+    IPC_CHANNELS.UPDATER_GET_META,
+    (): ApiResponse<{ isPackaged: boolean }> => ({
+      success: true,
+      data: { isPackaged: app.isPackaged }
+    })
   )
 
   // 注：UPDATER_STATUS_CHANGE 通道无需注册 handler，

@@ -17,6 +17,7 @@ import { getDefinition, execute } from '../agent/tool-registry'
 
 /** 裁判工具白名单（AI 裁判工作台可直调；2026-08-18 移除 rewrite_speech） */
 export const JUDGE_TOOL_NAMES: string[] = [
+  'judge_match',
   'judge_debate',
   'judge_speech',
   'detect_stage',
@@ -34,7 +35,7 @@ export async function runJudgeTool(
   req: RunToolRequest,
   signal?: AbortSignal
 ): Promise<RunToolResult> {
-  // 1. 白名单校验：只允许 4 个裁判工具
+  // 1. 白名单校验：只允许 5 个裁判工具
   if (!JUDGE_TOOL_NAMES.includes(req.toolName)) {
     return {
       success: false,

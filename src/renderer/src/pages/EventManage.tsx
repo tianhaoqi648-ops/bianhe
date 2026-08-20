@@ -68,6 +68,7 @@ import type {
   DrawSessionDetail
 } from '../../../shared/types';
 import EventDrawsTab from '../components/events/EventDrawsTab';
+import EventMatchesTab from '../components/events/EventMatchesTab';
 import ImportEventModal from '../components/events/ImportEventModal';
 import EventWizardModal from '../components/EventWizardModal';
 import GroupEditModal from '../components/events/GroupEditModal';
@@ -116,7 +117,7 @@ export default function EventManage() {
   // 选中的赛事（详情视图）
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   // 详情面板当前 Tab
-  const [detailTab, setDetailTab] = useState<'teams' | 'rounds' | 'groups' | 'draws'>('teams');
+  const [detailTab, setDetailTab] = useState<'teams' | 'rounds' | 'groups' | 'draws' | 'matches'>('teams');
 
   // 视图模式：列表 / 看板（默认列表，持久化到 localStorage）
   const [viewMode, setViewMode] = useState<'list' | 'board'>(() => {
@@ -1400,7 +1401,7 @@ export default function EventManage() {
 
               <Tabs
                 activeKey={detailTab}
-                onChange={(k) => setDetailTab(k as 'teams' | 'rounds' | 'groups' | 'draws')}
+                onChange={(k) => setDetailTab(k as 'teams' | 'rounds' | 'groups' | 'draws' | 'matches')}
                 items={[
                   {
                     key: 'teams',
@@ -1627,6 +1628,16 @@ export default function EventManage() {
                         }}
                       />
                     )
+                  },
+                  {
+                    key: 'matches',
+                    label: (
+                      <Space>
+                        <TrophyOutlined />
+                        <span>比赛/赛果</span>
+                      </Space>
+                    ),
+                    children: <EventMatchesTab eventId={selectedEvent.id} />
                   }
                 ]}
               />

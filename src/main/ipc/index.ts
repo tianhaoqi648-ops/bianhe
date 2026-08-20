@@ -20,9 +20,12 @@ import { registerTimerIpc } from './timer.ipc'
 import { registerBellAssetIpc } from './bell-asset.ipc'
 import { registerBellPlayIpc } from './bell-play.ipc'
 import { registerTimerThemeIpc } from './timer-theme.ipc'
+import { registerMatchIpc } from './match.ipc'
+import { registerRecordingIpc } from './recording.ipc'
 import { registerBackgroundIpc } from './background.ipc'
 import { registerBackupIpc } from './backup.ipc'
 import { registerUpdaterIpc } from './updater.ipc'
+import { registerTranscriptionIpc } from './transcription.ipc'
 
 export function registerAllIpc(): void {
   registerSystemIpc()
@@ -41,8 +44,11 @@ export function registerAllIpc(): void {
   registerBellAssetIpc()
   registerBellPlayIpc()
   registerTimerThemeIpc()
+  registerMatchIpc()
+  registerRecordingIpc()
   registerBackgroundIpc()
   registerBackupIpc()
   registerUpdaterIpc()
+  registerTranscriptionIpc()
   console.log('[main] All IPC handlers registered')
 }

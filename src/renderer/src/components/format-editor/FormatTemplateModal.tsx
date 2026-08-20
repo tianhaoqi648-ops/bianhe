@@ -5,7 +5,7 @@
 // 克隆时 stages 重新生成 uuid，名称后缀 "(模板副本)"，模板本身不变。
 // ============================================================
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import type { CSSProperties, ComponentType } from 'react'
 import { Modal, Row, Col, Card, Button, Typography, Tag, Space, theme as antdTheme, Tooltip } from 'antd'
 import {
@@ -21,6 +21,7 @@ import {
 } from '@ant-design/icons'
 import { v4 as uuidv4 } from 'uuid'
 import { FORMAT_TEMPLATES, type FormatTemplateIcon } from '../../data/format-templates'
+import { ALL_PRESETS } from '../../../../shared/debate-formats/presets'
 import type { StageDef } from '../../../../shared/debate-formats/types'
 import { useFormatStore } from '../../stores/formatStore'
 import { useToast } from '../../hooks/useToast'
@@ -46,6 +47,23 @@ const ICON_MAP: Record<FormatTemplateIcon, ComponentType<{ style?: CSSProperties
   solution: SolutionOutlined
 }
 
+/** 内置赛制预设（shared/debate-formats/presets）→ 模板条目（补充图标） */
+const PRESET_ICON: Record<string, FormatTemplateIcon> = {
+  'preset-chinese': 'trophy',
+  'preset-new-national': 'star',
+  'preset-world-cup': 'global',
+  'preset-bp': 'flag'
+}
+function presetTemplates() {
+  return ALL_PRESETS.map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    stages: p.formatData.stages,
+    icon: PRESET_ICON[p.id] ?? ('trophy' as FormatTemplateIcon)
+  }))
+}
+
 /** 格式化总时长为可读字符串 */
 function formatTotalDuration(stages: StageDef[]): string {
   const totalMs = stages.reduce((sum, s) => sum + s.durationMs, 0)
@@ -63,9 +81,11 @@ export default function FormatTemplateModal({
   const toast = useToast()
   const { token } = antdTheme.useToken()
   const [creatingId, setCreatingId] = useState<string | null>(null)
+  // 内置赛制预设 + 自定义模板，合并后展示
+  const templates = useMemo(() => [...presetTemplates(), ...FORMAT_TEMPLATES], [])
 
   const handleSelect = async (templateId: string): Promise<void> => {
-    const template = FORMAT_TEMPLATES.find((t) => t.id === templateId)
+    const template = templates.find((t) => t.id === templateId)
     if (!template) return
     setCreatingId(templateId)
     try {
@@ -113,7 +133,7 @@ export default function FormatTemplateModal({
         选择一个内置赛制模板，将克隆为可编辑副本（模板本身不会被修改）。
       </Paragraph>
       <Row gutter={[16, 16]}>
-        {FORMAT_TEMPLATES.map((tpl) => {
+        {templates.map((tpl) => {
           const Icon = ICON_MAP[tpl.icon]
           const totalDuration = formatTotalDuration(tpl.stages)
           const isCreating = creatingId === tpl.id

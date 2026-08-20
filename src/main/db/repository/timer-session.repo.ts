@@ -13,6 +13,7 @@ interface SessionRow {
   id: string
   event_id: string | null
   round_id: string | null
+  match_id: string | null
   team_aff_id: string | null
   team_neg_id: string | null
   topic_id: string | null
@@ -30,6 +31,8 @@ interface SessionRow {
   stage_remaining_cache: string | null
   aff_remaining_ms: number | null
   neg_remaining_ms: number | null
+  aff_pool_remaining_ms: number | null
+  neg_pool_remaining_ms: number | null
   event_name: string | null
   team_aff_name: string | null
   team_neg_name: string | null
@@ -100,6 +103,7 @@ function rowToSession(row: SessionRow): TimerSession {
     id: row.id,
     eventId: row.event_id,
     roundId: row.round_id,
+    matchId: row.match_id,
     teamAffId: row.team_aff_id,
     teamNegId: row.team_neg_id,
     topicId: row.topic_id,
@@ -118,6 +122,8 @@ function rowToSession(row: SessionRow): TimerSession {
     stageRemainingCache: safeJsonParse(row.stage_remaining_cache, null),
     affRemainingMs: row.aff_remaining_ms,
     negRemainingMs: row.neg_remaining_ms,
+    affPoolRemainingMs: row.aff_pool_remaining_ms,
+    negPoolRemainingMs: row.neg_pool_remaining_ms,
     eventName: row.event_name,
     teamAffName: row.team_aff_name,
     teamNegName: row.team_neg_name,
@@ -147,6 +153,7 @@ export const timerSessionRepo = {
     label?: string
     eventId?: string
     roundId?: string
+    matchId?: string
     teamAffId?: string
     teamNegId?: string
     topicId?: string
@@ -170,6 +177,7 @@ export const timerSessionRepo = {
       id: uuidv4(),
       eventId: opts.eventId ?? null,
       roundId: opts.roundId ?? null,
+      matchId: opts.matchId ?? null,
       teamAffId: opts.teamAffId ?? null,
       teamNegId: opts.teamNegId ?? null,
       topicId: opts.topicId ?? null,
@@ -188,6 +196,13 @@ export const timerSessionRepo = {
       stageRemainingCache,
       affRemainingMs: isFreeDebate ? (firstStage?.durationMs ?? null) : null,
       negRemainingMs: isFreeDebate ? (firstStage?.durationMs ?? null) : null,
+      // 每队总时长池（后手）：创建时按赛制 teamPoolMinutes（分钟）初始化
+      affPoolRemainingMs: opts.formatSnapshot.teamPoolMinutes?.aff != null
+        ? opts.formatSnapshot.teamPoolMinutes.aff * 60000
+        : null,
+      negPoolRemainingMs: opts.formatSnapshot.teamPoolMinutes?.neg != null
+        ? opts.formatSnapshot.teamPoolMinutes.neg * 60000
+        : null,
       // 冗余快照：创建时捕获名称，删除关联记录后仍可显示
       eventName: opts.eventName ?? null,
       teamAffName: opts.teamAffName ?? null,
@@ -196,19 +211,22 @@ export const timerSessionRepo = {
     }
     getDb().prepare(`
       INSERT INTO timer_sessions
-        (id, event_id, round_id, team_aff_id, team_neg_id, topic_id,
+        (id, event_id, round_id, match_id, team_aff_id, team_neg_id, topic_id,
          format_id, format_snapshot, status, started_at, ended_at,
          current_stage_index, current_side, remaining_ms, theme_snapshot, label, created_at,
          stage_remaining_cache, aff_remaining_ms, neg_remaining_ms,
+         aff_pool_remaining_ms, neg_pool_remaining_ms,
          event_name, team_aff_name, team_neg_name, topic_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      session.id, session.eventId, session.roundId, session.teamAffId, session.teamNegId, session.topicId,
+      session.id, session.eventId, session.roundId, session.matchId, session.teamAffId, session.teamNegId, session.topicId,
       session.formatId, JSON.stringify(session.formatSnapshot), session.status, session.startedAt, session.endedAt,
       session.currentStageIndex, session.currentSide, session.remainingMs, session.themeSnapshot, session.label, session.createdAt,
       session.stageRemainingCache ? JSON.stringify(session.stageRemainingCache) : null,
       session.affRemainingMs,
       session.negRemainingMs,
+      session.affPoolRemainingMs,
+      session.negPoolRemainingMs,
       session.eventName,
       session.teamAffName,
       session.teamNegName,
@@ -227,13 +245,13 @@ export const timerSessionRepo = {
     return rows.map(rowToSession)
   },
 
-  update(id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs'>>): TimerSession | null {
+  update(id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>): TimerSession | null {
     const existing = this.getById(id)
     if (!existing) return null
     const updated = { ...existing, ...opts }
     getDb().prepare(`
       UPDATE timer_sessions
-      SET status = ?, started_at = ?, ended_at = ?, current_stage_index = ?, current_side = ?, remaining_ms = ?, stage_remaining_cache = ?, aff_remaining_ms = ?, neg_remaining_ms = ?
+      SET status = ?, started_at = ?, ended_at = ?, current_stage_index = ?, current_side = ?, remaining_ms = ?, stage_remaining_cache = ?, aff_remaining_ms = ?, neg_remaining_ms = ?, aff_pool_remaining_ms = ?, neg_pool_remaining_ms = ?
       WHERE id = ?
     `).run(
       updated.status, updated.startedAt, updated.endedAt,
@@ -241,6 +259,8 @@ export const timerSessionRepo = {
       updated.stageRemainingCache ? JSON.stringify(updated.stageRemainingCache) : null,
       updated.affRemainingMs ?? null,
       updated.negRemainingMs ?? null,
+      updated.affPoolRemainingMs ?? null,
+      updated.negPoolRemainingMs ?? null,
       id
     )
     return updated

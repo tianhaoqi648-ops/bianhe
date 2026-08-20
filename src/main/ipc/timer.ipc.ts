@@ -67,7 +67,7 @@ export function registerTimerIpc(): void {
     })
   )
 
-  ipcMain.handle(IPC_CHANNELS.TIMER_UPDATE_SESSION, (_e, id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs'>>) => {
+  ipcMain.handle(IPC_CHANNELS.TIMER_UPDATE_SESSION, (_e, id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>) => {
     return wrap(() => {
       assertNonEmptyString(id, 'id')
       assertParam(opts && typeof opts === 'object', '参数 opts 必须为对象')

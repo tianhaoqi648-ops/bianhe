@@ -43,6 +43,11 @@ function createWindow(): void {
     mainWindow.webContents.send('db:status', currentDbMode)
   })
 
+  // 放行麦克风（media）权限，用于计时/比赛可选录音
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media')
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }

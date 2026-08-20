@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS team_history (
   event_id    TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE,
   played_at   TEXT,
   session_id  TEXT,         -- 关联抽取会话，用于确认结果时关联去重
-  stance      TEXT          -- 持方快照：正方/反方
+  stance      TEXT,          -- 持方快照：正方/反方
+  topic_title TEXT           -- 冗余快照：辩题标题（辩题被删除后历史仍可显示原标题）
 );
 
 -- ------------------------------------------------------------

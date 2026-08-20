@@ -22,6 +22,7 @@ export { recommendFormatTool } from './recommend-format.tool'
 export { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 export { generateScheduleTool } from './generate-schedule.tool'
 export { judgeDebateTool } from './judge-debate.tool'
+export { judgeMatchTool } from './judge-match.tool'
 export { judgeSpeechTool } from './judge-speech.tool'
 export { detectStageTool } from './detect-stage.tool'
 export { simulateOpponentTool } from './simulate-opponent.tool'
@@ -40,6 +41,7 @@ import { recommendFormatTool } from './recommend-format.tool'
 import { optimizeTeamGroupsTool } from './optimize-team-groups.tool'
 import { generateScheduleTool } from './generate-schedule.tool'
 import { judgeDebateTool } from './judge-debate.tool'
+import { judgeMatchTool } from './judge-match.tool'
 import { judgeSpeechTool } from './judge-speech.tool'
 import { detectStageTool } from './detect-stage.tool'
 import { simulateOpponentTool } from './simulate-opponent.tool'
@@ -69,6 +71,7 @@ export const allTools: ToolDefinition<any, any>[] = [
   optimizeTeamGroupsTool,
   generateScheduleTool,
   judgeDebateTool,
+  judgeMatchTool,
   judgeSpeechTool,
   detectStageTool,
   simulateOpponentTool
