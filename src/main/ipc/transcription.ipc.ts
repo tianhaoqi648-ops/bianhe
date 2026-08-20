@@ -19,10 +19,11 @@ import type {
   SttImportResult,
   SttRequest,
   SttSegment,
-  SttFunAsrInstallResult
+  SttFunAsrInstallResult,
+  SttDirDiagnostics
 } from '../../shared/types'
 import { getFunAsrStatus, installFunAsrEnv } from '../services/funasr-service'
-import { transcribeRecordings, pickWhisperCli, clearWhisperCli } from '../services/transcription'
+import { transcribeRecordings, pickWhisperCli, clearWhisperCli, getSttDirDiagnostics } from '../services/transcription'
 import {
   getSttEngineStatus,
   downloadSttEngine,
@@ -216,6 +217,18 @@ export function registerTranscriptionIpc(): void {
       return errStatus(e)
     }
   })
+
+  // 查询 stt 目录与模型/ffmpeg 在位状况（展示与丢失找回）
+  ipcMain.handle(
+    IPC_CHANNELS.STT_DIAGNOSTICS,
+    async (): Promise<ApiResponse<SttDirDiagnostics>> => {
+      try {
+        return { success: true, data: getSttDirDiagnostics() }
+      } catch (e) {
+        return { success: false, error: errMsg(e) }
+      }
+    }
+  )
 
   console.log('[main] Transcription (STT) IPC registered')
 }

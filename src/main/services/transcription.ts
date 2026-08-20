@@ -15,11 +15,11 @@
 // ============================================================
 
 import { app, net, dialog } from 'electron'
-import { promises as fs, existsSync } from 'fs'
+import { promises as fs, existsSync, readdirSync } from 'fs'
 import { spawn } from 'child_process'
 import { basename, extname, join } from 'path'
 import { tmpdir } from 'os'
-import type { SttEngine, SttLocalEngine, SttRequest, SttSegment } from '../../shared/types'
+import type { SttEngine, SttLocalEngine, SttRequest, SttSegment, SttDirDiagnostics } from '../../shared/types'
 import { STT_ENGINE_KEY, STT_MODEL_KEY, STT_DIR_NAME, STT_LOCAL_ENGINE_KEY } from '../../shared/types'
 import { STT_DIR_KEY } from '../../shared/match-recording'
 import { parseWavHeader, computeSliceWindows, sliceWavBuffer } from '../../shared/stt-wav'
@@ -43,10 +43,29 @@ export function getConfiguredSttDir(): string {
   return typeof v === 'string' && v.trim() ? v.trim() : ''
 }
 
-/** 转写引擎目录：优先用配置（stt.dir 完整路径），缺省回退 userData/stt/ */
+/**
+ * 归一化转写引擎目录。
+ *
+ * stt.dir 保存的是用户选择的「数据根目录」，实际引擎目录固定落为 `<根>/stt`，
+ * 以便与 NSIS 保护脚本（只保护 $INSTDIR/stt*）对所有自定义目录名统一匹配，避免更新清空。
+ * - root 为空 → 用默认 userData/stt
+ * - root 最后一段已是 stt（大小写不敏感，精确某段） → 直接用 root（避免 stt/stt）
+ * - 否则 → join(root, 'stt')
+ */
+export function resolveSttDir(root: string): string {
+  if (!root || !root.trim()) {
+    return join(app.getPath('userData'), STT_DIR_NAME)
+  }
+  const finalSeg = basename(root)
+  if (finalSeg.toLowerCase() === STT_DIR_NAME.toLowerCase()) {
+    return root
+  }
+  return join(root, STT_DIR_NAME)
+}
+
+/** 转写引擎目录：stt.dir 为数据根目录，实际目录为 <根>/stt；缺省回退 userData/stt */
 export function sttDir(): string {
-  const configured = getConfiguredSttDir()
-  return configured || join(app.getPath('userData'), STT_DIR_NAME)
+  return resolveSttDir(getConfiguredSttDir())
 }
 
 /** 模型子目录名（sttDir/models/<model>/），各模型彼此隔离 */
@@ -100,6 +119,29 @@ export async function pickWhisperCli(): Promise<boolean> {
 export async function clearWhisperCli(): Promise<boolean> {
   auditRepo.setSetting(WHISPER_CLI_KEY, '')
   return isFileP(join(sttDir(), whisperBinaryName()))
+}
+
+/**
+ * stt 目录诊断：返回当前生效转写目录路径，以及 whisper 二进制 / ffmpeg / 已装模型子目录是否在位。
+ * 供「设置 → AI 转写」展示引擎与数据存放位置，并在更新后数据缺失时引导找回。
+ */
+export function getSttDirDiagnostics(): SttDirDiagnostics {
+  const dir = sttDir()
+  let models: string[] = []
+  try {
+    models = readdirSync(join(dir, MODELS_DIR), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+  } catch {
+    models = []
+  }
+  return {
+    path: dir,
+    hasWhisperCli: pathExists(whisperBinaryPath()),
+    hasFfmpeg: pathExists(ffmpegPath()),
+    models
+  }
 }
 
 async function isFileP(p: string): Promise<boolean> {

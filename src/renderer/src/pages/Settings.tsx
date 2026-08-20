@@ -87,7 +87,8 @@ import type {
   SttEngineStatus,
   SttFfmpegStatus,
   SttFunAsrStatus,
-  SttLocalEngine
+  SttLocalEngine,
+  SttDirDiagnostics
 } from '../../../shared/types';
 
 // 本地扩展：FunASR 缺失的推理运行时依赖（如 ["torchaudio"]），由 funasrStatus() 返回
@@ -382,6 +383,8 @@ export default function Settings() {
   // AI 转写（STT）：存放目录（配置值；空 = 默认 userData/stt）
   const [sttDirConfigured, setSttDirConfigured] = useState('');
   const [sttDirPicking, setSttDirPicking] = useState(false);
+  // T4：stt 目录诊断（有效路径 + whisper/ffmpeg/模型在位状况，用于更新后数据缺失引导找回）
+  const [sttDirDiagnostics, setSttDirDiagnostics] = useState<SttDirDiagnostics | null>(null);
   // P3.4 Task 20：备份管理弹窗 + 备份中 loading
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -1208,6 +1211,21 @@ export default function Settings() {
     }
   };
 
+  // T4：刷新 stt 目录诊断（有效路径 + whisper/ffmpeg/模型在位状况）
+  const refreshSttDirDiagnostics = useCallback(async () => {
+    try {
+      const res = await window.sttAPI.sttDirDiagnostics();
+      if (res.success && res.data) setSttDirDiagnostics(res.data);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  // 转到「通用」Tab 时刷新 stt 目录诊断（展示 whisper/ffmpeg/模型在位状况）
+  useEffect(() => {
+    if (activeTab === 'basic') void refreshSttDirDiagnostics();
+  }, [activeTab, refreshSttDirDiagnostics]);
+
   const handlePickSttDir = async () => {
     setSttDirPicking(true);
     try {
@@ -1553,7 +1571,7 @@ export default function Settings() {
                 </Button>
               </Space>
               <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-                默认 userData/stt；可改为其它盘符/目录。
+                选择数据根目录后，转写数据（模型/转码器）将存放在该目录下的 stt 子目录；默认 userData/stt。
               </Text>
             </div>
           </div>
@@ -1791,6 +1809,67 @@ export default function Settings() {
             message="转写引擎（Whisper）不在安装包内，首次使用时按需下载到本地，不会增大应用安装包体积。"
           />
         </Space>
+      </Card>
+
+      {/* T4：转写数据目录（stt 目录 + whisper/ffmpeg/模型在位状况 + 缺失时引导找回） */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <FolderOpenOutlined style={{ color: '#1677ff' }} />
+            <span>转写数据目录</span>
+          </Space>
+        }
+        style={{ marginTop: spacing.md }}
+      >
+        {sttDirDiagnostics ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+              <Text type="secondary">目录路径：</Text>
+              <Text code>{sttDirDiagnostics.path || '未知'}</Text>
+            </div>
+            <div>
+              <Text type="secondary">whisper 转写器：</Text>
+              {sttDirDiagnostics.hasWhisperCli ? (
+                <Tag color="green" icon={<CheckCircleOutlined />}>已就位</Tag>
+              ) : (
+                <Tag color="red">缺失</Tag>
+              )}
+            </div>
+            <div>
+              <Text type="secondary">ffmpeg 转码器：</Text>
+              {sttDirDiagnostics.hasFfmpeg ? (
+                <Tag color="green" icon={<CheckCircleOutlined />}>已就位</Tag>
+              ) : (
+                <Tag color="red">缺失</Tag>
+              )}
+            </div>
+            <div>
+              <Text type="secondary">已下载模型：</Text>
+              <div style={{ marginTop: 4 }}>
+                {sttDirDiagnostics.models && sttDirDiagnostics.models.length > 0 ? (
+                  <Space wrap>
+                    {sttDirDiagnostics.models.map((m) => (
+                      <Tag key={m} color="blue">{m}</Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Text type="secondary">无</Text>
+                )}
+              </div>
+            </div>
+            {(!sttDirDiagnostics.hasWhisperCli || !sttDirDiagnostics.hasFfmpeg) && (
+              <Alert
+                type="warning"
+                showIcon
+                message="转写数据缺失或未就位"
+                description="可能因应用更新等操作被清除。可在上方“下载转写引擎 / 下载转码器”重新下载，或用“选择本机 whisper 转写器 / 选择本机已有 ffmpeg”从本地文件找回。"
+              />
+            )}
+          </Space>
+        ) : (
+          <Button onClick={() => void refreshSttDirDiagnostics()}>检查转写数据目录</Button>
+        )}
       </Card>
     </div>
   );

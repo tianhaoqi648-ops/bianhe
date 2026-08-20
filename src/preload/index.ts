@@ -96,7 +96,8 @@ import {
   type SttImportResult,
   type SttFfmpegStatus,
   type SttFunAsrStatus,
-  type SttFunAsrInstallResult
+  type SttFunAsrInstallResult,
+  type SttDirDiagnostics
 } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 import type {
@@ -629,6 +630,10 @@ const sttAPI = {
   /** 清除手动指定的 ffmpeg 路径 */
   clearFfmpegPath(): Promise<SttFfmpegStatus> {
     return invoke<SttFfmpegStatus>(IPC_CHANNELS.STT_FFMPEG_CLEAR)
+  },
+  /** 查询 stt 目录与模型/ffmpeg 在位状况（用于展示与丢失找回） */
+  sttDirDiagnostics(): Promise<ApiResponse<SttDirDiagnostics>> {
+    return invoke<ApiResponse<SttDirDiagnostics>>(IPC_CHANNELS.STT_DIAGNOSTICS)
   }
 }
 

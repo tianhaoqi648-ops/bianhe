@@ -432,6 +432,8 @@ export interface SttAPI {
   clearWhisperCli: () => Promise<SttEngineStatus>
   pickFfmpegPath: () => Promise<SttFfmpegStatus>
   clearFfmpegPath: () => Promise<SttFfmpegStatus>
+  /** 查询 stt 目录与模型/ffmpeg 在位状况（用于展示与丢失找回） */
+  sttDirDiagnostics: () => Promise<ApiResponse<SttDirDiagnostics>>
 }
 
 declare global {

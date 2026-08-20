@@ -27,6 +27,7 @@ win:
   compression: maximum
 nsis:
   artifactName: bianhe-${version}-windows-setup.${ext}
+  include: build/nsis-stt-protect.nsh
   shortcutName: 辩盒
   uninstallDisplayName: 辩盒
   createDesktopShortcut: always

@@ -1015,6 +1015,18 @@ export interface SttImportResult {
   error?: string
 }
 
+/** stt 目录诊断信息（「设置 → AI 转写」展示 stt 目录与模型/ffmpeg 是否在位，以及更新后数据缺失时引导找回） */
+export interface SttDirDiagnostics {
+  /** 当前生效的转写目录完整路径（用户配置 stt.dir 或缺省 userData/stt） */
+  path: string
+  /** whisper 二进制（手动指定或 stt 目录下）是否存在 */
+  hasWhisperCli: boolean
+  /** ffmpeg 转码器（ffmpegPath() 指向的文件）是否存在 */
+  hasFfmpeg: boolean
+  /** stt 目录 models/ 下的模型子目录名数组（目录读失败为空数组） */
+  models: string[]
+}
+
 // ---------- 通道名常量 ----------
 // 命名规范：'<domain>:<action>'，例 'topic:list'、'draw:execute'
 
@@ -1218,6 +1230,7 @@ export const IPC_CHANNELS = {
   STT_IMPORT_MODEL: 'stt:import-model',
   STT_WHISPER_PICK: 'stt:whisper-pick',
   STT_WHISPER_CLEAR: 'stt:whisper-clear',
+  STT_DIAGNOSTICS: 'stt:diagnostics',
   // ffmpeg 转码器（按需下载，把 m4a/webm 转 16k mono wav 供本地 whisper 转写）
   STT_FFMPEG_STATUS: 'stt:ffmpeg-status',
   STT_FFMPEG_DOWNLOAD: 'stt:ffmpeg-download',
