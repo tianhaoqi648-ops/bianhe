@@ -76,6 +76,7 @@ import RandomGroupAssignModal from '../components/events/RandomGroupAssignModal'
 import RoundEditModal from '../components/RoundEditModal';
 import TeamEditModal from '../components/TeamEditModal';
 import TeamHistoryModal from '../components/TeamHistoryModal';
+import BadgePickerModal, { BadgeThumbSmall } from '../components/events/BadgePickerModal';
 import {
   cardStyle,
   primaryButtonStyle,
@@ -161,6 +162,10 @@ export default function EventManage() {
   const [batchAssignGroupId, setBatchAssignGroupId] = useState<string | null | undefined>(undefined);
   // 当前队伍历史
   const [teamHistory, setTeamHistory] = useState<TeamHistory[]>([]);
+  // 队伍 → 队徽绑定（P1-6）：teamId → badgeId
+  const [teamBadges, setTeamBadges] = useState<Record<string, string | null>>({});
+  // 队徽选择弹窗（P1-6）
+  const [badgePickerTeam, setBadgePickerTeam] = useState<Team | null>(null);
   // 预设弹窗
   const [presetModalOpen, setPresetModalOpen] = useState(false);
   // 赛事导入弹窗
@@ -566,6 +571,58 @@ export default function EventManage() {
     });
   };
 
+  // ====== 队徽绑定（P1-6） ======
+  const handleOpenBadgePicker = async (team: Team) => {
+    setBadgePickerTeam(team);
+    const res = await window.badgeAPI.getTeam(team.id);
+    if (res.success) {
+      setTeamBadges((prev) => ({ ...prev, [team.id]: res.data ?? null }));
+    }
+  };
+  const handleSaveBadge = async (badgeId: string | null) => {
+    const team = badgePickerTeam;
+    if (!team) return;
+    try {
+      if (badgeId) {
+        const res = await window.badgeAPI.setTeam(team.id, badgeId);
+        if (!res.success) {
+          toast.error(res.error ?? '绑定失败');
+          return;
+        }
+        setTeamBadges((prev) => ({ ...prev, [team.id]: badgeId }));
+        toast.success('已绑定队徽');
+      } else {
+        await window.badgeAPI.clearTeam(team.id);
+        setTeamBadges((prev) => ({ ...prev, [team.id]: null }));
+        toast.success('已取消队徽');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '操作失败');
+    } finally {
+      setBadgePickerTeam(null);
+    }
+  };
+
+  // 进入赛事时预载队伍→队徽绑定，便于列表直接展示（P1-6）
+  useEffect(() => {
+    const teams = eventStore.teams;
+    if (!selectedEvent || teams.length === 0) return;
+    let alive = true;
+    Promise.all(teams.map((t) => window.badgeAPI.getTeam(t.id))).then((results) => {
+      if (!alive) return;
+      const m: Record<string, string | null> = {};
+      teams.forEach((t, i) => {
+        const r = results[i];
+        if (r?.success) m[t.id] = r.data ?? null;
+      });
+      setTeamBadges((prev) => ({ ...prev, ...m }));
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEvent?.id, eventStore.teams.length]);
+
   // ====== 分组 CRUD ======
   const handleCreateGroup = () => {
     setEditingGroup(null);
@@ -801,6 +858,22 @@ export default function EventManage() {
       title: '队伍名称',
       dataIndex: 'name',
       key: 'name'
+    },
+    {
+      title: '队徽',
+      key: 'badge',
+      width: 120,
+      render: (_: any, record: Team) => {
+        const bid = teamBadges[record.id] ?? null;
+        return (
+          <Space size={6}>
+            {bid ? <BadgeThumbSmall id={bid} /> : <Text type="secondary">—</Text>}
+            <Button size="small" onClick={() => void handleOpenBadgePicker(record)}>
+              {bid ? '更换' : '绑定'}
+            </Button>
+          </Space>
+        );
+      }
     },
     {
       title: '所属分组',
@@ -1748,6 +1821,16 @@ export default function EventManage() {
         }}
         onAdd={handleAddHistory}
         onDelete={handleDeleteHistory}
+      />
+
+      {/* 队徽库选择弹窗（P1-6） */}
+      <BadgePickerModal
+        open={!!badgePickerTeam}
+        teamName={badgePickerTeam?.name ?? ''}
+        currentBadgeId={badgePickerTeam ? (teamBadges[badgePickerTeam.id] ?? null) : null}
+        onClose={() => setBadgePickerTeam(null)}
+        onSaved={(badgeId) => void handleSaveBadge(badgeId)}
+        onToast={{ success: (m) => toast.success(m), error: (m) => toast.error(m) }}
       />
 
       {/* 难度梯度预设弹窗 */}

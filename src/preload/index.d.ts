@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // preload/index.d.ts — 全局 Window 类型声明
 //
 // 让渲染进程 TS 代码能识别 window.topicAPI / eventAPI / drawAPI / auditAPI / settingsAPI / importAPI。
@@ -86,8 +86,15 @@ import type {
   SttEngineStatus,
   SttImportResult,
   SttFfmpegStatus,
-  SttFunAsrStatus
+ type SttFunAsrStatus,
+  type ScheduleDiffPreview,
+  type ScheduleApplyResult,
+  type BadgeItem,
+  JudgeHistoryRecord,
+  JudgeHistoryCreateInput,
+  JudgeHistoryFilter
 } from '../shared/types'
+import type { ExportJudgeReportRequest, ExportJudgeReportResult } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 
 interface TopicListResponse {
@@ -234,6 +241,51 @@ export interface ExportAPI {
   exportEventPackage: (
     req: ExportEventPackageRequest
   ) => Promise<ApiResponse<ExportResult>>
+}
+
+export interface ReportAPI {
+  /** 导出复盘报告为 Markdown：主进程弹 saveDialog + 写文件；用户取消返回 data:null */
+  exportJudge: (
+    req: ExportJudgeReportRequest
+  ) => Promise<ApiResponse<ExportJudgeReportResult | null>>
+  /** 导出复盘为自包含 HTML（P2-9，含内联雷达图可视化）：主进程弹 saveDialog + 写文件；用户取消返回 data:null */
+  exportJudgeHtml: (
+    req: ExportJudgeReportRequest
+  ) => Promise<ApiResponse<ExportJudgeReportResult | null>>
+}
+
+/** 赛程 Excel 导入导出（P1-6：与赛事「包」导入导出不同） */
+export interface ScheduleAPI {
+  /** 导出当前赛程为 xlsx：主进程弹保存对话框；用户取消返回 data:null */
+  exportSchedule: (eventId: string) => Promise<ApiResponse<ExportResult | null>>
+  /** 解析导入 xlsx → 「新增/更新/删除」变更预览（不写库） */
+  importParse: (
+    eventId: string,
+    filePath: string
+  ) => Promise<ApiResponse<ScheduleDiffPreview>>
+  /** 确认后应用变更到比赛 */
+  importApply: (
+    eventId: string,
+    preview: ScheduleDiffPreview
+  ) => Promise<ApiResponse<ScheduleApplyResult>>
+}
+
+/** 队徽库（P1-6：内置/上传/搜索 · 队伍绑定，存 userData/badges） */
+export interface BadgeAPI {
+  /** 列出队徽库；可传关键字过滤（不含则返回全部） */
+  list: (keyword?: string) => Promise<ApiResponse<BadgeItem[]>>
+  /** 上传队徽：renderer 读取图片为 base64 后传入 */
+  upload: (opts: { name: string; fileName: string; base64: string }) => Promise<ApiResponse<BadgeItem>>
+  /** 删除自定义队徽 */
+  delete: (id: string) => Promise<ApiResponse<boolean>>
+  /** 取队徽 dataUrl（供 <img> 渲染） */
+  getDataUrl: (id: string) => Promise<ApiResponse<string | null>>
+  /** 绑定队伍 → 队徽 */
+  setTeam: (teamId: string, badgeId: string) => Promise<ApiResponse<boolean>>
+  /** 读取队伍已绑定队徽 id（未设置返回 null） */
+  getTeam: (teamId: string) => Promise<ApiResponse<string | null | undefined>>
+  /** 解绑队伍队徽 */
+  clearTeam: (teamId: string) => Promise<ApiResponse<boolean>>
 }
 
 export interface DedupAPI {
@@ -436,6 +488,18 @@ export interface SttAPI {
   sttDirDiagnostics: () => Promise<ApiResponse<SttDirDiagnostics>>
 }
 
+/** AI 裁判历史（judge_history，T1/T2） */
+export interface JudgeAPI {
+  /** 列表查询；可按 eventId/roundId/matchId/toolName 筛选，按 created_at 倒序 */
+  listHistory: (filter?: JudgeHistoryFilter) => Promise<ApiResponse<JudgeHistoryRecord[]>>
+  /** 按 id 取单条历史 */
+  getHistory: (id: string) => Promise<ApiResponse<JudgeHistoryRecord | undefined>>
+  /** 保存一条裁判历史（工具成功结果） */
+  saveHistory: (input: JudgeHistoryCreateInput) => Promise<ApiResponse<JudgeHistoryRecord>>
+  /** 删除单条历史 */
+  deleteHistory: (id: string) => Promise<ApiResponse<boolean>>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -446,6 +510,9 @@ declare global {
     settingsAPI: SettingsAPI
     importAPI: ImportAPI
     exportAPI: ExportAPI
+    scheduleAPI: ScheduleAPI
+    badgeAPI: BadgeAPI
+    reportAPI: ReportAPI
     dedupAPI: DedupAPI
     fileAPI: FileAPI
     systemAPI: SystemAPI
@@ -460,6 +527,7 @@ declare global {
     backgroundAPI: BackgroundAPI
     updaterAPI: UpdaterAPI
     sttAPI: SttAPI
+    judgeAPI: JudgeAPI
   }
 }
 

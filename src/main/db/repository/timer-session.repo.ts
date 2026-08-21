@@ -33,6 +33,8 @@ interface SessionRow {
   neg_remaining_ms: number | null
   aff_pool_remaining_ms: number | null
   neg_pool_remaining_ms: number | null
+  aff_speech_count: number | null
+  neg_speech_count: number | null
   event_name: string | null
   team_aff_name: string | null
   team_neg_name: string | null
@@ -124,6 +126,8 @@ function rowToSession(row: SessionRow): TimerSession {
     negRemainingMs: row.neg_remaining_ms,
     affPoolRemainingMs: row.aff_pool_remaining_ms,
     negPoolRemainingMs: row.neg_pool_remaining_ms,
+    affSpeechCount: row.aff_speech_count,
+    negSpeechCount: row.neg_speech_count,
     eventName: row.event_name,
     teamAffName: row.team_aff_name,
     teamNegName: row.team_neg_name,
@@ -203,6 +207,9 @@ export const timerSessionRepo = {
       negPoolRemainingMs: opts.formatSnapshot.teamPoolMinutes?.neg != null
         ? opts.formatSnapshot.teamPoolMinutes.neg * 60000
         : null,
+      // 发言次数：新会话初始 0
+      affSpeechCount: 0,
+      negSpeechCount: 0,
       // 冗余快照：创建时捕获名称，删除关联记录后仍可显示
       eventName: opts.eventName ?? null,
       teamAffName: opts.teamAffName ?? null,
@@ -216,8 +223,9 @@ export const timerSessionRepo = {
          current_stage_index, current_side, remaining_ms, theme_snapshot, label, created_at,
          stage_remaining_cache, aff_remaining_ms, neg_remaining_ms,
          aff_pool_remaining_ms, neg_pool_remaining_ms,
+         aff_speech_count, neg_speech_count,
          event_name, team_aff_name, team_neg_name, topic_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id, session.eventId, session.roundId, session.matchId, session.teamAffId, session.teamNegId, session.topicId,
       session.formatId, JSON.stringify(session.formatSnapshot), session.status, session.startedAt, session.endedAt,
@@ -227,6 +235,8 @@ export const timerSessionRepo = {
       session.negRemainingMs,
       session.affPoolRemainingMs,
       session.negPoolRemainingMs,
+      session.affSpeechCount,
+      session.negSpeechCount,
       session.eventName,
       session.teamAffName,
       session.teamNegName,
@@ -245,13 +255,13 @@ export const timerSessionRepo = {
     return rows.map(rowToSession)
   },
 
-  update(id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>): TimerSession | null {
+  update(id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs' | 'affSpeechCount' | 'negSpeechCount'>>): TimerSession | null {
     const existing = this.getById(id)
     if (!existing) return null
     const updated = { ...existing, ...opts }
     getDb().prepare(`
       UPDATE timer_sessions
-      SET status = ?, started_at = ?, ended_at = ?, current_stage_index = ?, current_side = ?, remaining_ms = ?, stage_remaining_cache = ?, aff_remaining_ms = ?, neg_remaining_ms = ?, aff_pool_remaining_ms = ?, neg_pool_remaining_ms = ?
+      SET status = ?, started_at = ?, ended_at = ?, current_stage_index = ?, current_side = ?, remaining_ms = ?, stage_remaining_cache = ?, aff_remaining_ms = ?, neg_remaining_ms = ?, aff_pool_remaining_ms = ?, neg_pool_remaining_ms = ?, aff_speech_count = ?, neg_speech_count = ?
       WHERE id = ?
     `).run(
       updated.status, updated.startedAt, updated.endedAt,
@@ -261,6 +271,8 @@ export const timerSessionRepo = {
       updated.negRemainingMs ?? null,
       updated.affPoolRemainingMs ?? null,
       updated.negPoolRemainingMs ?? null,
+      updated.affSpeechCount ?? null,
+      updated.negSpeechCount ?? null,
       id
     )
     return updated

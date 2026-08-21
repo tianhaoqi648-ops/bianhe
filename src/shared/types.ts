@@ -566,6 +566,8 @@ export type BackupCategory =
   | 'formats_bells'
   | 'settings'
   | 'audit_history'
+  | 'judge_history'
+  | 'badges'
 
 export type BackupImportStrategy = 'clear_rebuild' | 'skip_existing' | 'overwrite_existing'
 
@@ -607,6 +609,8 @@ export interface BackupImportResult {
   skipped: number
   overwritten: number
   bellFilesRestored: number
+  /** 备份恢复时还原的队徽文件数（badges 类别） */
+  badgeFilesRestored: number
 }
 
 // ---------- 标签显示配置 ----------
@@ -1045,6 +1049,131 @@ export interface RecordingSaveResult {
   message?: string
 }
 
+// ==================== P1-6 赛程 Excel 导入导出 / 队徽库 ====================
+
+/**
+ * 一条赛程记录（对应 Excel 一行，亦为 diff / apply 的最小单元）。
+ * 身份键 = roundName + '#' + matchNumber。
+ */
+export interface ScheduleRow {
+  roundName: string | null
+  matchNumber: number | null
+  /** 正方队伍名 */
+  teamAff: string
+  /** 反方队伍名 */
+  teamNeg: string
+  /** 辩题标题 */
+  topic: string
+  /** 日期：导出/导入均保留，供在 Excel 编排参考；因无对应存储列，导入时参与展示但不参与 diff/apply */
+  date: string
+  /** 场地：同 date，仅展示 */
+  venue: string
+  /** 状态快照（planned/resulted），导出展示用 */
+  status: string
+}
+
+/** 变更预览中的单条差异动作 */
+export interface ScheduleDiffAction {
+  kind: 'add' | 'update' | 'delete'
+  /** 唯一键 roundName#matchNumber */
+  key: string
+  row: ScheduleRow
+  /** update/delete 时对应的既有比赛 id */
+  matchId?: string
+}
+
+/** 赛程导入变更预览：将新增/将更新/将删除/不变 */
+export interface ScheduleDiffPreview {
+  added: ScheduleDiffAction[]
+  updated: ScheduleDiffAction[]
+  deleted: ScheduleDiffAction[]
+  unchanged: number
+  warnings: string[]
+}
+
+/** 赛程导入确认应用后的结果统计 */
+export interface ScheduleApplyResult {
+  appliedAdd: number
+  appliedUpdate: number
+  appliedDelete: number
+  /** 因队伍/辩题无法解析而跳过的行数 */
+  skipped: number
+  warnings: string[]
+}
+
+/** 队徽条目（内置或自定义） */
+export interface BadgeItem {
+  id: string
+  name: string
+  /** builtin=内置、custom=用户上传 */
+  kind: 'builtin' | 'custom'
+  /** 相对文件名：builtin 为内嵌标识；custom 为 userData/badges 下的文件名 */
+  fileName: string
+  created_at?: string
+}
+
+/** 队伍 → 队徽绑定（存 userData/badges/team-bindings.json） */
+export interface TeamBadgeMap {
+  [teamId: string]: string | null
+}
+
+export interface ExportScheduleRequest {
+  eventId: string
+}
+
+// ---------- AI 裁判历史（judge_history，T1/T2） ----------
+
+/**
+ * 一条 AI 裁判结果历史记录。
+ * 对应 judge_history 表，工具执行成功自动落库，跨页/重启保留。
+ */
+export interface JudgeHistoryRecord {
+  id: string
+  createdAt: string
+  /** 可空绑定：当前绑定的赛事/轮次/场次 */
+  eventId: string | null
+  roundId: string | null
+  matchId: string | null
+  /** 评委（当前选中的评委） */
+  judgeId: string
+  /** 裁判工具名（judge_match / judge_debate / judge_speech / detect_stage / simulate_opponent） */
+  toolName: string
+  /** 环节（快照） */
+  stage: string | null
+  /** 持方（aff / neg，快照） */
+  side: string | null
+  /** 辩题（快照） */
+  topic: string | null
+  /** 工具成功输出（对象，存库为 JSON 文本） */
+  resultJson: Record<string, unknown> | null
+  /** 失败信息（按 spec 仅存成功结果，备用） */
+  error: string | null
+}
+
+/** 创建裁判历史的入参（id / createdAt 可省略，主进程自动补）。 */
+export interface JudgeHistoryCreateInput {
+  id?: string
+  createdAt?: string
+  eventId?: string | null
+  roundId?: string | null
+  matchId?: string | null
+  judgeId: string
+  toolName: string
+  stage?: string | null
+  side?: string | null
+  topic?: string | null
+  resultJson?: Record<string, unknown> | null
+  error?: string | null
+}
+
+/** 历史列表筛选（仅当字段非空时作为查询条件）。 */
+export interface JudgeHistoryFilter {
+  eventId?: string | null
+  roundId?: string | null
+  matchId?: string | null
+  toolName?: string | null
+}
+
 export const IPC_CHANNELS = {
   // topic
   TOPIC_LIST: 'topic:list',
@@ -1237,7 +1366,28 @@ export const IPC_CHANNELS = {
   STT_FFMPEG_CANCEL: 'stt:ffmpeg-cancel',
   STT_FFMPEG_REMOVE: 'stt:ffmpeg-remove',
   STT_FFMPEG_PICK: 'stt:ffmpeg-pick',
-  STT_FFMPEG_CLEAR: 'stt:ffmpeg-clear'
+  STT_FFMPEG_CLEAR: 'stt:ffmpeg-clear',
+  // 复盘报告导出（P0-3：AI 裁判录音一键复盘导出 Markdown）
+  REPORT_EXPORT_JUDGE: 'report:exportJudge',
+  // 复盘 html 可视化导出（P2-9：自包含 HTML，含雷达图可视化）
+  REPORT_EXPORT_JUDGE_HTML: 'report:exportJudgeHtml',
+  // 赛程 Excel（P1-6：与 complete-event-import-export 的赛事「包」导入导出是不同的能力）
+  SCHEDULE_EXPORT: 'schedule:export',
+  SCHEDULE_IMPORT_PARSE: 'schedule:importParse',
+  SCHEDULE_IMPORT_APPLY: 'schedule:importApply',
+  // 队徽库（P1-6：内置/上传/搜索 · 队伍绑定，存 userData/badges）
+  BADGE_LIST: 'badge:list',
+  BADGE_UPLOAD: 'badge:upload',
+  BADGE_DELETE: 'badge:delete',
+  BADGE_GET_DATA_URL: 'badge:getDataUrl',
+  BADGE_SET_TEAM: 'badge:setTeam',
+  BADGE_GET_TEAM: 'badge:getTeam',
+  BADGE_CLEAR_TEAM: 'badge:clearTeam',
+  // AI 裁判历史（judge_history，T1/T2：持久化裁判工具结果，跨页/重启保留）
+  JUDGE_LIST_HISTORY: 'judge:listHistory',
+  JUDGE_GET_HISTORY: 'judge:getHistory',
+  JUDGE_SAVE_HISTORY: 'judge:saveHistory',
+  JUDGE_DELETE_HISTORY: 'judge:deleteHistory'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -1309,6 +1459,21 @@ export interface ExportLogsRequest {
 export interface ExportLogsResult {
   filePath: string
   count: number
+}
+
+// ---------- 复盘报告导出（P0-3 录音一键复盘导出） ----------
+
+/** 复盘报告导出请求：渲染端组装好 markdown 字符串，主进程负责选路径 + 写文件 */
+export interface ExportJudgeReportRequest {
+  /** 默认文件名（不带扩展名，主进程追加 .md） */
+  defaultName: string
+  /** 组装好的 markdown 复盘报告内容 */
+  content: string
+}
+
+export interface ExportJudgeReportResult {
+  /** 实际保存的绝对路径 */
+  filePath: string
 }
 
 // ---------- 导出相关类型 ----------
@@ -1662,6 +1827,10 @@ export interface TimerSession {
   affPoolRemainingMs?: number | null
   /** 每队总时长池（后手）：反方池剩余（毫秒）。带 teamPoolMinutes 的赛制使用 */
   negPoolRemainingMs?: number | null
+  /** 自由辩论发言次数：正方（自由辩论环节开始后累计） */
+  affSpeechCount?: number | null
+  /** 自由辩论发言次数：反方（自由辩论环节开始后累计） */
+  negSpeechCount?: number | null
   /** 冗余快照：赛事名称（删除事件后仍可显示） */
   eventName?: string | null
   /** 冗余快照：正方队伍名称（删除队伍后仍可显示） */
@@ -1702,6 +1871,10 @@ export interface TimerState {
   affPoolRemainingMs?: number
   /** 每队总时长池（后手）：反方池剩余（毫秒）。带 teamPoolMinutes 赛制时使用 */
   negPoolRemainingMs?: number
+  /** 自由辩论发言次数：正方（自由辩论环节开始后累计） */
+  affSpeechCount?: number
+  /** 自由辩论发言次数：反方（自由辩论环节开始后累计） */
+  negSpeechCount?: number
   /** 各环节最近离开时的 remainingMs 缓存，key=stageIndex，value=remainingMs。
    *  用于 prevStage 完全保留策略。
    *  自由辩论环节下，value 为 { aff, neg } 双方独立时间；其他环节为 number */

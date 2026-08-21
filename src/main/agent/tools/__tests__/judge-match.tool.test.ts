@@ -29,7 +29,10 @@ import {
 import { buildMatchUserPrompt } from '../judge-common'
 
 // ---------- mock llm-client ----------
-const { mockChat } = vi.hoisted(() => ({ mockChat: vi.fn() }))
+const { mockChat, mockJudgeHistoryCreate } = vi.hoisted(() => ({
+  mockChat: vi.fn(),
+  mockJudgeHistoryCreate: vi.fn()
+}))
 
 vi.mock('../../llm-client', () => ({
   chat: mockChat,
@@ -41,6 +44,10 @@ vi.mock('../../llm-client', () => ({
       this.code = code
     }
   }
+}))
+
+vi.mock('../../../db/repository/judge-history.repo', () => ({
+  judgeHistoryRepo: { create: mockJudgeHistoryCreate }
 }))
 
 // ---------- fixtures ----------
@@ -97,6 +104,7 @@ const ctxWithConfig: ToolExecutionContext = { config: VALID_CONFIG }
 
 beforeEach(() => {
   mockChat.mockReset()
+  mockJudgeHistoryCreate.mockReset()
 })
 
 // ---------- 纯函数：时间线校验 / 兜底 / 过滤 ----------
@@ -349,5 +357,38 @@ describe('judge_match：异常处理', () => {
     const res = await judgeMatchTool.execute(VALID_ARGS, ctxWithConfig)
     expect(res.success).toBe(false)
     if (!res.success) expect(res.error).toContain('rate_limit')
+  })
+})
+
+describe('judge_match：写评审历史', () => {
+  it('成功时调用 judgeHistoryRepo.create 并含 tool_name/result', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
+    const res = await judgeMatchTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(res.success).toBe(true)
+    expect(mockJudgeHistoryCreate).toHaveBeenCalledTimes(1)
+    const input = mockJudgeHistoryCreate.mock.calls[0][0]
+    expect(input.toolName).toBe('judge_match')
+    expect(input.judgeId).toBe('hu-jianbiao')
+    expect(input.topic).toBe(VALID_ARGS.topic)
+    expect(input.resultJson).toMatchObject({ success: true, verdict: { winner: 'aff' } })
+    expect(input.eventId).toBeUndefined()
+    expect(input.roundId).toBeUndefined()
+    expect(input.matchId).toBeUndefined()
+  })
+
+  it('失败态不写历史', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '非 JSON' })
+    const res = await judgeMatchTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(res.success).toBe(false)
+    expect(mockJudgeHistoryCreate).not.toHaveBeenCalled()
+  })
+
+  it('历史写入失败静默忽略，不打断工具返回', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
+    mockJudgeHistoryCreate.mockImplementation(() => {
+      throw new Error('db down')
+    })
+    const res = await judgeMatchTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(res.success).toBe(true)
   })
 })

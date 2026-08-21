@@ -97,8 +97,15 @@ import {
   type SttFfmpegStatus,
   type SttFunAsrStatus,
   type SttFunAsrInstallResult,
-  type SttDirDiagnostics
+  type SttDirDiagnostics,
+  type ScheduleDiffPreview,
+  type ScheduleApplyResult,
+  type BadgeItem,
+  type JudgeHistoryRecord,
+  type JudgeHistoryCreateInput,
+  type JudgeHistoryFilter
 } from '../shared/types'
+import type { ExportJudgeReportRequest, ExportJudgeReportResult } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
 import type {
   ChatRequest,
@@ -306,6 +313,68 @@ const exportAPI = {
 }
 
 // ============================================================
+// 赛程 Excel API（P1-6：与赛事「包」导入导出是不同的能力）
+// ============================================================
+const scheduleAPI = {
+  /** 导出当前赛程为 xlsx：主进程弹保存对话框；用户取消返回 data:null */
+  exportSchedule: (eventId: string) =>
+    invoke<ApiResponse<ExportResult | null>>(IPC_CHANNELS.SCHEDULE_EXPORT, { eventId }),
+  /** 解析导入 xlsx → 「新增/更新/删除」变更预览（不写库） */
+  importParse: (eventId: string, filePath: string) =>
+    invoke<ApiResponse<ScheduleDiffPreview>>(IPC_CHANNELS.SCHEDULE_IMPORT_PARSE, { eventId, filePath }),
+  /** 确认后应用变更到比赛 */
+  importApply: (eventId: string, preview: ScheduleDiffPreview) =>
+    invoke<ApiResponse<ScheduleApplyResult>>(IPC_CHANNELS.SCHEDULE_IMPORT_APPLY, { eventId, preview })
+}
+
+// ============================================================
+// 队徽库 API（P1-6：内置/上传/搜索 · 队伍绑定，存 userData/badges）
+// ============================================================
+const badgeAPI = {
+  /** 列出队徽库；可传关键字过滤（不含则返回全部） */
+  list: (keyword?: string) =>
+    invoke<ApiResponse<BadgeItem[]>>(IPC_CHANNELS.BADGE_LIST, keyword),
+  /** 上传队徽：renderer 读取图片为 base64 后传入 */
+  upload: (opts: { name: string; fileName: string; base64: string }) =>
+    invoke<ApiResponse<BadgeItem>>(IPC_CHANNELS.BADGE_UPLOAD, opts),
+  /** 删除自定义队徽 */
+  delete: (id: string) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.BADGE_DELETE, id),
+  /** 取队徽 dataUrl（供 <img> 渲染） */
+  getDataUrl: (id: string) =>
+    invoke<ApiResponse<string | null>>(IPC_CHANNELS.BADGE_GET_DATA_URL, id),
+  /** 绑定队伍 → 队徽 */
+  setTeam: (teamId: string, badgeId: string) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.BADGE_SET_TEAM, { teamId, badgeId }),
+  /** 读取队伍已绑定队徽 id（未设置返回 null） */
+  getTeam: (teamId: string) =>
+    invoke<ApiResponse<string | null | undefined>>(IPC_CHANNELS.BADGE_GET_TEAM, teamId),
+  /** 解绑队伍队徽 */
+  clearTeam: (teamId: string) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.BADGE_CLEAR_TEAM, teamId)
+}
+
+// ============================================================
+// 复盘报告导出 API（P0-3 录音一键复盘导出；P2-9 复盘 html 可视化导出）
+// ============================================================
+const reportAPI = {
+  /** 导出复盘报告为 Markdown：主进程弹 saveDialog + 写文件；用户取消返回 data:null */
+  exportJudge(req: ExportJudgeReportRequest): Promise<ApiResponse<ExportJudgeReportResult | null>> {
+    return invoke<ApiResponse<ExportJudgeReportResult | null>>(
+      IPC_CHANNELS.REPORT_EXPORT_JUDGE,
+      req
+    )
+  },
+  /** 导出复盘为自包含 HTML（P2-9，含内联雷达图可视化）：主进程弹 saveDialog + 写文件；用户取消返回 data:null */
+  exportJudgeHtml(req: ExportJudgeReportRequest): Promise<ApiResponse<ExportJudgeReportResult | null>> {
+    return invoke<ApiResponse<ExportJudgeReportResult | null>>(
+      IPC_CHANNELS.REPORT_EXPORT_JUDGE_HTML,
+      req
+    )
+  }
+}
+
+// ============================================================
 // 去重检查 API
 // ============================================================
 const dedupAPI = {
@@ -421,7 +490,7 @@ const timerAPI = {
   }) => invoke<ApiResponse<TimerSession>>(IPC_CHANNELS.TIMER_CREATE_SESSION, opts),
   getSession: (id: string) => invoke<ApiResponse<TimerSession | null>>(IPC_CHANNELS.TIMER_GET_SESSION, id),
   listSessions: (limit?: number) => invoke<ApiResponse<TimerSession[]>>(IPC_CHANNELS.TIMER_LIST_SESSIONS, limit),
-  updateSession: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>) =>
+  updateSession: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs' | 'affSpeechCount' | 'negSpeechCount'>>) =>
     invoke<ApiResponse<TimerSession | null>>(IPC_CHANNELS.TIMER_UPDATE_SESSION, id, opts),
   deleteSession: (id: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.TIMER_DELETE_SESSION, id),
   listRecords: (sessionId: string) => invoke<ApiResponse<TimerRecord[]>>(IPC_CHANNELS.TIMER_LIST_RECORDS, sessionId),
@@ -635,6 +704,25 @@ const sttAPI = {
   sttDirDiagnostics(): Promise<ApiResponse<SttDirDiagnostics>> {
     return invoke<ApiResponse<SttDirDiagnostics>>(IPC_CHANNELS.STT_DIAGNOSTICS)
   }
+}
+
+// ============================================================
+// AI 裁判历史 API（judge_history，T1/T2）
+// 裁判工具执行成功后自动落库；支持按绑定筛选、重开、删除。
+// ============================================================
+const judgeAPI = {
+  /** 列表查询；可按 eventId/roundId/matchId/toolName 筛选，按 created_at 倒序 */
+  listHistory: (filter?: JudgeHistoryFilter) =>
+    invoke<ApiResponse<JudgeHistoryRecord[]>>(IPC_CHANNELS.JUDGE_LIST_HISTORY, filter),
+  /** 按 id 取单条历史 */
+  getHistory: (id: string) =>
+    invoke<ApiResponse<JudgeHistoryRecord | undefined>>(IPC_CHANNELS.JUDGE_GET_HISTORY, id),
+  /** 保存一条裁判历史（工具成功结果） */
+  saveHistory: (input: JudgeHistoryCreateInput) =>
+    invoke<ApiResponse<JudgeHistoryRecord>>(IPC_CHANNELS.JUDGE_SAVE_HISTORY, input),
+  /** 删除单条历史 */
+  deleteHistory: (id: string) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.JUDGE_DELETE_HISTORY, id)
 }
 
 // ============================================================
@@ -881,6 +969,9 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('settingsAPI', settingsAPI)
     contextBridge.exposeInMainWorld('importAPI', importAPI)
     contextBridge.exposeInMainWorld('exportAPI', exportAPI)
+    contextBridge.exposeInMainWorld('scheduleAPI', scheduleAPI)
+    contextBridge.exposeInMainWorld('badgeAPI', badgeAPI)
+    contextBridge.exposeInMainWorld('reportAPI', reportAPI)
     contextBridge.exposeInMainWorld('dedupAPI', dedupAPI)
     contextBridge.exposeInMainWorld('fileAPI', fileAPI)
     contextBridge.exposeInMainWorld('systemAPI', systemAPI)
@@ -896,6 +987,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('updaterAPI', updaterAPI)
     contextBridge.exposeInMainWorld('agent', agentAPI)
     contextBridge.exposeInMainWorld('sttAPI', sttAPI)
+    contextBridge.exposeInMainWorld('judgeAPI', judgeAPI)
   } catch (error) {
     console.error(error)
   }
@@ -913,6 +1005,9 @@ if (process.contextIsolated) {
     settingsAPI: typeof settingsAPI
     importAPI: typeof importAPI
     exportAPI: typeof exportAPI
+    scheduleAPI: typeof scheduleAPI
+    badgeAPI: typeof badgeAPI
+    reportAPI: typeof reportAPI
     dedupAPI: typeof dedupAPI
     fileAPI: typeof fileAPI
     systemAPI: typeof systemAPI
@@ -928,6 +1023,7 @@ if (process.contextIsolated) {
     updaterAPI: typeof updaterAPI
     agent: typeof agentAPI
     sttAPI: typeof sttAPI
+    judgeAPI: typeof judgeAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = extendedElectronAPI
@@ -938,6 +1034,9 @@ if (process.contextIsolated) {
   w.settingsAPI = settingsAPI
   w.importAPI = importAPI
   w.exportAPI = exportAPI
+  w.scheduleAPI = scheduleAPI
+  w.badgeAPI = badgeAPI
+  w.reportAPI = reportAPI
   w.dedupAPI = dedupAPI
   w.fileAPI = fileAPI
   w.systemAPI = systemAPI
@@ -953,4 +1052,5 @@ if (process.contextIsolated) {
   w.updaterAPI = updaterAPI
   w.agent = agentAPI
   w.sttAPI = sttAPI
+  w.judgeAPI = judgeAPI
 }

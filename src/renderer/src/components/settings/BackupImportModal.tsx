@@ -117,7 +117,7 @@ export default function BackupImportModal({ open, onClose }: Props) {
       }
       const res = await backup.import({ filePath, strategy, categories })
       if (res.success && res.data) {
-        const { inserted, skipped, overwritten, bellFilesRestored } = res.data
+        const { inserted, skipped, overwritten, bellFilesRestored, badgeFilesRestored } = res.data
         let msg = ''
         if (strategy === 'clear_rebuild') {
           msg = `已恢复 ${inserted} 条数据`
@@ -128,6 +128,9 @@ export default function BackupImportModal({ open, onClose }: Props) {
         }
         if (bellFilesRestored > 0) {
           msg += `，${bellFilesRestored} 个铃声文件`
+        }
+        if (badgeFilesRestored > 0) {
+          msg += `，${badgeFilesRestored} 个队徽文件`
         }
         toast.success(msg)
         // P1-15 修复：导入成功后刷新所有 stores，确保 UI 与新数据一致

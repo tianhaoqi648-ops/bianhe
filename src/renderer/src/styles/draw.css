@@ -85,6 +85,114 @@
   box-sizing: border-box;
 }
 
+/* ============================================================
+ * P0-4 赛题抽取全屏仪式动画
+ * ============================================================ */
+.draw-ceremony-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9998;
+  background: linear-gradient(135deg, #0c1e3e 0%, #1a3a6c 50%, #0c1e3e 100%);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* 背景装饰光晕 */
+.draw-ceremony-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(255, 214, 102, 0.14), transparent 55%),
+    radial-gradient(circle at 15% 80%, rgba(22, 119, 255, 0.18), transparent 50%),
+    radial-gradient(circle at 85% 82%, rgba(102, 37, 185, 0.2), transparent 50%);
+}
+
+.draw-ceremony-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: clamp(14px, 2vh, 24px) clamp(20px, 3vw, 40px);
+  z-index: 2;
+}
+
+.draw-ceremony-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+  max-width: 92vw;
+}
+
+/* 滚动中大字的轻微晃动感 */
+.ceremony-rolling-title {
+  opacity: 0.96;
+  text-shadow: 0 0 18px rgba(22, 119, 255, 0.45);
+}
+
+/* 定格高亮闪烁：金色辉光脉冲 */
+@keyframes ceremony-flash {
+  0%, 100% {
+    text-shadow: 0 0 10px rgba(255, 214, 102, 0.35);
+    color: #ffffff;
+  }
+  50% {
+    text-shadow: 0 0 26px rgba(255, 214, 102, 0.95), 0 0 52px rgba(255, 214, 102, 0.5);
+    color: #ffd666;
+  }
+}
+.ceremony-flash {
+  animation: ceremony-flash 1.1s ease-in-out infinite;
+}
+
+.draw-ceremony-badge {
+  display: inline-block;
+  padding: 4px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 214, 102, 0.6);
+  color: #ffd666;
+  letter-spacing: 4px;
+  font-size: clamp(12px, 1.3vw, 18px);
+  box-shadow: 0 0 14px rgba(255, 214, 102, 0.25);
+}
+
+/* 其余抽取结果题列表 */
+.draw-ceremony-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(4px, 1vh, 12px);
+  margin-top: clamp(14px, 3vh, 28px);
+  max-width: 86vw;
+}
+.draw-ceremony-rest-item {
+  color: rgba(255, 255, 255, 0.82);
+  opacity: 0;
+  animation: fade-up 0.5s ease-out forwards;
+  word-break: break-word;
+}
+.draw-ceremony-rest-item:nth-child(1) { animation-delay: 0.35s; }
+.draw-ceremony-rest-item:nth-child(2) { animation-delay: 0.5s; }
+.draw-ceremony-rest-item:nth-child(3) { animation-delay: 0.65s; }
+.draw-ceremony-rest-item:nth-child(4) { animation-delay: 0.8s; }
+.draw-ceremony-rest-item:nth-child(5) { animation-delay: 0.95s; }
+
 /* 大屏辩题大字 */
 .bigscreen-topic-title {
   font-size: clamp(28px, 5vw, 64px);

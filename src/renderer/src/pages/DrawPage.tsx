@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Typography, Breadcrumb, Space, Card, Button, Alert } from 'antd';
 import AccentCard from '../components/common/AccentCard';
 import PageHeader from '../components/common/PageHeader';
@@ -31,6 +31,7 @@ import DrawResultList from '../components/draw/DrawResultList';
 import InsufficientTopicsModal from '../components/draw/InsufficientTopicsModal';
 import BigScreen from '../components/draw/BigScreen';
 import DrawAnimation from '../components/draw/DrawAnimation';
+import DrawCeremony from '../components/draw/DrawCeremony';
 import { safeIpc } from '../lib/ipc';
 import { emptyStateStyle, kbdStyle } from '../styles/shared';
 import { spacing, shadow, gradient, colorGold, zIndex, fontSize, radius, gray } from '../styles/tokens';
@@ -211,6 +212,8 @@ export default function DrawPage() {
 
   const [config, setConfig] = useState<DrawConfigState>(DEFAULT_CONFIG);
   const [animating, setAnimating] = useState(false);
+  // P0-4：全屏抽取仪式是否开启（js 全屏沉浸态覆盖整个应用视口）
+  const [ceremonyOpen, setCeremonyOpen] = useState(false);
   const [bigScreen, setBigScreen] = useState(false);
   // 大屏已揭晓题数（提升到 DrawPage，便于小屏同步进度文字）
   const [revealedCount, setRevealedCount] = useState(0);
@@ -329,6 +332,20 @@ export default function DrawPage() {
   const updateConfig = (patch: Partial<DrawConfigState>) =>
     setConfig((c) => ({ ...c, ...patch }));
 
+  // P0-4：开始抽取时进入全屏沉浸仪式；投屏（大屏）场景沿用原大屏三幕动画，不叠加仪式
+  const beginCeremony = () => {
+    if (!bigScreen) setCeremonyOpen(true);
+  };
+
+  // 仪式滚动候选题池（优先用本次抽取结果，结果未就绪时用题库）
+  const candidateTitles = useMemo(() => {
+    const drawn = drawStore.lastResult?.topics
+      ?.map((t) => t.title)
+      .filter((t): t is string => !!t) ?? [];
+    if (drawn.length > 0) return drawn;
+    return topicStore.items.map((t) => t.title);
+  }, [drawStore.lastResult, topicStore.items]);
+
   // 组装 DrawParams
   const buildParams = (): DrawParams | null => {
     if (!config.eventId) return null;
@@ -392,6 +409,7 @@ export default function DrawPage() {
     if (!params) return;
     setAnimating(true);
     setRevealedCount(0);
+    beginCeremony();
     try {
       // P3-17 修复：移除固定 600ms 延迟，动画跟随实际抽取耗时
       // 原 Promise.all([execute, setTimeout(600)]) 在 execute 快速完成时让用户空等 600ms
@@ -418,9 +436,12 @@ export default function DrawPage() {
             requiredCount: params.topic_count
           });
         }
-        // 不显示 toast.error，由 Modal 引导用户处理
+        // 失败：退出全屏仪式，由 Modal 引导用户处理；不显示 toast.error
+        setCeremonyOpen(false);
         return;
       }
+      // 失败：退出全屏仪式，回到结果页展示错误
+      setCeremonyOpen(false);
       toast.error(e instanceof Error ? e.message : '抽取失败');
     } finally {
       setAnimating(false);
@@ -472,6 +493,7 @@ export default function DrawPage() {
 
     setAnimating(true);
     setRevealedCount(0);
+    beginCeremony();
     try {
       // P3-17 修复：移除固定 600ms 延迟，动画跟随实际抽取耗时
       const result = await drawStore.execute(baseParams);
@@ -489,6 +511,7 @@ export default function DrawPage() {
         }
       }
     } catch (e) {
+      setCeremonyOpen(false);
       toast.error(e instanceof Error ? e.message : '抽取失败');
     } finally {
       setAnimating(false);
@@ -501,6 +524,7 @@ export default function DrawPage() {
     if (!params) return;
     setAnimating(true);
     setRevealedCount(0);
+    beginCeremony();
     try {
       // P3-17 修复：移除固定 600ms 延迟，动画跟随实际抽取耗时
       const result = await drawStore.redo(drawStore.lastResult.session.id, params);
@@ -508,6 +532,7 @@ export default function DrawPage() {
         toast.success(`已重新抽取 ${result.topics.length} 道辩题`);
       }
     } catch (e) {
+      setCeremonyOpen(false);
       toast.error(e instanceof Error ? e.message : '重抽失败');
     } finally {
       setAnimating(false);
@@ -593,35 +618,54 @@ export default function DrawPage() {
     });
   };
 
-  // 快捷键：R 重抽 / F 投屏 / Esc 退出大屏（通过全局 HotkeyManager 管理）
+  // 快捷键：R 重抽 / F 投屏 / Esc 退出大屏 / Space、PageDown（翻页笔）开始抽取
+  // P0-4：ceremonyOpen 时这些页面级快捷键整体禁用，由仪式组件内的捕获监听接管
   useHotkeyScope('draw');
   useHotkeys([
+    {
+      combo: 'space',
+      description: '开始抽取（翻页笔下一页）',
+      scope: 'draw',
+      handler: () => {
+        if (!animating && !bigScreen && !ceremonyOpen) void handleDraw();
+      },
+      enabled: !animating && !bigScreen && !ceremonyOpen && !!config.eventId
+    },
+    {
+      combo: 'pagedown',
+      description: '开始抽取（翻页笔下一页）',
+      scope: 'draw',
+      handler: () => {
+        if (!animating && !bigScreen && !ceremonyOpen) void handleDraw();
+      },
+      enabled: !animating && !bigScreen && !ceremonyOpen && !!config.eventId
+    },
     {
       combo: 'r',
       description: '重新抽取',
       scope: 'draw',
       handler: () => {
-        if (drawStore.lastResult && !animating) void handleRedo();
+        if (drawStore.lastResult && !animating && !ceremonyOpen) void handleRedo();
       },
-      enabled: !!drawStore.lastResult && !animating
+      enabled: !!drawStore.lastResult && !animating && !ceremonyOpen
     },
     {
       combo: 'f',
       description: '进入大屏',
       scope: 'draw',
       handler: () => {
-        if (drawStore.lastResult && !bigScreen) setBigScreen(true);
+        if (drawStore.lastResult && !bigScreen && !ceremonyOpen) setBigScreen(true);
       },
-      enabled: !!drawStore.lastResult && !bigScreen
+      enabled: !!drawStore.lastResult && !bigScreen && !ceremonyOpen
     },
     {
       combo: 'escape',
       description: '退出大屏',
       scope: 'draw',
       handler: () => {
-        if (bigScreen) setBigScreen(false);
+        if (bigScreen && !ceremonyOpen) setBigScreen(false);
       },
-      enabled: bigScreen
+      enabled: bigScreen && !ceremonyOpen
     }
   ]);
 
@@ -802,8 +846,21 @@ export default function DrawPage() {
         </div>
       </div>
 
-      {/* 抽取动画：大屏开启时不渲染小屏动画（由大屏内三幕动画接管） */}
-      <DrawAnimation open={animating && !bigScreen} mode="small" />
+      {/* 抽取动画：全屏仪式开启时不渲染小屏动画；大屏场景由大屏内三幕动画接管 */}
+      <DrawAnimation open={animating && !bigScreen && !ceremonyOpen} mode="small" />
+
+      {/* P0-4：全屏抽取仪式（深色沉浸 + 大字滚动 + 定格闪烁 + 音效），纯展示层，不改动抽取逻辑 */}
+      <DrawCeremony
+        open={ceremonyOpen}
+        animating={animating}
+        result={drawStore.lastResult}
+        candidates={candidateTitles}
+        eventName={currentEvent?.name ?? '辩题抽取'}
+        roundName={currentRound?.name ?? ''}
+        revealMode={config.revealMode}
+        onStart={() => void handleDraw()}
+        onExit={() => setCeremonyOpen(false)}
+      />
 
       {/* 大屏模式 */}
       {bigScreen && drawStore.lastResult && (

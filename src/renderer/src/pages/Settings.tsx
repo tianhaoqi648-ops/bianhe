@@ -19,6 +19,7 @@ import {
   Popconfirm,
   Tag,
   Progress,
+  Slider,
   Modal,
   Checkbox,
   Radio,
@@ -65,7 +66,8 @@ import {
   ImportOutlined
 } from '@ant-design/icons';
 import { version } from '../../../../package.json';
-import { useSettingsStore } from '../stores/settingsStore';
+import { useSettingsStore, getTimeoutTtsSetting, TIMEOUT_TTS_KEY } from '../stores/settingsStore';
+import { BELL_KITS, BELL_KIT_KEY, getBellKitFromSettings } from '../utils/timer-bell-kits';
 import { useTopicStore } from '../stores/topicStore';
 import { useAgentSessionStore } from '../stores/agentSessionStore';
 import { useThemeMode } from '../hooks/useThemeMode';
@@ -1252,6 +1254,36 @@ export default function Settings() {
     await refreshSttStatus(sttModel);
   };
 
+  // ====== P2-8：铃声库 / 超时语音 ======
+  const bellKitCurrent = getBellKitFromSettings(settingsStore.settings);
+  const timeoutTts = getTimeoutTtsSetting(settingsStore.settings);
+
+  const handleBellKitChange = async (id: string) => {
+    try {
+      await window.settingsAPI.set(BELL_KIT_KEY, id);
+      toast.success('铃声库已切换，计时到点即刻生效');
+    } catch {
+      // 静默失败
+    }
+  };
+
+  const handleTtsEnabledChange = async (checked: boolean) => {
+    try {
+      await window.settingsAPI.set(TIMEOUT_TTS_KEY, { ...timeoutTts, enabled: checked });
+      toast.success(checked ? '已开启超时语音播报' : '已关闭超时语音播报');
+    } catch {
+      // 静默失败
+    }
+  };
+
+  const handleTtsVolumeChange = async (volume: number) => {
+    try {
+      await window.settingsAPI.set(TIMEOUT_TTS_KEY, { ...timeoutTts, volume });
+    } catch {
+      // 静默失败
+    }
+  };
+
   // ====== 渲染：通用 Tab（去重设置 + 铃声管理） ======
   const renderBasicTab = () => (
     <div>
@@ -1440,6 +1472,60 @@ export default function Settings() {
         }
       >
         <BellManager />
+      </Card>
+
+      {/* P2-8：铃声库 / 超时语音 */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <BellOutlined style={{ color: '#1677ff' }} />
+            <span>计时器铃声库与超时语音</span>
+          </Space>
+        }
+        style={{ marginTop: spacing.md }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+              铃声库：一键切换全应用（小屏/大屏）计时到点与预告铃声，无需改赛制
+            </Text>
+            <Select
+              style={{ width: 360 }}
+              value={bellKitCurrent.id}
+              onChange={(v) => void handleBellKitChange(v)}
+              options={BELL_KITS.map((k) => ({
+                value: k.id,
+                label: `${k.name} — ${k.description}`
+              }))}
+            />
+          </div>
+          <Divider style={{ margin: 0 }} />
+          <div>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+              超时语音警告：到点/某方超时时用本地语音播报（「时间到」「正方时间到」等），不联网
+            </Text>
+            <Space size="large">
+              <span>
+                <Switch
+                  checked={timeoutTts.enabled}
+                  onChange={(checked) => void handleTtsEnabledChange(checked)}
+                />
+                <Text style={{ marginLeft: 8 }}>开启超时语音播报</Text>
+              </span>
+              <span>
+                <Text type="secondary">音量：</Text>
+                <Slider
+                  style={{ width: 220, display: 'inline-block', marginLeft: 8 }}
+                  min={0}
+                  max={100}
+                  value={timeoutTts.volume}
+                  onChange={(v) => void handleTtsVolumeChange(v)}
+                />
+              </span>
+            </Space>
+          </div>
+        </Space>
       </Card>
 
       {/* 录音存放位置 */}

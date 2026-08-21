@@ -407,6 +407,9 @@ export default function BigScreenTimer({
   const isWarning = state.remainingMs <= 30 * 1000 && state.remainingMs > 0
   const isOvertime = state.remainingMs <= 0
   const inGrace = typeof graceRemainingMs === 'number' && graceRemainingMs > 0
+  // P2-8 大屏优化：带队伍总时长池的赛制，展示正/反方剩余池
+  const showPools =
+    state.affPoolRemainingMs != null && state.negPoolRemainingMs != null
 
   // 颜色优先级：宽限期/超时（红） > 30s 预警（黄） > 默认（白）
   const timerColor = inGrace || isOvertime
@@ -807,6 +810,32 @@ export default function BigScreenTimer({
                       : '待开始'}
               </Text>
             </div>
+
+            {/* P2-8 大屏优化：双方剩余用时池（仅带队伍总时长池的赛制展示） */}
+            {showPools && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  gap: 'clamp(16px, 4vw, 48px)',
+                  marginTop: 'clamp(8px, 2vh, 20px)',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <Text style={{ fontSize: 'clamp(16px, 2vw, 26px)' }}>
+                  <span style={{ color: t.affColor, fontWeight: 700 }}>{affName}池</span>
+                  <span style={{ marginLeft: 'clamp(6px, 1vw, 12px)', color: '#fff', fontWeight: 600 }}>
+                    {formatMinutes(Math.max(0, state.affPoolRemainingMs ?? 0))}
+                  </span>
+                </Text>
+                <Text style={{ fontSize: 'clamp(16px, 2vw, 26px)' }}>
+                  <span style={{ color: t.negColor, fontWeight: 700 }}>{negName}池</span>
+                  <span style={{ marginLeft: 'clamp(6px, 1vw, 12px)', color: '#fff', fontWeight: 600 }}>
+                    {formatMinutes(Math.max(0, state.negPoolRemainingMs ?? 0))}
+                  </span>
+                </Text>
+              </div>
+            )}
           </div>
         )}
 

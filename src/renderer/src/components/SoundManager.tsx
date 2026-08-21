@@ -9,6 +9,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BellAsset, BellDef } from '../../../shared/types'
 import { useToast } from '../hooks/useToast'
+import { useSettingsStore } from '../stores/settingsStore'
+import {
+  getBellKitFromSettings,
+  programDuration,
+  type BellKitToneStep,
+  type BuiltinBellSound
+} from '../utils/timer-bell-kits'
 
 /** BGM 轨道 ID */
 export type BgmTrackId = 'ethereal' | 'solemn' | 'stirring'
@@ -21,21 +28,8 @@ export interface BgmPlayOptions {
   volume?: number
 }
 
-/**
- * 内置音时长（毫秒）— 与 playTone 调用参数一致。
- *
- * 用于 playBell 返回值，驱动播放进度环动画：
- * - beep：单声 200ms
- * - bell：单声 400ms
- * - double_bell：200ms + 250ms 间隔 + 200ms ≈ 450ms 结束
- * - time_up：600ms + 300ms 间隔 + 600ms ≈ 900ms 结束
- */
-const BUILTIN_BELL_DURATIONS: Record<string, number> = {
-  beep: 200,
-  bell: 400,
-  double_bell: 450,
-  time_up: 900
-}
+/** 内置铃声基础峰值增益（与 P0-1 的 0.3 一致） */
+const BELL_BASE_VOLUME = 0.3
 
 export function useSoundManager() {
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -63,7 +57,21 @@ export function useSoundManager() {
     return audioCtxRef.current
   }, [])
 
-  const playTone = useCallback((frequency: number, durationMs: number, type: OscillatorType = 'sine') => {
+  /**
+   * 播放单段音：
+   * @param frequency 频率 Hz
+   * @param durationMs 持续时长 ms
+   * @param type 波形
+   * @param volume 峰值增益 0-1
+   * @param startAtMs 相对起点延迟 ms
+   */
+  const playTone = useCallback((
+    frequency: number,
+    durationMs: number,
+    type: OscillatorType = 'sine',
+    volume = 0.3,
+    startAtMs = 0
+  ) => {
     const ctx = getCtx()
     const oscillator = ctx.createOscillator()
     const gainNode = ctx.createGain()
@@ -72,14 +80,27 @@ export function useSoundManager() {
     gainNode.connect(ctx.destination)
 
     oscillator.type = type
-    oscillator.frequency.setValueAtTime(frequency, ctx.currentTime)
+    oscillator.frequency.setValueAtTime(frequency, ctx.currentTime + startAtMs / 1000)
 
-    gainNode.gain.setValueAtTime(0.3, ctx.currentTime)
-    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000)
+    gainNode.gain.setValueAtTime(volume, ctx.currentTime + startAtMs / 1000)
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startAtMs / 1000 + durationMs / 1000)
 
-    oscillator.start(ctx.currentTime)
-    oscillator.stop(ctx.currentTime + durationMs / 1000)
+    oscillator.start(ctx.currentTime + startAtMs / 1000)
+    oscillator.stop(ctx.currentTime + startAtMs / 1000 + durationMs / 1000)
   }, [getCtx])
+
+  /** 按合成程序播放一段铃声（P2-8 铃声库） */
+  const playProgram = useCallback((steps: BellKitToneStep[], baseVolume: number) => {
+    for (const step of steps) {
+      playTone(
+        step.freq,
+        step.durMs,
+        step.type ?? 'sine',
+        Math.max(0, Math.min(1, (step.gain ?? 1) * baseVolume)),
+        step.atMs
+      )
+    }
+  }, [playTone])
 
   // 播放自定义铃声：从 bellAPI 获取 data URL 并缓存
   const playCustomBell = useCallback(async (bellId: string): Promise<boolean> => {
@@ -99,9 +120,12 @@ export function useSoundManager() {
     }
   }, [])
 
+  // 当前铃声库（从设置读取，设置页一键切换后即时生效）
+  const bellKit = useSettingsStore((s) => getBellKitFromSettings(s.settings))
+
   // 播放铃声并返回时长（毫秒），用于驱动播放进度环动画。
-  // 自定义音：audio.duration（秒 → 毫秒）；内置音：BUILTIN_BELL_DURATIONS。
-  const playBell = useCallback(async (bell: BellDef): Promise<number> => {
+  // 自定义音：audio.duration（秒 → 毫秒）；内置音：当前铃声库合成程序时长。
+  const playBell = useCallback((bell: BellDef): Promise<number> => {
     // 自定义铃声：sound = 'custom:<id>' 或 customBellId 存在
     const customId =
       bell.customBellId ??
@@ -110,8 +134,8 @@ export function useSoundManager() {
         : null)
 
     if (customId) {
-      const played = await playCustomBell(customId)
-      if (played) {
+      return playCustomBell(customId).then((played) => {
+        if (!played) return 1000
         // 铃声时长通过 audio.duration 获取（秒 → 毫秒）
         // duration 可能为 NaN/Infinity（流式或未加载），回退默认 1000ms
         const audio = audioCacheRef.current.get(customId)
@@ -120,30 +144,19 @@ export function useSoundManager() {
             ? audio.duration * 1000
             : 1000
         return dur
-      }
+      })
     }
 
-    // 回退到内置音（仅当 sound 是已知内置枚举值时）
-    switch (bell.sound) {
-      case 'beep':
-        playTone(880, 200, 'sine')
-        return BUILTIN_BELL_DURATIONS.beep
-      case 'bell':
-        playTone(660, 400, 'triangle')
-        return BUILTIN_BELL_DURATIONS.bell
-      case 'double_bell':
-        playTone(660, 200, 'triangle')
-        setTimeout(() => playTone(660, 200, 'triangle'), 250)
-        return BUILTIN_BELL_DURATIONS.double_bell
-      case 'time_up':
-        playTone(440, 600, 'sawtooth')
-        setTimeout(() => playTone(330, 600, 'sawtooth'), 300)
-        return BUILTIN_BELL_DURATIONS.time_up
-      default:
-        // 未知内置音或仅 custom 枚举值但无 customBellId：静默
-        return 600
+    // 内置音：从当前铃声库取合成程序播放（含声音库切换）
+    const sound = bell.sound as BuiltinBellSound
+    const program = bellKit?.sounds[sound]
+    if (program) {
+      playProgram(program, BELL_BASE_VOLUME)
+      return Promise.resolve(programDuration(program))
     }
-  }, [playTone, playCustomBell])
+    // 未知内置音或仅 custom 枚举值但无 customBellId：静默
+    return Promise.resolve(600)
+  }, [playProgram, playCustomBell, bellKit])
 
   // 刷新自定义铃声列表（铃声管理页增删后调用）
   const refreshBells = useCallback(async () => {

@@ -16,6 +16,7 @@ import type { ToolDefinition } from '@shared/agent-types'
 import type { LLMConfig } from '@shared/agent-types'
 import { STAGE_DEFINITIONS, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
+import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
 import { parseJsonResult } from './judge-common'
 
 /** detect_stage 工具入参 */
@@ -186,7 +187,20 @@ export const detectStageTool: ToolDefinition<DetectStageArgs, DetectStageResult 
       }
 
       try {
-        return { success: true, ...parseDetectResult(content) }
+        const result: DetectStageResult = { success: true, ...parseDetectResult(content) }
+        // 成功即写评审历史（失败静默忽略，不打断工具返回）
+        try {
+          judgeHistoryRepo.create({
+            judgeId: 'ai-debate-helper',
+            toolName: 'detect_stage',
+            stage: result.stage,
+            topic: typeof args.topic === 'string' && args.topic.trim() !== '' ? args.topic.trim() : undefined,
+            resultJson: result as unknown as Record<string, unknown>
+          })
+        } catch {
+          // 忽略历史写入失败
+        }
+        return result
       } catch (e) {
         return {
           success: false,

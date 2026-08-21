@@ -126,7 +126,9 @@ function createInitialState(
     lastBellIndex: 0,
     stageRemainingMsCache: cache,
     affPoolRemainingMs: poolAff,
-    negPoolRemainingMs: poolNeg
+    negPoolRemainingMs: poolNeg,
+    affSpeechCount: 0,
+    negSpeechCount: 0
   }
   if (firstStage?.isFreeDebate) {
     state.affRemainingMs = firstStage.durationMs
@@ -753,6 +755,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
    * - 切换 currentSide 到另一方
    * - 将 remainingMs 设为另一方的剩余时间
    * - 重置 lastBellIndex（铃声重新检查）
+   * - 发言次数记录：每次切到某方开始发言时，该方发言次数 +1
+   *   （正/反方各自计数；与复位语义一致：reset 归零，resetStage 归零）
    * - Critical-5 修复：onStateChange 由 useEffect 统一触发，无需手动 queueMicrotask
    */
   const switchSide = useCallback(() => {
@@ -772,6 +776,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
         remainingMs: nextRemaining,
         affRemainingMs: newAff,
         negRemainingMs: newNeg,
+        // 每次「切到某方开始发言」时该方 +1
+        affSpeechCount: (prev.affSpeechCount ?? 0) + (next === 'aff' ? 1 : 0),
+        negSpeechCount: (prev.negSpeechCount ?? 0) + (next === 'neg' ? 1 : 0),
         lastBellIndex: 0
       }
     })
@@ -876,6 +883,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
         nextState.affRemainingMs = stage.durationMs
         nextState.negRemainingMs = stage.durationMs
         nextState.currentSide = resolveInitialSide(stage)  // H1: 用 resolveInitialSide 而非 stage.side
+        // 发言次数与环节时间一并重置归零（重新开始本次自由辩论）
+        nextState.affSpeechCount = 0
+        nextState.negSpeechCount = 0
       } else {
         nextState.affRemainingMs = undefined
         nextState.negRemainingMs = undefined
@@ -916,6 +926,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     negRemainingMs?: number | null
     affPoolRemainingMs?: number | null
     negPoolRemainingMs?: number | null
+    affSpeechCount?: number | null
+    negSpeechCount?: number | null
     pausedAt?: string | null
   }) => {
     stopRaf()
@@ -978,7 +990,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       affRemainingMs: restoredAff,
       negRemainingMs: restoredNeg,
       affPoolRemainingMs: restoredAffPool,
-      negPoolRemainingMs: restoredNegPool
+      negPoolRemainingMs: restoredNegPool,
+      affSpeechCount: session.affSpeechCount ?? 0,
+      negSpeechCount: session.negSpeechCount ?? 0
     })
     // Critical-5 修复：从 DB 恢复后跳过一次 onStateChange，避免立即写回 DB
     skipPersistRef.current = true

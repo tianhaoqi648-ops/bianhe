@@ -22,6 +22,12 @@ import { timerSessionRepo } from '../db/repository/timer-session.repo'
 import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../db/repository/undo-log.repo'
+import { judgeHistoryRepo } from '../db/repository/judge-history.repo'
+import {
+  findForBackup as badgeFindForBackup,
+  encodeBadgeFiles as badgeEncodeBadgeFiles,
+  restoreBackup as badgeRestoreBackup
+} from './badge-storage'
 import {
   BACKUP_CATEGORIES,
   BACKUP_RESTORE_ORDER,
@@ -33,7 +39,9 @@ import type {
   BackupPackage,
   BackupPreviewResult,
   BackupImportResult,
-  BackupCategory
+  BackupCategory,
+  BadgeItem,
+  TeamBadgeMap
 } from '../../shared/types'
 import { bulkInsert, clearTable, TABLE_COLUMNS } from '../db/repository/utils'
 import { version as APP_VERSION } from '../../../package.json'
@@ -100,6 +108,19 @@ export function exportBackup(params: BackupParams): BackupPackage {
       tables.batch_edit_history = batchData.batch_edit_history
       tables.batch_edit_history_item = batchData.batch_edit_history_item
       tables.undo_log = undoLogRepo.findAllForBackup()
+    }
+
+    if (cats.includes('judge_history')) {
+      tables.judge_history = judgeHistoryRepo.findAllForBackup()
+    }
+
+    if (cats.includes('badges')) {
+      const badgeData = badgeFindForBackup()
+      // badges 为 index.json 注册表（条目数组）；team_bindings 为队伍→队徽绑定；
+      // badge_files 为自定义队徽文件的 { 文件名: base64 } 字典（用于还原文件本体）
+      tables.badges = badgeData.registry
+      tables.team_bindings = badgeData.bindings
+      tables.badge_files = badgeEncodeBadgeFiles(badgeData.fileNames)
     }
   })
   tx()
@@ -208,6 +229,7 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
   let skipped = 0
   let overwritten = 0
   let bellFilesRestored = 0
+  let badgeFilesRestored = 0
 
   const db = getDb()
   // Bug P1-4: clear_rebuild 策略下临时禁用外键约束，
@@ -225,7 +247,9 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
         if (!config) continue
         // 反向清空（先子表后父表）
         for (const table of [...config.tables].reverse()) {
-          if (pkg.tables[table]) {
+          // 仅清空实际 DB 表；badges 类别的 badges/team_bindings/badge_files 为
+          // 文件型虚拟表（非 TABLE_COLUMNS 白名单内），需跳过，由 restoreBackup 统一还原。
+          if (pkg.tables[table] && TABLE_COLUMNS[table]) {
             clearTable(table)
           }
         }
@@ -238,7 +262,8 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
       if (!config) continue
       for (const table of config.tables) {
         const rows = pkg.tables[table]
-        if (!Array.isArray(rows) || rows.length === 0) continue
+        // 跳过空表 / 非数组表 / 非 DB 白名单内的文件型虚拟表（如 badges 三张虚拟表）
+        if (!Array.isArray(rows) || rows.length === 0 || !TABLE_COLUMNS[table]) continue
         // bell_assets 表：剥离 file_missing 标记字段（仅用于备份展示，非 DB 实际列）
         // 缺失音频文件的行仍按原 row 数据导入，不报错；下次导出时会重新检查文件存在性
         const cleanRows =
@@ -288,7 +313,25 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
     )
   }
 
-  return { inserted, skipped, overwritten, bellFilesRestored }
+  // 队徽库还原同样移到 DB 事务外（磁盘文件 I/O）：
+  // 先完成 DB 事务，再写队徽文件 + index.json + team-bindings.json，
+  // 文件写入失败不应回滚已成功的 DB 导入。
+  if (
+    (catsToImport as readonly string[]).includes('badges') &&
+    pkg.tables.badges
+  ) {
+    badgeFilesRestored = badgeRestoreBackup(
+      {
+        registry: pkg.tables.badges as BadgeItem[],
+        bindings: pkg.tables.team_bindings as TeamBadgeMap | undefined,
+        files: pkg.tables.badge_files as Record<string, string> | undefined
+      },
+      undefined,
+      params.strategy
+    )
+  }
+
+  return { inserted, skipped, overwritten, bellFilesRestored, badgeFilesRestored }
 }
 
 /**
@@ -318,6 +361,17 @@ export function getBackupStats(): Record<string, number> {
   const db = getDb()
   for (const cat of BACKUP_CATEGORIES) {
     let total = 0
+    // badges 为文件型数据（非 DB 表），单独统计注册表 + 绑定数量
+    if (cat.key === 'badges') {
+      try {
+        const badgeData = badgeFindForBackup()
+        total = badgeData.registry.length + Object.keys(badgeData.bindings).length
+      } catch (e) {
+        console.warn('[backup-service] getBackupStats: 队徽统计失败', e)
+      }
+      stats[cat.key] = total
+      continue
+    }
     for (const table of cat.tables) {
       // P4 修复：表名白名单校验，防止 cat.tables 配置错误导致 SQL 注入
       if (!TABLE_COLUMNS[table]) {

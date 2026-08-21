@@ -39,9 +39,10 @@ import {
 } from '@ant-design/icons'
 import { useFormatStore } from '../stores/formatStore'
 import { useTimerStore } from '../stores/timerStore'
-import { useSettingsStore, getTimerBackgroundSetting, getBgmSetting } from '../stores/settingsStore'
+import { useSettingsStore, getTimerBackgroundSetting, getBgmSetting, getTimeoutTtsSetting } from '../stores/settingsStore'
 import type { TimerMatchup } from '../stores/timerStore'
 import { useTimerEngine } from '../utils/useTimerEngine'
+import { buildTimeoutSpeech, speakTimeout } from '../utils/timeout-tts'
 import { useSoundManager } from '../components/SoundManager'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useHotkeys } from '../hooks/useHotkeys'
@@ -76,7 +77,7 @@ import {
 } from '../../../shared/match-recording'
 import { resolveBackgroundCss } from '../../../shared/timer-backgrounds'
 import type { TimerTheme, BackgroundFile, DrawSessionItem, MatchRecordingMarker, Event as SharedEvent, Round as SharedRound, Match as SharedMatch, DebateFormat } from '../../../shared/types'
-import type { StageDef, BellDef } from '../../../shared/debate-formats/types'
+import type { StageDef, BellDef, StageSide } from '../../../shared/debate-formats/types'
 
 /**
  * P2-43 修复：DrawPage → TimerPage 跳转上下文
@@ -136,6 +137,11 @@ export default function TimerPage() {
   // P3.1 Task 5：BGM 设置（volume / defaultTrack）
   const bgmSetting = useMemo(
     () => getBgmSetting(settings),
+    [settings]
+  )
+  // P2-8：超时语音警告设置（enabled / volume）
+  const timeoutTts = useMemo(
+    () => getTimeoutTtsSetting(settings),
     [settings]
   )
   // 自定义背景文件列表（由 backgroundAPI.list() 拉取，传给 resolveBackgroundCss）
@@ -452,11 +458,23 @@ export default function TimerPage() {
     markersRef.current.push(marker)
   }
 
+  // P2-8：镜像引擎 currentSide，供 onBell 闭包读取最新发言方（避免 TDZ/闭包过期）
+  const timerSideRef = useRef<string | null>(null)
+
   const engine = useTimerEngine({
     format: stableFormat,
     callbacks: {
-      onBell: (_stageIdx, bell) => {
-        playBell(bell)
+      onBell: (stageIdx, bell) => {
+        void playBell(bell)
+        // P2-8：到点 / 某方超时本地语音播报
+        if (bell.atMs === 0 && timeoutTts.enabled) {
+          const stage = stableFormat.stages[stageIdx]
+          const msg = buildTimeoutSpeech(
+            stage?.side as StageSide | undefined,
+            timerSideRef.current as StageSide | undefined
+          )
+          speakTimeout(msg, timeoutTts.volume)
+        }
       },
       onStageStart: (stageIdx) => {
         void handleStageEnter(stageIdx)
@@ -480,7 +498,10 @@ export default function TimerPage() {
           negRemainingMs: state.negRemainingMs ?? null,
           // 持久化每队总时长池剩余
           affPoolRemainingMs: state.affPoolRemainingMs ?? null,
-          negPoolRemainingMs: state.negPoolRemainingMs ?? null
+          negPoolRemainingMs: state.negPoolRemainingMs ?? null,
+          // 持久化自由辩论发言次数
+          affSpeechCount: state.affSpeechCount ?? null,
+          negSpeechCount: state.negSpeechCount ?? null
         }
         // 指纹守卫：若状态未变化则跳过 updateSessionState，避免循环
         const fingerprint = JSON.stringify(opts)
@@ -493,6 +514,8 @@ export default function TimerPage() {
       }
     }
   })
+  // 每帧同步最新发言方到 ref（供 onBell 内 TTS 播报读取）
+  timerSideRef.current = engine.state.currentSide
 
   const handleStart = useCallback(async () => {
     if (!selectedFormat) {
@@ -1570,12 +1593,25 @@ export default function TimerPage() {
 
                     {/* Task 11：自由辩论双进度条 — 计时器下方，环节列表上方 */}
                     {currentStage?.isFreeDebate && (
-                      <FreeDebateProgressBar
-                        proRemainingMs={engine.state.affRemainingMs ?? engine.state.remainingMs}
-                        conRemainingMs={engine.state.negRemainingMs ?? engine.state.remainingMs}
-                        totalMs={currentStage.durationMs}
-                        activeSide={engine.state.currentSide}
-                      />
+                      <>
+                        <FreeDebateProgressBar
+                          proRemainingMs={engine.state.affRemainingMs ?? engine.state.remainingMs}
+                          conRemainingMs={engine.state.negRemainingMs ?? engine.state.remainingMs}
+                          totalMs={currentStage.durationMs}
+                          activeSide={engine.state.currentSide}
+                        />
+                        {/* 自由辩论发言次数：正/反方各自累计 */}
+                        <div style={{ textAlign: 'center', marginTop: spacing.sm }}>
+                          <Space size="middle">
+                            <Tag color="processing" style={{ fontSize: fontSize.caption, marginInlineEnd: 0 }}>
+                              正方发言 {engine.state.affSpeechCount ?? 0} 次
+                            </Tag>
+                            <Tag color="error" style={{ fontSize: fontSize.caption, marginInlineEnd: 0 }}>
+                              反方发言 {engine.state.negSpeechCount ?? 0} 次
+                            </Tag>
+                          </Space>
+                        </div>
+                      </>
                     )}
                   </>
                 )}

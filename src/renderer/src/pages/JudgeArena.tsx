@@ -15,7 +15,8 @@
 //   - 环节「自动识别」：detect_stage 识别当前稿子环节并回填下拉
 // ============================================================
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Typography,
   Button,
@@ -37,18 +38,30 @@ import {
   ThunderboltOutlined,
   CloseOutlined,
   UploadOutlined,
-  AudioOutlined
+  AudioOutlined,
+  DownloadOutlined
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import { JUDGES } from '../../../shared/ai-judges'
 import { STAGE_DEFINITIONS, type DebateStageType } from '../../../shared/debate-stages'
-import type { Event, Match, MatchAiReview, Round, SttEngine } from '../../../shared/types'
+import type {
+  Event,
+  Match,
+  MatchAiReview,
+  Round,
+  SttEngine,
+  JudgeHistoryRecord,
+  JudgeHistoryCreateInput,
+  JudgeHistoryFilter
+} from '../../../shared/types'
 import { STT_ENGINE_KEY, STT_MODEL_KEY } from '../../../shared/types'
+import { buildJudgeReplayHtml } from '../../../shared/replay-html'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useToast } from '../hooks/useToast'
 import {
   JudgeResultCardByTool,
-  STAGE_NAMES
+  STAGE_NAMES,
+  type JudgeMatchResult
 } from '../components/agent/judge-result-cards'
 import {
   getAvailableActions,
@@ -56,6 +69,17 @@ import {
   type JudgeArenaFormState,
   type JudgeAction
 } from './judgeArenaLogic'
+import {
+  buildJudgeHistoryInput,
+  judgeMatchCanWriteBack,
+  mapJudgeMatchToMatchAiReview,
+  judgeHistoryToolLabel
+} from './judgeHistoryLogic'
+import {
+  resolveJudgePreBind,
+  type JudgePreBindIntent,
+  type JudgePreBindSources
+} from './judgePreBindLogic'
 
 /** preload 暴露的 agent API（window.agent 类型未在 index.d.ts 声明，用 cast） */
 function getAgentAPI(): { runTool: (req: unknown) => Promise<{ success: boolean; code?: string; message?: string; data?: unknown }>; cancelTool: () => Promise<void> } | null {
@@ -108,6 +132,119 @@ const ACTION_BUTTONS: Array<{ action: JudgeAction; label: string; icon: React.Re
   { action: 'judge_debate', label: '双方评审', icon: <AuditOutlined />, tooltip: '分别录入正、反方完整辩词后，双方一起评审（胜负判定 + 五维对比）' }
 ]
 
+/** 持方枚举 → 中文（复盘报告用） */
+function sideName(side: string | null | undefined): string {
+  if (side === 'aff') return '正方'
+  if (side === 'neg') return '反方'
+  return ''
+}
+
+/**
+ * P0-3：把「转写分段 + 整场评审结果」组装成结构化复盘报告（Markdown）。
+ * 对缺失数据做空态兜底（不抛错），保证任何情况下都能导出一份结构完整的报告。
+ */
+function buildJudgeReportMarkdown(
+  timeline: MatchTimelineSeg[],
+  result: unknown,
+  affName?: string | null,
+  negName?: string | null,
+  topicTitle?: string | null
+): { content: string; defaultName: string } {
+  const lines: string[] = []
+  const data = result && typeof result === 'object' ? (result as JudgeMatchResult) : null
+
+  const topic = topicTitle?.trim() || data?.topic?.trim() || '(未填写辩题)'
+  const aff = affName?.trim() || '正方'
+  const neg = negName?.trim() || '反方'
+  const winnerLabel = data?.verdict
+    ? data.verdict.winner === 'aff'
+      ? `正方（${aff}）`
+      : data.verdict.winner === 'neg'
+        ? `反方（${neg}）`
+        : '平局'
+    : '素材不足，未判定'
+
+  lines.push(`# 辩论复盘报告`)
+  lines.push('')
+  lines.push(`- **辩题**：${topic}`)
+  lines.push(`- **对阵**：${aff}（正方） vs ${neg}（反方）`)
+  lines.push(`- **评委**：${data?.judgeName ? `「${data.judgeName}」` : 'AI 裁判'}`)
+  lines.push(`- **判定结果**：${winnerLabel}`)
+  if (data?.bestSpeaker) lines.push(`- **最佳辩手**：${data.bestSpeaker}`)
+  lines.push(`- **评审时间**：${new Date().toLocaleString()}`)
+  lines.push('')
+
+  // 转写时间线
+  const filledSegs = timeline.filter((t) => t.content.trim() !== '')
+  lines.push(`## 一、全场转写（${filledSegs.length} 段）`)
+  if (filledSegs.length === 0) {
+    lines.push('> 暂无可用转写内容。')
+  } else {
+    filledSegs.forEach((seg, i) => {
+      const stageLabel = STAGE_NAMES[seg.stage ?? ''] || seg.stageName || seg.stage || `第 ${i + 1} 段`
+      const who = [sideName(seg.side), seg.speaker].filter(Boolean).join(' · ')
+      lines.push(`### ${stageLabel}${who ? ` — ${who}` : ''}`)
+      if (seg.tsMs != null) lines.push(`> 时间：${Math.round(seg.tsMs / 1000)}s`)
+      lines.push(seg.content.trim())
+      lines.push('')
+    })
+  }
+
+  // 五维评分
+  lines.push(`## 二、五维评分`)
+  if (data?.dimensions && data.dimensions.length > 0) {
+    lines.push(`| 维度 | 正方（${aff}） | 反方（${neg}） | 评语 |`)
+    lines.push(`| --- | --- | --- | --- |`)
+    data.dimensions.forEach((d) => {
+      lines.push(
+        `| ${d.name || d.key || '维度'} | ${d.affScore} | ${d.negScore} | ${(d.comment || '').replace(/\n/g, ' ')  } |`
+      )
+    })
+  } else {
+    lines.push('> 暂无五维评分数据。')
+  }
+  lines.push('')
+
+  // 逐环节点评
+  lines.push(`## 三、逐环节点评`)
+  if (data?.stageVerdicts && data.stageVerdicts.length > 0) {
+    data.stageVerdicts.forEach((sv) => {
+      const winLabel = sv.winner === 'aff' ? `正方（${aff}）` : sv.winner === 'neg' ? `反方（${neg}）` : '平局'
+      lines.push(`### ${STAGE_NAMES[sv.stage] || sv.stage || '环节'}`)
+      lines.push(`- 胜方：${winLabel}（置信度 ${sv.confidence != null ? Math.round(sv.confidence * 100) : '?'}%）`)
+      if (sv.comment) {
+        lines.push(`- 点评：${sv.comment}`)
+      }
+      lines.push('')
+    })
+  } else {
+    lines.push('> 暂无逐环节点评数据。')
+    lines.push('')
+  }
+
+  // AI 总结建议
+  lines.push(`## 四、AI 建议与总结`)
+  if (data?.verdict?.reason?.trim()) {
+    lines.push(`**判定理由**：${data.verdict.reason.trim()}`)
+    lines.push('')
+  }
+  if (data?.insufficientReason?.trim()) {
+    lines.push(`> 素材不足说明：${data.insufficientReason.trim()}`)
+    lines.push('')
+  }
+  if (data?.summary?.trim()) {
+    lines.push(data.summary.trim())
+  } else {
+    lines.push('> 暂无总结内容。')
+  }
+  lines.push('')
+
+  const safeAff = aff.replace(/[\\/:*?"<>|]/g, '')
+  const safeNeg = neg.replace(/[\\/:*?"<>|]/g, '')
+  const defaultName = `辩论复盘_${safeAff}_vs_${safeNeg}_${new Date().toISOString().slice(0, 10)}`
+  return { content: lines.join('\n'), defaultName }
+}
+
 export default function JudgeArena(): JSX.Element {
   const { token } = theme.useToken()
 
@@ -139,6 +276,12 @@ export default function JudgeArena(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   /** 「本场录音转文字」进行中（独立于 runTool 的 running） */
   const [transcribing, setTranscribing] = useState(false)
+
+  // ---------- 评审历史（T3） ----------
+  const [history, setHistory] = useState<JudgeHistoryRecord[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  /** 当前展开查看的历史条目 id（只读重开） */
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
 
   // ---------- 配置 ----------
   const apiKey = useSettingsStore((s) => s.aiConfig.apiKey)
@@ -179,6 +322,49 @@ export default function JudgeArena(): JSX.Element {
         // 忽略赛事加载失败，绑定区保持为空
       })
   }, [])
+
+  // T4 预绑定：从路由读取当前路由位置，供下方 effect 读取 state/query
+  const location = useLocation()
+
+  // ---------- 预绑定（T4）：从路由 state/query 读三元组，events 就绪后校验并选中三级 ----------
+  // 只有预绑定到已存在事件/轮次/场次才选中；ID 对不上则静默回退「未绑定」（不报错不弹窗）。
+  const appliedPreBindRef = useRef(false)
+  useEffect(() => {
+    if (appliedPreBindRef.current) return
+    const st = location.state as JudgePreBindIntent | null
+    const sp = new URLSearchParams(location.search)
+    const intent: JudgePreBindIntent = {
+      eventId: st?.eventId ?? sp.get('eventId'),
+      roundId: st?.roundId ?? sp.get('roundId'),
+      matchId: st?.matchId ?? sp.get('matchId')
+    }
+    // 赛事未就绪或 eventId 不存在 → 等待 events 加载 / 静默回退
+    const event = events.find((e) => e.id === intent.eventId)
+    if (!event) return
+    appliedPreBindRef.current = true
+    const w = window as unknown as {
+      eventAPI?: { listRoundsByEvent: (id: string) => Promise<{ success: boolean; data?: Round[] }> }
+      matchAPI?: { listByEvent: (id: string) => Promise<{ success: boolean; data?: Match[] }> }
+    }
+    void (async () => {
+      const [rRes, mRes] = await Promise.all([
+        w.eventAPI?.listRoundsByEvent(event.id),
+        w.matchAPI?.listByEvent(event.id)
+      ])
+      const loadedRounds: Round[] = rRes?.success && Array.isArray(rRes.data) ? rRes.data : []
+      const loadedMatches: Match[] = mRes?.success && Array.isArray(mRes.data) ? mRes.data : []
+      setRounds(loadedRounds)
+      setMatchList(loadedMatches)
+      const sources: JudgePreBindSources = { rounds: loadedRounds, matches: loadedMatches }
+      const resolved = resolveJudgePreBind(intent, sources)
+      if (!resolved.matchId || !resolved.boundMatch) return // 场次对不上 → 静默回退未绑定
+      setBoundEventId(resolved.eventId ?? event.id)
+      setBoundRoundId(resolved.roundId)
+      setBoundMatchId(resolved.matchId)
+      setBoundMatch(resolved.boundMatch)
+      setTimeline([])
+    })()
+  }, [events, location])
 
   // 缓存同步：绑定状态或 match 变化后刷新本场快照（含 teamNames/recordingMeta/markers）
   const boundMatchRef = useMemo(() => boundMatch, [boundMatch])
@@ -224,6 +410,117 @@ export default function JudgeArena(): JSX.Element {
     setBoundMatch(m)
     // 切换场次后清空旧时间线素材
     setTimeline([])
+  }
+
+  // ---------- 评审历史（T3） ----------
+
+  /** preload 暴露的 judgeAPI（window.judgeAPI 类型已在 index.d.ts 声明） */
+  const judgeHistoryApi = useCallback(() => {
+    const w = window as unknown as {
+      judgeAPI?: {
+        listHistory: (filter?: JudgeHistoryFilter) => Promise<{ success: boolean; data?: JudgeHistoryRecord[] | null; error?: string }>
+        saveHistory: (input: JudgeHistoryCreateInput) => Promise<{ success: boolean; data?: JudgeHistoryRecord | null; error?: string }>
+        deleteHistory: (id: string) => Promise<{ success: boolean; error?: string }>
+      }
+    }
+    return w.judgeAPI ?? null
+  }, [])
+
+  /** 刷新评审历史：绑定场次时按 binding 筛选，未绑定则列出全部（失败静默） */
+  const refreshHistory = useCallback((): void => {
+    const api = judgeHistoryApi()
+    if (!api) return
+    setHistoryLoading(true)
+    const filter: JudgeHistoryFilter | undefined = boundMatchId
+      ? {
+          eventId: boundEventId ?? null,
+          roundId: boundRoundId ?? null,
+          matchId: boundMatchId ?? null
+        }
+      : undefined
+    api
+      .listHistory(filter)
+      .then((res) => {
+        if (res.success && Array.isArray(res.data)) setHistory(res.data ?? [])
+      })
+      .catch(() => {
+        // 加载失败静默，历史区保持为空
+      })
+      .finally(() => setHistoryLoading(false))
+  }, [judgeHistoryApi, boundEventId, boundRoundId, boundMatchId])
+
+  // 挂载 + 绑定变化时刷新历史（未绑定即全部）
+  useEffect(() => {
+    refreshHistory()
+  }, [refreshHistory])
+
+  /** 裁判工具成功结果自动落库（静默失败，不打断流程） */
+  const saveResultHistory = (toolName: string, result: unknown): void => {
+    const api = judgeHistoryApi()
+    if (!api) return
+    const speechTool = toolName === 'judge_speech' || toolName === 'simulate_opponent' || toolName === 'detect_stage'
+    const input = buildJudgeHistoryInput({
+      toolName,
+      result,
+      eventId: boundEventId ?? null,
+      roundId: boundRoundId ?? null,
+      matchId: boundMatchId ?? null,
+      judgeId: judge.id,
+      // 环节/持方快照：仅面向单方稿的工具记录表单中的环节与持方
+      stage: toolName === 'judge_speech' || toolName === 'simulate_opponent' ? (stage ?? null) : null,
+      side: speechTool ? side : null,
+      topic: topic.trim() || boundMatchRef?.topicTitle || null
+    })
+    api
+      .saveHistory(input)
+      .then(() => refreshHistory())
+      .catch(() => {
+        // 落库失败静默忽略，不打断评审流程
+      })
+  }
+
+  /** 删除单条评审历史 */
+  const handleDeleteHistory = async (id: string): Promise<void> => {
+    const api = judgeHistoryApi()
+    if (!api) return
+    try {
+      const res = await api.deleteHistory(id)
+      if (res.success) {
+        setHistory((prev) => prev.filter((h) => h.id !== id))
+        if (expandedHistoryId === id) setExpandedHistoryId(null)
+        toast.success('评审历史已删除')
+      } else {
+        toast.error(res.error || '删除评审历史失败')
+      }
+    } catch (e) {
+      toast.error(`删除评审历史失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /** 从一条 judge_match 历史写回该场 AI 评审（复用映射口径；不覆盖人工赛果） */
+  const handleWriteBackFromHistory = async (record: JudgeHistoryRecord): Promise<void> => {
+    if (!boundMatchId) {
+      toast.warning('未绑定场次，无法写回')
+      return
+    }
+    if (!judgeMatchCanWriteBack(record)) {
+      toast.warning('该历史无有效判定（素材不足或非整场评审），无法写回')
+      return
+    }
+    const review = mapJudgeMatchToMatchAiReview(record.resultJson, 'transcript')
+    if (!review) {
+      toast.warning('该历史无可写回的有效赛果')
+      return
+    }
+    const w = window as unknown as {
+      matchAPI?: { setAiReview: (id: string, r: MatchAiReview) => Promise<{ success: boolean; error?: string }> }
+    }
+    const res = await w.matchAPI?.setAiReview(boundMatchId, review)
+    if (res?.success) {
+      toast.success('AI 整场评审已写回该场（不覆盖人工赛果）')
+    } else {
+      toast.error(res?.error || 'AI 评审写回失败')
+    }
   }
 
   /** 载入本场录音标记 → 时间线素材（content 留空供用户补转文字） */
@@ -370,32 +667,14 @@ export default function JudgeArena(): JSX.Element {
       toast.warning('尚未执行整场评审（judge_match），请先执行后再写回')
       return
     }
-    const data = lastJudgeMatchResult as Record<string, unknown>
-    const verdict = data.verdict as { winner?: 'aff' | 'neg'; reason?: string } | null | undefined
     // 素材不足以判定的整场评审（verdict===null）无可写回的赛果，直接中止
-    if (!verdict || typeof verdict !== 'object') {
-      toast.warning('本次整场评审素材不足、无法判定，暂无有效赛果可写回')
-      return
-    }
-    const summary = typeof data.summary === 'string' ? data.summary : ''
-    const reason = typeof verdict?.reason === 'string' ? verdict.reason : ''
     const source: MatchAiReview['source'] = timeline.some((t) => t.content.trim() !== '')
       ? 'recording'
       : 'transcript'
-    const review: MatchAiReview = {
-      winner: verdict?.winner === 'aff' || verdict?.winner === 'neg' ? verdict.winner : 'draw',
-      explanation: reason || summary || '（AI 评审完成，无判定说明）',
-      reviewedAt: new Date().toISOString(),
-      judgeName: typeof data.judgeName === 'string' ? data.judgeName : undefined,
-      bestSpeaker:
-        typeof data.bestSpeaker === 'string' && data.bestSpeaker !== ''
-          ? data.bestSpeaker
-          : null,
-      dimensions:
-        Array.isArray(data.dimensions) ? (data.dimensions as MatchAiReview['dimensions']) : null,
-      stageVerdicts:
-        Array.isArray(data.stageVerdicts) ? (data.stageVerdicts as MatchAiReview['stageVerdicts']) : null,
-      source
+    const review = mapJudgeMatchToMatchAiReview(lastJudgeMatchResult, source)
+    if (!review) {
+      toast.warning('本次整场评审素材不足、无法判定，暂无有效赛果可写回')
+      return
     }
     const w = window as unknown as {
       matchAPI?: { setAiReview: (id: string, r: MatchAiReview) => Promise<{ success: boolean; error?: string }> }
@@ -405,6 +684,94 @@ export default function JudgeArena(): JSX.Element {
       toast.success('AI 整场评审已写回该场（不覆盖人工赛果）')
     } else {
       toast.error(res?.error || 'AI 评审写回失败')
+    }
+  }
+
+  /** 一键导出复盘报告（P0-3）：组装 Markdown → IPC 弹保存对话框 + 写 .md 文件 */
+  const handleExportReport = async (): Promise<void> => {
+    if (!lastJudgeMatchResult) {
+      toast.warning('请先完成整场评审（judge_match），再导出复盘')
+      return
+    }
+    const affName = boundMatchRef?.teamAffName
+    const negName = boundMatchRef?.teamNegName
+    const topicTitle = boundMatchRef?.topicTitle
+    const { content, defaultName } = buildJudgeReportMarkdown(
+      timeline,
+      lastJudgeMatchResult,
+      affName,
+      negName,
+      topicTitle
+    )
+    const w = window as unknown as {
+      reportAPI?: {
+        exportJudge: (req: {
+          defaultName: string
+          content: string
+        }) => Promise<{ success: boolean; data?: { filePath: string } | null; error?: string }>
+      }
+    }
+    const api = w.reportAPI
+    if (!api) {
+      toast.error('导出服务未就绪（window.reportAPI 不可用）')
+      return
+    }
+    try {
+      const res = await api.exportJudge({ defaultName, content })
+      if (!res.success) {
+        toast.error(res.error ?? '导出复盘报告失败')
+        return
+      }
+      if (res.data?.filePath) {
+        toast.success(`复盘报告已导出：${res.data.filePath}`)
+      }
+      // res.data === null 表示用户取消保存，此处不报错也不提示
+    } catch (e) {
+      toast.error(`导出复盘报告失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /** 导出复盘为自包含 HTML（P2-9）：组装 HTML → IPC 弹保存对话框 + 写 .html 文件 */
+  const handleExportReviewHtml = async (): Promise<void> => {
+    if (!lastJudgeMatchResult) {
+      toast.warning('请先完成整场评审（judge_match），再导出复盘')
+      return
+    }
+    const affName = boundMatchRef?.teamAffName
+    const negName = boundMatchRef?.teamNegName
+    const topicTitle = boundMatchRef?.topicTitle
+    const { content, defaultName } = buildJudgeReplayHtml(
+      timeline,
+      lastJudgeMatchResult,
+      affName,
+      negName,
+      topicTitle
+    )
+    const w = window as unknown as {
+      reportAPI?: {
+        exportJudgeHtml: (req: {
+          defaultName: string
+          content: string
+        }) => Promise<{ success: boolean; data?: { filePath: string } | null; error?: string }>
+      }
+    }
+    const api = w.reportAPI
+    if (!api) {
+      toast.error('导出服务未就绪（window.reportAPI 不可用）')
+      return
+    }
+    try {
+      const res = await api.exportJudgeHtml({ defaultName, content })
+      if (!res.success) {
+        toast.error(res.error ?? '导出 HTML 复盘失败')
+        return
+      }
+      if (res.data?.filePath) {
+        toast.success(`HTML 复盘已导出：${res.data.filePath}`)
+      }
+      // res.data === null 表示用户取消保存，此处不报错也不提示
+    } catch (e) {
+      toast.error(`导出 HTML 复盘失败：${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
@@ -429,6 +796,8 @@ export default function JudgeArena(): JSX.Element {
           ...prev,
           { id: `${toolName}-${Date.now()}`, toolName, actionLabel, result: res.data }
         ])
+        // 自动落库：裁判工具成功结果写入历史（失败静默，不打断流程）
+        saveResultHistory(toolName, res.data)
         // 特殊：detect_stage 成功后回填环节
         if (toolName === 'detect_stage' && res.data && typeof res.data === 'object') {
           const detected = (res.data as { stage?: DebateStageType }).stage
@@ -591,6 +960,20 @@ export default function JudgeArena(): JSX.Element {
                 icon={<ThunderboltOutlined />}
               >
                 写回该场 AI 评审
+              </Button>
+              <Button
+                disabled={running || transcribing || !lastJudgeMatchResult}
+                onClick={() => void handleExportReport()}
+                icon={<DownloadOutlined />}
+              >
+                导出复盘
+              </Button>
+              <Button
+                disabled={running || transcribing || !lastJudgeMatchResult}
+                onClick={() => void handleExportReviewHtml()}
+                icon={<DownloadOutlined />}
+              >
+                导出 HTML 复盘
               </Button>
             </Space>
             {timeline.length > 0 ? (
@@ -856,6 +1239,107 @@ export default function JudgeArena(): JSX.Element {
           ))}
         </div>
       ) : null}
+
+      {/* 评审历史（T3：只读查看 + 删除 + judge_match 写回该场；不在此页重新触发 LLM） */}
+      <Card
+        size="small"
+        title={
+          <span style={{ fontSize: 13 }}>
+            评审历史
+            <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+              {boundMatchId ? '当前绑定的比赛场次' : '全部记录'}
+            </Typography.Text>
+          </span>
+        }
+        extra={
+          <Button size="small" icon={<ExperimentOutlined />} loading={historyLoading} onClick={() => refreshHistory()}>
+            刷新
+          </Button>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        {historyLoading && history.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 12, color: token.colorTextSecondary }}>
+            <Spin size="small" /> 加载中…
+          </div>
+        ) : history.length === 0 ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            暂无评审历史。裁判工具执行成功后会自动保存在这里，跨页面/重启保留。
+          </Typography.Text>
+        ) : (
+          <div>
+            {history.map((h) => {
+              const expanded = expandedHistoryId === h.id
+              const judgeLabel = judgeHistoryToolLabel(h.toolName)
+              const canWriteBack = boundMatchId && judgeMatchCanWriteBack(h)
+              const winnerLabel = canWriteBack
+                ? (() => {
+                    const v = (h.resultJson as { verdict?: { winner?: 'aff' | 'neg' } } | null)
+                      ?.verdict?.winner
+                    return v === 'aff' ? '正方胜' : '反方胜'
+                  })()
+                : ''
+              return (
+                <div
+                  key={h.id}
+                  style={{
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    marginBottom: 8
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Typography.Link
+                      style={{ fontSize: 13 }}
+                      onClick={() => setExpandedHistoryId(expanded ? null : h.id)}
+                    >
+                      {expanded ? '收起' : '查看'}
+                    </Typography.Link>
+                    <Tag style={{ marginRight: 0, fontSize: 12 }}>{judgeLabel}</Tag>
+                    {h.stage ? <Tag color="geekblue">{STAGE_NAMES[h.stage] ?? h.stage}</Tag> : null}
+                    {h.side ? <Tag color={h.side === 'aff' ? 'blue' : 'orange'}>{h.side === 'aff' ? '正方' : '反方'}</Tag> : null}
+                    {h.toolName === 'judge_match' && canWriteBack ? (
+                      <Tag color="green">{winnerLabel}</Tag>
+                    ) : null}
+                    <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
+                      {h.topic || '（未填写辩题）'}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {h.createdAt ? new Date(h.createdAt).toLocaleString() : ''}
+                    </Typography.Text>
+                    {h.toolName === 'judge_match' ? (
+                      <Button
+                        size="small"
+                        type="primary"
+                        ghost
+                        icon={<ThunderboltOutlined />}
+                        disabled={!canWriteBack}
+                        title={canWriteBack ? '写回该场 AI 评审（不覆盖人工赛果）' : '未绑定场次或该历史无有效判定'}
+                        onClick={() => void handleWriteBackFromHistory(h)}
+                      >
+                        写回该场
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="small"
+                      danger
+                      icon={<CloseOutlined />}
+                      title="删除这条评审历史"
+                      onClick={() => void handleDeleteHistory(h.id)}
+                    />
+                  </div>
+                  {expanded ? (
+                    <div style={{ marginTop: 6 }}>
+                      <JudgeResultCardByTool toolName={h.toolName} result={h.resultJson} />
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
 
       {/* 使用提示 */}
       {results.length === 0 && !running ? (

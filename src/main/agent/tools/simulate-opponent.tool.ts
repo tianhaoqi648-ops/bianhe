@@ -20,6 +20,7 @@ import type { ToolDefinition } from '@shared/agent-types'
 import type { LLMConfig } from '@shared/agent-types'
 import { JUDGE_IDS, getJudgeById } from '@shared/ai-judges'
 import { chat, LLMError } from '../llm-client'
+import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
 import { buildJudgeSystemPrompt, parseJsonResult } from './judge-common'
 
 /** 攻击方式 */
@@ -290,7 +291,7 @@ export const simulateOpponentTool: ToolDefinition<
     // 5. 解析
     try {
       const parsed = parseSimulateResult(content)
-      return {
+      const result: SimulateOpponentResult = {
         success: true,
         judgeId: judge.id,
         judgeName: judge.name,
@@ -299,6 +300,19 @@ export const simulateOpponentTool: ToolDefinition<
         attackMode,
         ...parsed
       }
+      // 成功即写评审历史（失败静默忽略，不打断工具返回）
+      try {
+        judgeHistoryRepo.create({
+          judgeId: judge.id,
+          toolName: 'simulate_opponent',
+          side,
+          topic,
+          resultJson: result as unknown as Record<string, unknown>
+        })
+      } catch {
+        // 忽略历史写入失败
+      }
+      return result
     } catch (e) {
       return {
         success: false,

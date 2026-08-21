@@ -15,6 +15,7 @@ export type ConfigResetCategory =
   | 'hotkeys'
   | 'timerTheme'
   | 'timerBackground'
+  | 'timerBehavior'
   | 'recording'
   | 'autoUpdate'
   | 'stt';
@@ -60,6 +61,10 @@ export const CONFIG_RESET_KEYS: Record<ConfigResetCategory, string[]> = {
   // 计时器背景配置：1 个 key（删除后回退到默认背景 深蓝渐变）
   // 与 src/shared/timer-backgrounds.ts 中 TIMER_BACKGROUND_KEY 保持一致
   timerBackground: ['timer.background'],
+  // P2-8 计时器功能配置：铃声库 + 超时语音警告（删除后回退默认）
+  // 与 src/renderer/src/utils/timer-bell-kits.ts BELL_KIT_KEY /
+  // src/renderer/src/stores/settingsStore.ts TIMEOUT_TTS_KEY 保持一致
+  timerBehavior: ['timer.bellKit', 'timer.tts'],
   // 录音设置：3 个 key
   // 与 src/shared/match-recording.ts 中 RECORDING_DIR_KEY / RECORDING_SEGMENT_KEY / RECORDING_FORMAT_KEY 保持一致
   // 为避免 shared 层 → renderer 层循环依赖，这里硬编码字符串字面量
@@ -100,6 +105,7 @@ export const CONFIG_RESET_CATEGORIES: ConfigResetCategory[] = [
   'hotkeys',
   'timerTheme',
   'timerBackground',
+  'timerBehavior',
   'recording',
   'autoUpdate'
 ];
@@ -123,6 +129,7 @@ export const RESET_CATEGORY_LABELS: Record<ResetCategory, string> = {
   hotkeys: '快捷键设置',
   timerTheme: '计时器主题',
   timerBackground: '计时器背景',
+  timerBehavior: '计时器功能（铃声库/超时语音）',
   recording: '录音设置',
   autoUpdate: '自动更新',
   stt: '转写引擎',
@@ -147,6 +154,7 @@ export const RESET_CATEGORY_DESCRIPTIONS: Record<ResetCategory, string> = {
   hotkeys: '自定义快捷键组合、禁用状态、总开关',
   timerTheme: '正反方称谓、主题色、背景图配置（回退到默认蓝红主题）',
   timerBackground: '计时器小屏与大屏的背景（回退到默认深蓝渐变）',
+  timerBehavior: '铃声库预设、超时语音播报开关与音量（回退默认）',
   recording: '录音存放目录、分段模式、录音格式（回退：默认目录/整场一轨/wav）',
   autoUpdate: '启动时自动检查更新开关（回退：开启）',
   stt: '转写引擎存放目录（回退：默认 userData/stt）',

@@ -41,7 +41,9 @@ export const BACKUP_CATEGORIES = [
   { key: 'timer', label: '计时数据', tables: ['timer_sessions', 'timer_records'] },
   { key: 'formats_bells', label: '赛制与铃声', tables: ['debate_formats', 'bell_assets'] },
   { key: 'settings', label: '设置配置', tables: ['settings'] },
-  { key: 'audit_history', label: '审计与历史', tables: ['audit_log', 'import_batch', 'batch_edit_history', 'batch_edit_history_item', 'undo_log'] }
+  { key: 'audit_history', label: '审计与历史', tables: ['audit_log', 'import_batch', 'batch_edit_history', 'batch_edit_history_item', 'undo_log'] },
+  { key: 'judge_history', label: 'AI 裁判历史', tables: ['judge_history'] },
+  { key: 'badges', label: '队徽库', tables: ['badges', 'team_bindings', 'badge_files'] }
 ] as const
 
 export type BackupCategoryKey = (typeof BACKUP_CATEGORIES)[number]['key']
@@ -64,5 +66,7 @@ export const BACKUP_RESTORE_ORDER: BackupCategoryKey[] = [
   'timer', // 独立
   'formats_bells', // 独立
   'settings', // 独立
-  'audit_history' // 独立
+  'audit_history', // 独立
+  'judge_history', // 独立
+  'badges' // 独立
 ]

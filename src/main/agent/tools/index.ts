@@ -26,6 +26,10 @@ export { judgeMatchTool } from './judge-match.tool'
 export { judgeSpeechTool } from './judge-speech.tool'
 export { detectStageTool } from './detect-stage.tool'
 export { simulateOpponentTool } from './simulate-opponent.tool'
+export { scheduleExportTool } from './schedule-export.tool'
+export { scheduleImportTool } from './schedule-import.tool'
+export { listBadgesTool } from './list-badges.tool'
+export { bindTeamBadgeTool } from './bind-team-badge.tool'
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { searchTopicsTool } from './search-topics.tool'
@@ -45,6 +49,10 @@ import { judgeMatchTool } from './judge-match.tool'
 import { judgeSpeechTool } from './judge-speech.tool'
 import { detectStageTool } from './detect-stage.tool'
 import { simulateOpponentTool } from './simulate-opponent.tool'
+import { scheduleExportTool } from './schedule-export.tool'
+import { scheduleImportTool } from './schedule-import.tool'
+import { listBadgesTool } from './list-badges.tool'
+import { bindTeamBadgeTool } from './bind-team-badge.tool'
 
 /**
  * 全部工具（用于一次性注册）。
@@ -74,5 +82,9 @@ export const allTools: ToolDefinition<any, any>[] = [
   judgeMatchTool,
   judgeSpeechTool,
   detectStageTool,
-  simulateOpponentTool
+  simulateOpponentTool,
+  scheduleExportTool,
+  scheduleImportTool,
+  listBadgesTool,
+  bindTeamBadgeTool
 ]

@@ -60,13 +60,18 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
     'current_stage_index', 'current_side', 'remaining_ms', 'theme_snapshot',
     'label', 'created_at', 'stage_remaining_cache', 'aff_remaining_ms',
     'neg_remaining_ms', 'aff_pool_remaining_ms', 'neg_pool_remaining_ms',
+    'aff_speech_count', 'neg_speech_count',
     'event_name', 'team_aff_name', 'team_neg_name', 'topic_title'
   ],
   timer_records: [
     'id', 'session_id', 'stage_index', 'stage_name', 'side', 'duration_ms',
     'actual_ms', 'started_at', 'ended_at', 'pause_count'
   ],
-  bell_assets: ['id', 'name', 'file_path', 'file_size', 'mime_type', 'duration_ms', 'created_at']
+  bell_assets: ['id', 'name', 'file_path', 'file_size', 'mime_type', 'duration_ms', 'created_at'],
+  judge_history: [
+    'id', 'created_at', 'event_id', 'round_id', 'match_id', 'judge_id',
+    'tool_name', 'stage', 'side', 'topic', 'result_json', 'error'
+  ]
 }
 
 /**

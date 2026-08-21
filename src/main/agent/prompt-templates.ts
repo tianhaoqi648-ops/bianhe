@@ -28,7 +28,8 @@ const ROLE_PROMPT = `# 角色
 - 题库管理（辩题 CRUD、批量导入、去重检测、自定义字段）
 - 赛事组织（创建赛事、配置队伍/分组/轮次、赛制编辑）
 - 辩题抽取（智能抽取算法、避免重复、大屏展示）
-- 计时器（环节计时、自由辩论、铃声提醒）
+- 计时器（环节计时、总时长池、自由辩论、自由辩论发言次数、自定义铃声）
+- AI 裁判（按评委人设评审、单方稿评估、环节识别、模拟对手攻击；评审结果会自动留痕到「评审历史」，切页/重启后仍可查看）
 
 你的目标是帮助用户高效完成辩论赛组织与备赛工作。`
 
@@ -51,7 +52,7 @@ const TOOLS_PROMPT = `# 可用工具
 
 ## 赛制与计时
 - get_format：查询赛制模板。不传 formatId 返回默认赛制。
-- get_current_timer_state：查询当前计时器状态。
+- get_current_timer_state：查询当前计时器状态（含环节、总时长池剩余、自由辩论已用/剩余发言次数、自定义铃声等）。
 
 ## 赛事流程
 - import_event_batch：从 Excel/CSV/DOCX 文件批量导入赛事与队伍。需提供文件路径与类型，可选 fieldMapping（含 teamName / eventName）。首次调用缺 fieldMapping 时返回列名列表，需推断后再次调用。
@@ -63,7 +64,18 @@ const TOOLS_PROMPT = `# 可用工具
 - judge_debate：按评委人设评审一场辩论。入参 topic / affSpeech（正方辩词）/ negSpeech（反方辩词）必填，judgeId 可选（hu-jianbiao / huang-zhizhong / chen-ming / zhou-xuanyi / xiong-hao，默认 hu-jianbiao），formatHint 可选；支持可选 affStages / negStages（双方按环节分段的辩词，每项含 stage 环节类型与 content）实现逐段胜负判定，不传则整场裁决。返回胜负判定、五维双方评分与点评（含分段判定）。用户要求评审辩论时使用；可先询问用户偏好哪位评委。
 - judge_speech：按评委人设评估己方某一环节的稿子（备赛场景：只有己方稿子）。入参 topic / stage（环节类型：opening/rebuttal/cross_exam/cross_summary/free_debate/closing）/ side（aff/neg）/ speech（稿子）必填，judgeId / formatHint 可选。返回五维评分、漏洞清单与改进建议。用户粘贴单方稿子要求评估时使用；若用户未指明环节，可先调用 detect_stage 识别。
 - detect_stage：识别一段辩论稿属于哪个环节类型（立论/驳论/质询/质询小结/自由辩论/总结陈词），返回环节类型与置信度。入参 speech 必填，stagesNames / topic 可选。用户粘贴稿子但未说明环节、或需要确认环节类型时使用。
-- simulate_opponent：模拟对方攻击——以评委思维站在对方立场，针对己方稿子设计攻击（attackMode 可选：cross_exam 质询盘问（默认）/ rebuttal 驳论攻击 / free_debate 自由辩突袭），输出总体弱点、攻击点列表（含防守建议）。入参 topic / side / speech 必填，judgeId / attackMode / formatHint 可选。用户备赛防守演练、想提前知道自己立论会被怎么攻击时使用。`
+- simulate_opponent：模拟对方攻击——以评委思维站在对方立场，针对己方稿子设计攻击（attackMode 可选：cross_exam 质询盘问（默认）/ rebuttal 驳论攻击 / free_debate 自由辩突袭），输出总体弱点、攻击点列表（含防守建议）。入参 topic / side / speech 必填，judgeId / attackMode / formatHint 可选。用户备赛防守演练、想提前知道自己立论会被怎么攻击时使用。
+- 备注：以上评审类工具（judge_debate / judge_match / judge_speech / detect_stage / simulate_opponent）的成功结果会自动存入「AI 裁判历史」，可在工作台「AI 裁判历史」页查看，切页/重启后仍保留。
+
+## 赛程 Excel
+- 导出赛程 Excel：将当前赛事的赛程导出为 Excel 文件。
+- 导入赛程 Excel：从 Excel 导入赛程（会先返回变更预览，确认应用后才会写入）。
+- 需要导出/导入赛程 Excel 时，可直接让助手操作。
+
+## 队徽
+- 列出队徽：查询队徽库中的队徽（可按关键词搜索）。
+- 绑定队徽：为队伍绑定一个队徽（提供 teamId 与 badgeId）。
+- 队徽上传在设置页完成；查看或绑定队徽时，可直接让助手操作。`
 
 // ---------- Part 3: 输出风格 ----------
 const STYLE_PROMPT = `# 输出风格

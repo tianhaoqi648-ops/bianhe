@@ -24,6 +24,7 @@ import type { ToolDefinition, LLMConfig } from '@shared/agent-types'
 import { FIVE_DIMENSIONS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
 import { getStageDefinition, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
+import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
 import {
   buildMatchUserPrompt,
   buildJudgeSystemPrompt,
@@ -423,13 +424,25 @@ export const judgeMatchTool: ToolDefinition<JudgeMatchArgs, JudgeMatchResult | J
       // 5. 解析评分结果
       try {
         const parsed = parseJudgeMatchResult(content)
-        return {
+        const result: JudgeMatchResult = {
           success: true,
           judgeId: judge.id,
           judgeName: judge.name,
           topic,
           ...parsed
         }
+        // 成功即写评审历史（失败静默忽略，不打断工具返回）
+        try {
+          judgeHistoryRepo.create({
+            judgeId: judge.id,
+            toolName: 'judge_match',
+            topic,
+            resultJson: result as unknown as Record<string, unknown>
+          })
+        } catch {
+          // 忽略历史写入失败
+        }
+        return result
       } catch (e) {
         return {
           success: false,

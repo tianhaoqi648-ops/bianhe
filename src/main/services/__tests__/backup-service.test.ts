@@ -71,6 +71,16 @@ vi.mock('../../db/repository/undo-log.repo', () => ({
     findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
   }
 }))
+vi.mock('../../db/repository/judge-history.repo', () => ({
+  judgeHistoryRepo: {
+    findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
+  }
+}))
+vi.mock('../../services/badge-storage', () => ({
+  findForBackup: vi.fn<() => { registry: unknown[]; bindings: Record<string, unknown>; fileNames: string[] }>(),
+  encodeBadgeFiles: vi.fn<() => Record<string, string>>(),
+  restoreBackup: vi.fn<() => number>()
+}))
 
 // ---- mock utils（bulkInsert / clearTable / TABLE_COLUMNS）----
 // P4 修复：补充 TABLE_COLUMNS mock，供 getBackupStats 白名单校验使用
@@ -102,7 +112,8 @@ vi.mock('../../db/repository/utils', () => ({
     import_batch: ['id'],
     batch_edit_history: ['id'],
     batch_edit_history_item: ['id'],
-    undo_log: ['id']
+    undo_log: ['id'],
+    judge_history: ['id']
   } as Record<string, string[]>
 }))
 
@@ -145,6 +156,12 @@ import { timerSessionRepo } from '../../db/repository/timer-session.repo'
 import { importBatchRepo } from '../../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../../db/repository/undo-log.repo'
+import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import {
+  findForBackup as badgeFindForBackup,
+  encodeBadgeFiles as badgeEncodeBadgeFiles,
+  restoreBackup as badgeRestoreBackup
+} from '../../services/badge-storage'
 import { bulkInsert, clearTable } from '../../db/repository/utils'
 import { SUPPORTED_BACKUP_VERSION } from '../../../shared/constants'
 import type {
@@ -223,7 +240,9 @@ describe('backup-service', () => {
       'timer',
       'formats_bells',
       'settings',
-      'audit_history'
+      'audit_history',
+      'judge_history',
+      'badges'
     ]
 
     beforeEach(() => {
@@ -270,6 +289,15 @@ describe('backup-service', () => {
         batch_edit_history_item: [{ id: 'behi1' }]
       })
       vi.mocked(undoLogRepo.findAllForBackup).mockReturnValue([{ id: 'ul1' }])
+      vi.mocked(judgeHistoryRepo.findAllForBackup).mockReturnValue([
+        { id: 'jh1', judge_id: 'j1', result_json: '{"winner":"aff"}' }
+      ])
+      vi.mocked(badgeFindForBackup).mockReturnValue({
+        registry: [{ id: 'custom-1', name: '校徽A', kind: 'custom', fileName: 'a.png' }],
+        bindings: { team1: 'custom-1' },
+        fileNames: ['a.png']
+      })
+      vi.mocked(badgeEncodeBadgeFiles).mockReturnValue({ 'a.png': 'base64badge' })
     })
 
     it('全类别导出包含所有表', () => {
@@ -277,9 +305,9 @@ describe('backup-service', () => {
 
       // 版本号正确
       expect(pkg.version).toBe(SUPPORTED_BACKUP_VERSION)
-      // categories 包含全部 7 个
+      // categories 包含全部 9 个
       expect(pkg.categories).toEqual(allCategories)
-      expect(pkg.categories).toHaveLength(7)
+      expect(pkg.categories).toHaveLength(9)
       // tables 包含所有预期的表 key
       const expectedTables = [
         'topics',
@@ -301,13 +329,24 @@ describe('backup-service', () => {
         'import_batch',
         'batch_edit_history',
         'batch_edit_history_item',
-        'undo_log'
+        'undo_log',
+        'judge_history',
+        'badges',
+        'team_bindings',
+        'badge_files'
       ]
       for (const t of expectedTables) {
         expect(pkg.tables).toHaveProperty(t)
       }
       // bell_files 是 Record<string, string> 类型
       expect(pkg.tables.bell_files).toEqual({ 'bell1.mp3': 'base64content' })
+      // judge_history 与队徽相关表
+      expect(pkg.tables.judge_history).toHaveLength(1)
+      expect(pkg.tables.badges).toEqual([
+        { id: 'custom-1', name: '校徽A', kind: 'custom', fileName: 'a.png' }
+      ])
+      expect(pkg.tables.team_bindings).toEqual({ team1: 'custom-1' })
+      expect(pkg.tables.badge_files).toEqual({ 'a.png': 'base64badge' })
       // exportedAt 是合法 ISO 时间字符串
       const exportedAt = pkg.exportedAt
       expect(typeof exportedAt).toBe('string')
@@ -330,10 +369,17 @@ describe('backup-service', () => {
       expect(pkg.tables).not.toHaveProperty('bell_files')
       expect(pkg.tables).not.toHaveProperty('settings')
       expect(pkg.tables).not.toHaveProperty('audit_log')
+      expect(pkg.tables).not.toHaveProperty('judge_history')
+      expect(pkg.tables).not.toHaveProperty('badges')
+      expect(pkg.tables).not.toHaveProperty('team_bindings')
+      expect(pkg.tables).not.toHaveProperty('badge_files')
       // 其他 repo 不应被调用
       expect(eventRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(drawRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(auditRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(judgeHistoryRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(badgeFindForBackup).not.toHaveBeenCalled()
+      expect(badgeEncodeBadgeFiles).not.toHaveBeenCalled()
     })
 
     it('铃声文件 Base64 编码正确', () => {
@@ -625,6 +671,104 @@ describe('backup-service', () => {
         expect(clearedTables).toContain('topics')
         expect(clearedTables).toContain('topic_custom_fields')
         expect(clearedTables).not.toContain('events')
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('judge_history 表通过 bulkInsert 还原', () => {
+      const pkg = makePkg({
+        categories: ['judge_history'],
+        tables: {
+          judge_history: [
+            { id: 'jh1', judge_id: 'j1', result_json: '{"winner":"aff"}' },
+            { id: 'jh2', judge_id: 'j2' }
+          ]
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(2)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['judge_history']
+        }
+        const result = importBackup(params)
+
+        // clear + bulkInsert 针对 judge_history
+        expect(clearTable).toHaveBeenCalledWith('judge_history')
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'judge_history',
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'jh1' }),
+            expect.objectContaining({ id: 'jh2' })
+          ]),
+          'clear_rebuild'
+        )
+        expect(result.inserted).toBe(2)
+        expect(result.badgeFilesRestored).toBe(0)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('badges 类别还原：调用 restoreBackup，不对虚拟表 bulkInsert，也不 clearTable', () => {
+      const pkg = makePkg({
+        categories: ['badges'],
+        tables: {
+          badges: [{ id: 'custom-1', kind: 'custom', fileName: 'a.png' }],
+          team_bindings: { team1: 'custom-1' },
+          badge_files: { 'a.png': 'base64badge' }
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(0)
+        vi.mocked(badgeRestoreBackup).mockReturnValue(1)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'overwrite_existing',
+          categories: ['badges']
+        }
+        const result = importBackup(params)
+
+        // restoreBackup 以文件/注册/绑定还原
+        expect(badgeRestoreBackup).toHaveBeenCalledWith(
+          {
+            registry: [{ id: 'custom-1', kind: 'custom', fileName: 'a.png' }],
+            bindings: { team1: 'custom-1' },
+            files: { 'a.png': 'base64badge' }
+          },
+          undefined,
+          'overwrite_existing'
+        )
+        // 虚拟表（badges/team_bindings/badge_files）不在 TABLE_COLUMNS 白名单内，
+        // 不应触发 clearTable / bulkInsert
+        expect(clearTable).not.toHaveBeenCalled()
+        expect(bulkInsert).not.toHaveBeenCalled()
+        expect(result.badgeFilesRestored).toBe(1)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('备份不含 badges/未勾选 badges 时不调用 restoreBackup', () => {
+      const pkg = makePkg({
+        categories: ['topics'],
+        tables: { topics: [], topic_custom_fields: [] }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['topics']
+        }
+        importBackup(params)
+        expect(badgeRestoreBackup).not.toHaveBeenCalled()
       } finally {
         cleanup(filePath)
       }

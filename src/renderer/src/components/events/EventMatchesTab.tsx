@@ -14,7 +14,6 @@ import {
   Button,
   Divider,
   Empty,
-  Input,
   Modal,
   Popconfirm,
   Select,
@@ -28,16 +27,16 @@ import {
   PlayCircleOutlined,
   TrophyOutlined,
   RobotOutlined,
+  AuditOutlined,
   DeleteOutlined,
   BookOutlined,
   AudioOutlined,
-  FileTextOutlined,
-  LoadingOutlined
+  ExportOutlined,
+  ImportOutlined
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useEventStore } from '../../stores/eventStore'
 import { useTopicStore } from '../../stores/topicStore'
-import { useSettingsStore } from '../../stores/settingsStore'
 import { useToast } from '../../hooks/useToast'
 import {
   describeRecordingFormatExt,
@@ -48,8 +47,8 @@ import MatchResultModal from './MatchResultModal'
 import MatchVerdictCard from './MatchVerdictCard'
 import type {
   Match,
-  MatchAiReview,
-  MatchWinner
+  ScheduleDiffPreview,
+  ScheduleApplyResult
 } from '../../../../shared/types'
 
 const { Text } = Typography
@@ -89,15 +88,6 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
   // 计分亮牌
   const [resultFor, setResultFor] = useState<Match | null>(null)
 
-  // AI 评审（整场评审：时间线/转文字 → judge_match → 回写；无 AI 时退化为手动判定）
-  const [aiFor, setAiFor] = useState<Match | null>(null)
-  const [aiWinner, setAiWinner] = useState<MatchWinner>('aff')
-  const [aiExplain, setAiExplain] = useState<string>('')
-  // 整场评审素材：每段 content（按 markers 索引对齐）+ 整场转录 + 赛制提示
-  const [aiSegmentTexts, setAiSegmentTexts] = useState<string[]>([])
-  const [aiTranscript, setAiTranscript] = useState<string>('')
-  const [aiFormatHint, setAiFormatHint] = useState<string>('')
-  const [aiRunning, setAiRunning] = useState(false)
   // 已存在 AI 评审的详情查看
   const [aiReviewFor, setAiReviewFor] = useState<Match | null>(null)
 
@@ -126,6 +116,68 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
     if (topicStore.items.length === 0) void topicStore.fetchList({ pageSize: 1000 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId])
+
+  // ---- 赛程 Excel 导出 / 导入（P1-6）----
+  const [exporting, setExporting] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importPreview, setImportPreview] = useState<ScheduleDiffPreview | null>(null)
+  const [importPath, setImportPath] = useState<string | null>(null)
+  const [importWarnings, setImportWarnings] = useState<string[]>([])
+  const [applying, setApplying] = useState(false)
+  const [applyResult, setApplyResult] = useState<ScheduleApplyResult | null>(null)
+
+  const handleExportSchedule = async () => {
+    setExporting(true)
+    try {
+      const res = await window.scheduleAPI.exportSchedule(eventId)
+      if (res.success && res.data) toast.success(`已导出 ${res.data.count} 场赛程`)
+      else if (res.success && !res.data) toast.info('已取消导出')
+      else toast.error(res.error || '导出失败')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleImportSchedule = async () => {
+    const picked = await window.fileAPI.pickFile([{ name: 'Excel', extensions: ['xlsx'] }])
+    if (!picked.success) {
+      toast.error(picked.error ?? '选择文件失败')
+      return
+    }
+    if (!picked.data) return // 用户取消
+    const res = await window.scheduleAPI.importParse(eventId, picked.data)
+    if (!res.success) {
+      toast.error(res.error || '导入解析失败')
+      return
+    }
+    setImportPath(picked.data)
+    setImportWarnings(res.data?.warnings ?? [])
+    setImportPreview(res.data ?? { added: [], updated: [], deleted: [], unchanged: 0, warnings: [] })
+    setApplyResult(null)
+    setImportOpen(true)
+  }
+
+  const handleApplyImport = async () => {
+    if (!importPreview) return
+    setApplying(true)
+    try {
+      const res = await window.scheduleAPI.importApply(eventId, importPreview)
+      if (res.success && res.data) {
+        setApplyResult(res.data)
+        setImportWarnings(res.data.warnings)
+        toast.success(`已新增 ${res.data.appliedAdd} / 更新 ${res.data.appliedUpdate} / 删除 ${res.data.appliedDelete}`)
+        void load()
+      } else {
+        toast.error(res.error || '应用失败')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setApplying(false)
+    }
+  }
 
   const filtered = useMemo(
     () =>
@@ -190,174 +242,16 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
     void load()
   }
 
-  // ---- AI 评审（整场评审）----
-  // preload 暴露的 agent API（沿用既有 window.agent.runTool 全局桥接，不新造 IPC）
-  const getAgentAPI = useCallback((): {
-    runTool: (req: unknown) => Promise<{ success: boolean; code?: string; message?: string; data?: unknown }>
-  } | null => {
-    const w = window as unknown as {
-      agent?: { runTool: (req: unknown) => Promise<{ success: boolean; code?: string; message?: string; data?: unknown }> }
-    }
-    return w.agent ?? null
-  }, [])
-
-  // 打开整场评审弹窗：按录音标记初始化每段 content（清空）
-  const openAiReview = (m: Match) => {
-    const n = m.recordingMeta?.markers?.length ?? 0
-    setAiSegmentTexts(new Array<string>(n).fill(''))
-    setAiTranscript('')
-    setAiFormatHint('')
-    setAiWinner('aff')
-    setAiExplain('')
-    setAiFor(m)
-  }
-
-  /** 组装 judge_match 入参（时间线优先；transcript 退化）。返回 null 表示素材不足 */
-  const buildJudgeArgs = (
-    m: Match
-  ): { topic: string; formatHint?: string; timeline?: unknown[]; transcript?: string } | null => {
-    const topic = m.topicTitle || m.eventName || ''
-    const timeline = (m.recordingMeta?.markers ?? []).map((mk, i) => ({
-      stage: mk.stageId || undefined,
-      stageName: mk.stageName || undefined,
-      side: mk.side ?? undefined,
-      speaker: mk.speaker ?? undefined,
-      tsMs: mk.tsMs,
-      content: (aiSegmentTexts[i] ?? '').trim()
-    }))
-    const filledTimeline = timeline.filter((t) => t.content !== '')
-    const transcript = aiTranscript.trim()
-
-    if (filledTimeline.length === 0 && transcript === '') return null
-
-    const args: { topic: string; formatHint?: string; timeline?: unknown[]; transcript?: string } = {
-      topic: topic || (m.eventName ?? '一场辩论')
-    }
-    if (aiFormatHint.trim() !== '') args.formatHint = aiFormatHint.trim()
-    if (filledTimeline.length > 0) args.timeline = filledTimeline
-    else if (transcript !== '') args.transcript = transcript
-    // 时间线与转录并存时仅用时间线（judge_match 内优先 timeline）
-    return args
-  }
-
-  /** 把 judge_match 返回 data 映射为 MatchAiReview */
-  const mapJudgeResult = (
-    data: Record<string, unknown>,
-    source: 'recording' | 'transcript'
-  ): MatchAiReview => {
-    const verdict = data.verdict as { winner?: 'aff' | 'neg'; reason?: string } | undefined
-    const summary = typeof data.summary === 'string' ? data.summary : ''
-    const reason = typeof verdict?.reason === 'string' ? verdict.reason : ''
-    return {
-      winner: verdict?.winner === 'aff' || verdict?.winner === 'neg' ? verdict.winner : 'draw',
-      explanation: reason || summary || '（AI 评审完成，无判定说明）',
-      reviewedAt: new Date().toISOString(),
-      judgeName: typeof data.judgeName === 'string' ? data.judgeName : undefined,
-      bestSpeaker:
-        typeof data.bestSpeaker === 'string' && data.bestSpeaker !== ''
-          ? data.bestSpeaker
-          : null,
-      dimensions: Array.isArray(data.dimensions) ? (data.dimensions as MatchAiReview['dimensions']) : null,
-      stageVerdicts:
-        Array.isArray(data.stageVerdicts) ? (data.stageVerdicts as MatchAiReview['stageVerdicts']) : null,
-      source
-    }
-  }
-
-  // 整场评审：组装入参 → judge_match → 映射 → setAiReview 写回
-  const handleAiRun = async () => {
-    if (!aiFor) return
-    const args = buildJudgeArgs(aiFor)
-    if (!args) {
-      toast.warning('请至少提供一段时间线内容，或整场转录全文')
-      return
-    }
-    const apiKey = useSettingsStore.getState().aiConfig.apiKey
-    if (!apiKey) {
-      toast.error('整场评审需要配置 AI API 密钥（请在设置中配置）')
-      return
-    }
-    const api = getAgentAPI()
-    if (!api) {
-      toast.error('Agent 服务未就绪（window.agent 不可用）')
-      return
-    }
-    const source: 'recording' | 'transcript' = args.timeline ? 'recording' : 'transcript'
-    setAiRunning(true)
-    try {
-      const res = await api.runTool({
-        toolName: 'judge_match',
-        args,
-        config: useSettingsStore.getState().aiConfig
-      })
-      if (res.success && res.data && typeof res.data === 'object') {
-        const review = mapJudgeResult(res.data as Record<string, unknown>, source)
-        const saved = await window.matchAPI.setAiReview(aiFor.id, review)
-        if (saved.success) {
-          toast.success('AI 整场评审已写入（不覆盖人工赛果）')
-          setAiFor(null)
-          void load()
-        } else {
-          toast.error(saved.error || 'AI 评审写入失败')
-        }
-      } else {
-        toast.error(res.message || res.code || '整场评审失败')
+  /** 打开 AI 裁判工作台并预绑定当前赛事-轮次-场次（T4） */
+  const handleOpenJudgeArena = (m: Match): void => {
+    navigate('/judge', {
+      state: {
+        eventId: m.eventId,
+        roundId: m.roundId ?? null,
+        matchId: m.id,
+        eventName: m.eventName
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setAiRunning(false)
-    }
-  }
-
-  // 手动判定兜底写入（无 AI 或失败时保留）
-  const handleAiReview = async () => {
-    if (!aiFor) return
-    const review: MatchAiReview = {
-      winner: aiWinner,
-      explanation: aiExplain || '（未填写说明）',
-      reviewedAt: new Date().toISOString()
-    }
-    const res = await window.matchAPI.setAiReview(aiFor.id, review)
-    if (res.success) {
-      toast.success('AI 评审已写入（不覆盖人工赛果）')
-      setAiFor(null)
-      setAiExplain('')
-      void load()
-    } else {
-      toast.error(res.error || 'AI 评审写入失败')
-    }
-  }
-
-  // 上传 txt/md/docx 整场转录 → 读取文本填入 transcript（复用既有 fileAPI）
-  const handleUploadTranscript = async () => {
-    const w = window as unknown as {
-      fileAPI?: {
-        pickFile: (filters: Array<{ name: string; extensions: string[] }>) => Promise<{ success: boolean; data?: string | null; error?: string }>
-        readTextFile: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
-      }
-    }
-    const fileAPI = w.fileAPI
-    if (!fileAPI) {
-      toast.error('文件服务未就绪（window.fileAPI 不可用）')
-      return
-    }
-    try {
-      const picked = await fileAPI.pickFile([{ name: '整场转录文本', extensions: ['txt', 'md', 'docx'] }])
-      if (!picked.success) {
-        toast.error(picked.error ?? '选择文件失败')
-        return
-      }
-      if (!picked.data) return // 用户取消
-      const read = await fileAPI.readTextFile(picked.data)
-      if (!read.success) {
-        toast.error(read.error ?? '读取文件失败')
-        return
-      }
-      setAiTranscript(read.data ?? '')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    }
+    })
   }
 
   // ---- 启动计时（带上下文）----
@@ -496,8 +390,8 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
           <Button size="small" icon={<TrophyOutlined />} onClick={() => setResultFor(m)}>
             计入赛果
           </Button>
-          <Button size="small" icon={<RobotOutlined />} onClick={() => openAiReview(m)}>
-            AI评审
+          <Button size="small" icon={<AuditOutlined />} onClick={() => handleOpenJudgeArena(m)}>
+            打开AI裁判台
           </Button>
           <Popconfirm title="删除该场对阵？" okText="删除" cancelText="取消" onConfirm={() => void (async () => {
             const r = await window.matchAPI.delete(m.id)
@@ -518,6 +412,22 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
       <Space wrap style={{ marginBottom: 12 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
           新建对阵
+        </Button>
+        <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void handleExportSchedule()}>
+          导出赛程
+        </Button>
+        <Button icon={<ImportOutlined />} onClick={() => void handleImportSchedule()}>
+          导入赛程
+        </Button>
+        <Button
+          type="link"
+          size="small"
+          onClick={() => {
+            // 导出一次即可得到可编辑模板，导入前先提示工作流
+            toast.info('导出赛程为 xlsx → 在 Excel 中调整 → 「导入赛程」预览变更后确认应用')
+          }}
+        >
+          怎么用？
         </Button>
         <Select
           style={{ width: 160 }}
@@ -658,113 +568,6 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         )}
       </Modal>
 
-      {/* 整场 AI 评审 */}
-      <Modal
-        title="整场 AI 评审（不覆盖人工赛果）"
-        open={!!aiFor}
-        onCancel={() => setAiFor(null)}
-        width={720}
-        footer={[
-          <Button key="manual" onClick={() => void handleAiReview()}>
-            仅保存手动判定
-          </Button>,
-          <Button
-            key="run"
-            type="primary"
-            loading={aiRunning}
-            icon={aiRunning ? <LoadingOutlined /> : <RobotOutlined />}
-            onClick={() => void handleAiRun()}
-            disabled={aiRunning}
-          >
-            开始评审
-          </Button>
-        ]}
-      >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Alert
-            type="info"
-            showIcon
-            message="按本场录音标记构建时间线，或提供整场转录，由 AI 评委整场评审（含环节与发言人）；无 AI API 或评审失败时可用下方「仅保存手动判定」兜底。"
-          />
-          {aiFor?.recordingMeta?.markers?.length ? (
-            <>
-              <Divider orientation="left" style={{ margin: '4px 0' }}>
-                本场时间线（录音标记 · 补每段内容）
-              </Divider>
-              <Space direction="vertical" style={{ width: '100%' }} size={6}>
-                {aiFor.recordingMeta.markers.map((mk, i) => (
-                  <div key={`${mk.stageId}-${i}`} className="ant-timeline-seg">
-                    <Space direction="vertical" style={{ width: '100%' }} size={2}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        <Text code>{formatMarkerTime(mk.tsMs)}</Text> {mk.stageName}
-                        <Text type="secondary">
-                          {mk.speaker || (mk.side === 'both' ? '双方' : mk.side ?? '')}
-                        </Text>
-                      </Text>
-                      <Input.TextArea
-                        autoSize={{ minRows: 1, maxRows: 4 }}
-                        placeholder="填写该段转文字/要点（留空则该段不参与评审）"
-                        value={aiSegmentTexts[i] ?? ''}
-                        onChange={(e) => {
-                          const next = [...aiSegmentTexts]
-                          next[i] = e.target.value
-                          setAiSegmentTexts(next)
-                        }}
-                      />
-                    </Space>
-                  </div>
-                ))}
-              </Space>
-            </>
-          ) : (
-            <Alert type="warning" showIcon message="该场暂无录音标记（时间线）。可改用下方整场转录进行评审。" />
-          )}
-
-          <Divider orientation="left" style={{ margin: '4px 0' }}>
-            整场转录（可粘贴或上传文件）
-          </Divider>
-          <Input.TextArea
-            rows={6}
-            placeholder="粘贴整场辩论的转录全文（txt/md/docx 亦可上传读取）"
-            value={aiTranscript}
-            onChange={(e) => setAiTranscript(e.target.value)}
-          />
-          <Button icon={<FileTextOutlined />} onClick={() => void handleUploadTranscript()}>
-            上传 txt / md / docx
-          </Button>
-
-          <Divider orientation="left" style={{ margin: '4px 0' }}>评审参数</Divider>
-          <div>
-            <Text type="secondary">赛制提示（可选）：</Text>
-            <Input
-              style={{ width: 320 }}
-              placeholder="如：新国辩制"
-              value={aiFormatHint}
-              onChange={(e) => setAiFormatHint(e.target.value)}
-            />
-          </div>
-
-          <Divider orientation="left" style={{ margin: '4px 0' }}>手动判定兜底（不调 AI）</Divider>
-          <Space wrap>
-            <Text type="secondary">建议判定：</Text>
-            <Select
-              style={{ width: 180 }} value={aiWinner}
-              onChange={(v) => setAiWinner(v as MatchWinner)}
-              options={[
-                { value: 'aff', label: '正方胜' },
-                { value: 'neg', label: '反方胜' },
-                { value: 'draw', label: '平局' }
-              ]}
-            />
-            <Input
-              style={{ width: 320 }} placeholder="填写评审说明/判定依据"
-              value={aiExplain}
-              onChange={(e) => setAiExplain(e.target.value)}
-            />
-          </Space>
-        </Space>
-      </Modal>
-
       {/* AI 评审详情查看（已有本场评审） */}
       <Modal
         title="AI 评审结果"
@@ -786,6 +589,99 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
       >
         {verdictFor && <MatchVerdictCard match={verdictFor} onClose={() => setVerdictFor(null)} />}
       </Modal>
+
+      {/* 赛程 Excel 导入变更预览（P1-6） */}
+      <Modal
+        title="赛程导入变更预览"
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
+        width={760}
+        okText="确认应用"
+        okButtonProps={{ danger: true }}
+        confirmLoading={applying}
+        onOk={() => void handleApplyImport()}
+        footer={
+          applyResult
+            ? [<Button key="close" onClick={() => setImportOpen(false)}>关闭</Button>]
+            : undefined
+        }
+      >
+        {importPreview && (
+          <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            {(importWarnings.length > 0 || (importPreview.warnings ?? []).length > 0) && (
+              <Alert
+                type="warning"
+                showIcon
+                message={`文件：${importPath ?? ''}`}
+                description={<div style={{ maxHeight: 120, overflow: 'auto' }}>
+                  {[...(importPreview.warnings ?? []), ...importWarnings].filter((v, i, a) => a.indexOf(v) === i).map((w, i) => <div key={i}>· {w}</div>)}
+                </div>}
+              />
+            )}
+            {applyResult ? (
+              <Alert
+                type="success"
+                showIcon
+                message="已应用"
+                description={`新增 ${applyResult.appliedAdd} · 更新 ${applyResult.appliedUpdate} · 删除 ${applyResult.appliedDelete} · 跳过 ${applyResult.skipped}`}
+              />
+            ) : (
+              <>
+                <div>
+                  <Tag color="green">将新增 {importPreview.added.length}</Tag>
+                  <Tag color="blue">将更新 {importPreview.updated.length}</Tag>
+                  <Tag color="red">将删除 {importPreview.deleted.length}</Tag>
+                  <Tag>不变 {importPreview.unchanged}</Tag>
+                </div>
+                {importPreview.added.length + importPreview.updated.length + importPreview.deleted.length === 0 && (
+                  <Alert type="info" showIcon message="导入与当前赛程一致，无变更。" />
+                )}
+                {importPreview.added.length > 0 && (
+                  <DiffTable title="将新增" color="green" rows={importPreview.added.map((a) => ({ key: a.key, ...a.row }))} />
+                )}
+                {importPreview.updated.length > 0 && (
+                  <DiffTable title="将更新" color="blue" rows={importPreview.updated.map((a) => ({ key: a.key, ...a.row }))} />
+                )}
+                {importPreview.deleted.length > 0 && (
+                  <DiffTable title="将删除" color="red" rows={importPreview.deleted.map((a) => ({ key: a.key, ...a.row }))} />
+                )}
+              </>
+            )}
+          </Space>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+/** 变更预览分组表格 */
+function DiffTable({
+  title,
+  color,
+  rows
+}: {
+  title: string
+  color: string
+  rows: Array<{ key: string; roundName: string | null; matchNumber: number | null; teamAff: string; teamNeg: string; topic: string }>
+}) {
+  return (
+    <div>
+      <Text strong style={{ color: color === 'red' ? '#ff4d4f' : color === 'blue' ? '#1677ff' : undefined }}>
+        {title}
+      </Text>
+      <Table
+        rowKey="key"
+        size="small"
+        style={{ marginTop: 4 }}
+        dataSource={rows}
+        pagination={false}
+        columns={[
+          { title: '轮次', dataIndex: 'roundName', key: 'roundName', width: 90, render: (v) => v || '—' },
+          { title: '场次', dataIndex: 'matchNumber', key: 'matchNumber', width: 60 },
+          { title: '对阵', key: 'matchup', render: (_, r) => `${r.teamAff || '正方'} vs ${r.teamNeg || '反方'}` },
+          { title: '辩题', dataIndex: 'topic', key: 'topic', ellipsis: true, render: (v) => v || '—' }
+        ]}
+      />
     </div>
   )
 }

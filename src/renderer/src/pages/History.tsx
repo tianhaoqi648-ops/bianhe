@@ -200,6 +200,8 @@ export default function History() {
   const [topicMap, setTopicMap] = useState<Map<string, string>>(new Map());
   const [teamMap, setTeamMap] = useState<Map<string, string>>(new Map());
   const [eventNameMap, setEventNameMap] = useState<Map<string, string>>(new Map());
+  // P0-4：事件场次（轮次）名称映射，用于历史列表展示"场次"溯源字段
+  const [roundNameMap, setRoundNameMap] = useState<Map<string, string>>(new Map());
 
   // ====== 顶部 StatCard 统计数据 ======
   const [monthDrawCount, setMonthDrawCount] = useState<number>(0);
@@ -393,6 +395,17 @@ export default function History() {
       }
     });
     setTeamMap(teamM);
+    // P0-4：并行拉取各赛事的轮次，构建"场次"（轮次名）映射供历史列表展示
+    const roundResults = await Promise.all(
+      Array.from(eventIds).map((eid) => window.eventAPI.listRoundsByEvent(eid))
+    );
+    const roundM = new Map<string, string>();
+    roundResults.forEach((res) => {
+      if (res.success && res.data) {
+        (res.data as any[]).forEach((r) => roundM.set(String(r.id), String(r.name ?? r.id)));
+      }
+    });
+    setRoundNameMap(roundM);
   };
 
   useEffect(() => {
@@ -645,13 +658,15 @@ export default function History() {
     const kw = sessionKeyword.trim().toLowerCase();
     return drawStore.sessions.filter((s) => {
       const eventName = eventNameMap.get(s.event_id) ?? '';
+      const roundName = s.round_id ? (roundNameMap.get(s.round_id) ?? '') : '';
       return (
         eventName.toLowerCase().includes(kw) ||
+        roundName.toLowerCase().includes(kw) ||
         (s.operator ?? '').toLowerCase().includes(kw) ||
         (s.draw_time ?? '').toLowerCase().includes(kw)
       );
     });
-  }, [drawStore.sessions, sessionKeyword, eventNameMap]);
+  }, [drawStore.sessions, sessionKeyword, eventNameMap, roundNameMap]);
 
   // ====== 时间线视图：按日期分组 ======
   // 格式化日期组标题：YYYY-MM-DD 周X
@@ -1110,6 +1125,10 @@ export default function History() {
                                         {eventName && (
                                           <Tag color="blue">{eventName}</Tag>
                                         )}
+                                        {/* P0-4：展示场次（轮次名），便于溯源 */}
+                                        {session.round_id && roundNameMap.get(session.round_id) ? (
+                                          <Tag color="cyan">{roundNameMap.get(session.round_id)}</Tag>
+                                        ) : null}
                                         {session.settings?.is_test && (
                                           <Tag color="orange">测试</Tag>
                                         )}

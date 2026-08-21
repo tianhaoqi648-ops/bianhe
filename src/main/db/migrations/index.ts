@@ -18,6 +18,7 @@ import { fixFkAndAddSnapshotColumns } from './20260902_fix_fk_and_add_snapshot_c
 import { addMissingIndexes } from './20260903_add_missing_indexes'
 import { createMatchesTable } from './20260904_create_matches'
 import { addTeamHistoryTopicTitle } from './20260905_add_team_history_topic_title'
+import { createJudgeHistoryTable } from './20260912_create_judge_history'
 
 interface Migration {
   id: string
@@ -179,6 +180,8 @@ const MIGRATIONS: Migration[] = [
           neg_remaining_ms      INTEGER,
           aff_pool_remaining_ms INTEGER,
           neg_pool_remaining_ms INTEGER,
+          aff_speech_count      INTEGER DEFAULT 0,
+          neg_speech_count      INTEGER DEFAULT 0,
           FOREIGN KEY (format_id) REFERENCES debate_formats(id)
         );
 
@@ -466,6 +469,14 @@ const MIGRATIONS: Migration[] = [
     }
   },
   {
+    id: '20260912_create_judge_history',
+    up: (db) => {
+      // T1：AI 裁判历史表（judge_match / judge_debate / judge_speech /
+      //     detect_stage / simulate_opponent 结果持久化，跨页/重启保留）。
+      createJudgeHistoryTable(db)
+    }
+  },
+  {
     id: '20260910_add_pool_remaining_to_timer_sessions',
     up: (db) => {
       // 为 timer_sessions 表添加每队总时长池剩余字段（正方/反方池，毫秒）。
@@ -478,6 +489,23 @@ const MIGRATIONS: Migration[] = [
       }
       try {
         db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_pool_remaining_ms INTEGER')
+      } catch {
+        /* 字段已存在 */
+      }
+    }
+  },
+  {
+    id: '20260911_add_speech_count_to_timer_sessions',
+    up: (db) => {
+      // 为 timer_sessions 表添加自由辩论发言次数字段（正方/反方），
+      // 用于持久化自由辩论环节按 Space 切换发言方时累计的发言次数。
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_speech_count INTEGER DEFAULT 0')
+      } catch {
+        /* 字段已存在 */
+      }
+      try {
+        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_speech_count INTEGER DEFAULT 0')
       } catch {
         /* 字段已存在 */
       }

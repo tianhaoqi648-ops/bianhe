@@ -15,6 +15,7 @@ import React, { useState } from 'react'
 import { Alert, Typography, Tag, Progress, theme } from 'antd'
 import { STAGE_DEFINITIONS } from '../../../../shared/debate-stages'
 import { getJudgeById } from '../../../../shared/ai-judges'
+import { RadarChart } from './RadarChart'
 
 /** 按 judgeId 映射评委风格类别（不显示真人名）；查不到兜底「AI 裁判」 */
 export function judgeCategoryOf(judgeId: string | undefined): string {
@@ -227,6 +228,27 @@ export function JudgeResultCard({ result }: { result: JudgeDebateResult }): JSX.
         </div>
       ) : null}
 
+      {/* 五维能力雷达图（正反方叠加对比） */}
+      {dimensions.length > 0 ? (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+          <RadarChart
+            labels={dimensions.map((d) => d.name)}
+            series={[
+              {
+                name: '正方',
+                scores: dimensions.map((d) => d.affScore),
+                color: token.colorInfo
+              },
+              {
+                name: '反方',
+                scores: dimensions.map((d) => d.negScore),
+                color: token.colorWarning
+              }
+            ]}
+          />
+        </div>
+      ) : null}
+
       {/* 五维双方评分对比 */}
       {dimensions.map((d) => (
         <div key={d.key} style={{ marginBottom: 6 }}>
@@ -407,6 +429,22 @@ export function JudgeSpeechResultCard({ result }: { result: JudgeSpeechResult })
         >
           辩题：{topic}
         </Typography.Text>
+      ) : null}
+
+      {/* 五维单方能力雷达图 */}
+      {dimensions.length > 0 ? (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+          <RadarChart
+            labels={dimensions.map((d) => d.name)}
+            series={[
+              {
+                name: side === 'aff' ? '正方' : '反方',
+                scores: dimensions.map((d) => d.score),
+                color: side === 'aff' ? token.colorInfo : token.colorWarning
+              }
+            ]}
+          />
+        </div>
       ) : null}
 
       {/* 五维单方评分 */}

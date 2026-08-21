@@ -32,6 +32,23 @@ export const DEFAULT_BGM_SETTING: BgmSetting = {
   defaultTrack: 'ethereal'
 };
 
+/** 超时语音警告设置类型（P2-8） */
+export interface TimeoutTtsSetting {
+  /** 是否开启超时语音播报 */
+  enabled: boolean;
+  /** 播报音量 0-100 */
+  volume: number;
+}
+
+/** 超时语音设置在 settings 中的 key */
+export const TIMEOUT_TTS_KEY = 'timer.tts';
+
+/** 超时语音设置默认值 */
+export const DEFAULT_TIMEOUT_TTS_SETTING: TimeoutTtsSetting = {
+  enabled: true,
+  volume: 80
+};
+
 /** 主题模式：亮色 / 暗色 / 跟随系统 */
 export type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -414,6 +431,20 @@ export function getBgmSetting(settings: Record<string, any>): BgmSetting {
       ? raw.defaultTrack
       : DEFAULT_BGM_SETTING.defaultTrack;
   return { volume, defaultTrack };
+}
+
+/**
+ * 工具函数：读取超时语音警告设置（带默认值合并）。
+ * settings 中无值或非法时回退到 DEFAULT_TIMEOUT_TTS_SETTING。
+ */
+export function getTimeoutTtsSetting(settings: Record<string, any>): TimeoutTtsSetting {
+  const raw = settings[TIMEOUT_TTS_KEY];
+  if (!raw || typeof raw !== 'object') return DEFAULT_TIMEOUT_TTS_SETTING;
+  const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_TIMEOUT_TTS_SETTING.enabled;
+  const volume = typeof raw.volume === 'number' && Number.isFinite(raw.volume)
+    ? Math.max(0, Math.min(100, raw.volume))
+    : DEFAULT_TIMEOUT_TTS_SETTING.volume;
+  return { enabled, volume };
 }
 
 /** 计时器背景默认值（导出供组件使用） */

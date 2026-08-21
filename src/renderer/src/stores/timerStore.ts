@@ -50,8 +50,8 @@ interface TimerStoreState {
   loadSession: (id: string) => Promise<TimerSession | null>
   fetchSessions: () => Promise<void>
   /** 同步更新内存中的 currentSession 状态（不写 DB） */
-  updateSessionState: (opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>) => void
-  persistSessionState: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs'>>) => Promise<void>
+  updateSessionState: (opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs' | 'affSpeechCount' | 'negSpeechCount'>>) => void
+  persistSessionState: (id: string, opts: Partial<Pick<TimerSession, 'status' | 'startedAt' | 'endedAt' | 'currentStageIndex' | 'currentSide' | 'remainingMs' | 'stageRemainingCache' | 'affRemainingMs' | 'negRemainingMs' | 'affPoolRemainingMs' | 'negPoolRemainingMs' | 'affSpeechCount' | 'negSpeechCount'>>) => Promise<void>
   deleteSession: (id: string) => Promise<boolean>
   clearCurrent: () => void
   /** 设置对阵展示信息 */
