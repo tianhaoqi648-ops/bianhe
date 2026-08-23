@@ -19,6 +19,11 @@
 
 import { topicRepo, type Topic, type TopicFilter } from '../db/repository/topic.repo'
 import { eventRepo, type Round, type Team, type TeamGroup } from '../db/repository/event.repo'
+import {
+  topicGroupRepo,
+  type EventBankConfig,
+  type TopicGroup
+} from '../db/repository/topic-group.repo'
 import { drawRepo, type DrawSessionDetail, type DrawSessionItem } from '../db/repository/draw.repo'
 import { auditRepo } from '../db/repository/audit.repo'
 import {
@@ -76,6 +81,8 @@ export interface DrawParams {
   test_mode?: boolean
   /** 允许辩题重复：跳过题池不足检查，使用有放回抽样 */
   allow_repeat?: boolean
+  /** 抽题选库：限定从某个题组（题库）抽取。为空时不限（全库候选）。 */
+  group_id?: string | null
 }
 
 export interface DrawResult {
@@ -153,6 +160,110 @@ export function applyExclusions(candidates: Topic[], params: DrawParams): Topic[
   }
 
   return candidates.filter((t) => !drawnIds.has(t.id) && !teamHistoryIds.has(t.id))
+}
+
+// ============================================================
+// 步骤 2.5：按选题模式解析候选库
+// ============================================================
+
+/**
+ * 候选库解析所需的 repository 依赖（便于纯函数单测，注入即可）。
+ * 均来自 topicGroupRepo：
+ *   - getEventBankConfig：读事件选题模式配置（缺省 single）
+ *   - listGroupsByEvent：事件绑定的题库
+ *   - listGroupsByRound：轮次绑定的题库
+ *   - listTopicIdsByGroup：某题库内的全部 topic id
+ */
+export interface ResolveBankContext {
+  getEventBankConfig(eventId: string): EventBankConfig
+  listGroupsByEvent(eventId: string): TopicGroup[]
+  listGroupsByRound(roundId: string): TopicGroup[]
+  listTopicIdsByGroup(groupId: string): string[]
+}
+
+/** 取若干题库 topic ids 的并集（去重）。 */
+function unionTopicGroupIds(groupIds: string[], ctx: ResolveBankContext): string[] {
+  const seen = new Set<string>()
+  for (const gid of groupIds) {
+    for (const id of ctx.listTopicIdsByGroup(gid)) {
+      seen.add(id)
+    }
+  }
+  return [...seen]
+}
+
+/** 退化为 union：事件绑定题库的并集；无绑定返回 null（全库）。 */
+function resolveEventUnion(params: DrawParams, ctx: ResolveBankContext): string[] | null {
+  const boundGroups = ctx.listGroupsByEvent(params.event_id)
+  if (boundGroups.length === 0) return null
+  return unionTopicGroupIds(
+    boundGroups.map((g) => g.id),
+    ctx
+  )
+}
+
+/**
+ * 按事件选题模式解析本次抽取应使用的候选库 topic ids（并集）。
+ *
+ * 仅当未显式传 `group_id` 时调用；显式 `group_id` 仍由 drawTopics 单一过滤。
+ *
+ * 返回字面量语义：
+ *   - `string[]`：应作为候选过滤的题库 topic ids（并集）
+ *   - `null`：无可选库，回退「全库」候选（不叠加任何题库过滤）
+ *
+ * 各模式解析：
+ *   - `single`：取 priorityOrder[0]；无则回退全库（null）。
+ *   - `union`：事件绑定题库（listGroupsByEvent）并集；无绑定回退全库。
+ *   - `priority`：按 priorityOrder 依次并入；累积题数达 params.topic_count 即停，
+ *     不足时用下一库补足（对最终候选过滤）；无 priorityOrder 则退化为 union。
+ *   - `by_round`：用 params.round_id → listGroupsByRound 命中题库的并集；
+ *     无 round_id 或无轮次绑定则退化为 single → union。
+ */
+export function resolveBankTopicIds(
+  params: DrawParams,
+  ctx: ResolveBankContext
+): string[] | null {
+  const config = ctx.getEventBankConfig(params.event_id)
+  const order = config.priorityOrder ?? []
+
+  switch (config.mode) {
+    case 'union': {
+      return resolveEventUnion(params, ctx)
+    }
+
+    case 'priority': {
+      if (order.length === 0) return resolveEventUnion(params, ctx)
+      const needed = Math.max(1, params.topic_count)
+      const seen = new Set<string>()
+      for (const gid of order) {
+        for (const id of ctx.listTopicIdsByGroup(gid)) seen.add(id)
+        if (seen.size >= needed) break
+      }
+      return seen.size > 0 ? [...seen] : null
+    }
+
+    case 'by_round': {
+      if (params.round_id) {
+        const roundGroups = ctx.listGroupsByRound(params.round_id)
+        if (roundGroups.length > 0) {
+          return unionTopicGroupIds(
+            roundGroups.map((g) => g.id),
+            ctx
+          )
+        }
+      }
+      // 无轮次绑定 → 退化为 single → union
+      if (order.length > 0) return ctx.listTopicIdsByGroup(order[0])
+      return resolveEventUnion(params, ctx)
+    }
+
+    case 'single':
+    default: {
+      // 缺省（未配置/invalid mode）走 default：取 priorityOrder[0]，否则全库（现状）
+      if (order.length > 0) return ctx.listTopicIdsByGroup(order[0])
+      return null
+    }
+  }
 }
 
 // ============================================================
@@ -743,6 +854,26 @@ export function drawTopics(params: DrawParams): DrawResult {
   // 2. 排除（测试模式跳过）
   if (!params.test_mode) {
     candidates = applyExclusions(candidates, params)
+  }
+
+  // 2.5. 抽题选库：按选题模式解析候选库 topic ids 过滤候选池
+  // 显式传 group_id 时仍按单一题库过滤（现状优先），不再做模式解析；
+  // 未传 group_id 时按事件 bank_config 解析候选库，无可选库则回退全库（现状）。
+  const bankCtx: ResolveBankContext = {
+    getEventBankConfig: (id) => topicGroupRepo.getEventBankConfig(id),
+    listGroupsByEvent: (id) => topicGroupRepo.listGroupsByEvent(id),
+    listGroupsByRound: (id) => topicGroupRepo.listGroupsByRound(id),
+    listTopicIdsByGroup: (id) => topicGroupRepo.listTopicIdsByGroup(id)
+  }
+  if (params.group_id) {
+    const groupTopicIds = new Set(topicGroupRepo.listTopicIdsByGroup(params.group_id))
+    candidates = candidates.filter((t) => groupTopicIds.has(t.id))
+  } else {
+    const bankTopicIds = resolveBankTopicIds(params, bankCtx)
+    if (bankTopicIds !== null) {
+      const bankSet = new Set(bankTopicIds)
+      candidates = candidates.filter((t) => bankSet.has(t.id))
+    }
   }
 
   // 3. 查询轮次

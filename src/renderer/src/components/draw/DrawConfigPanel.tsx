@@ -51,6 +51,8 @@ export interface DrawConfigState {
   groupIds: string[];
   /** multi_team 模式下每题队伍数（>=2，默认 2） */
   teamsPerTopic: number;
+  /** 抽题选库：选中的题组 id（null 表示全库抽取） */
+  groupId: string | null;
   /** P3.1 Task 1：揭晓动画模式，默认 'flip' 翻牌 */
   revealMode: RevealMode;
 }
@@ -63,6 +65,8 @@ export interface DrawConfigPanelProps {
   teams: Team[];
   /** 赛事下的分组列表（group 模式使用） */
   groups: TeamGroup[];
+  /** 当前赛事绑定的题库（题组）列表，用于「抽题选库」 */
+  topicGroups: Array<{ id: string; name: string; isDefault: boolean }>;
   tagOptions: string[];
   loading?: boolean;
   onDraw?: () => void;
@@ -83,6 +87,7 @@ export default function DrawConfigPanel({
   rounds,
   teams,
   groups,
+  topicGroups,
   tagOptions,
   loading,
   onDraw,
@@ -152,7 +157,7 @@ export default function DrawConfigPanel({
                   <Select
                     placeholder="选择赛事"
                     value={state.eventId ?? undefined}
-                    onChange={(v) => onChange({ eventId: v ?? null, roundId: null, teamPairs: [], groupIds: [] })}
+                    onChange={(v) => onChange({ eventId: v ?? null, roundId: null, teamPairs: [], groupIds: [], groupId: null })}
                     options={events.map((e) => ({ label: e.name, value: e.id }))}
                     allowClear
                   />
@@ -175,6 +180,29 @@ export default function DrawConfigPanel({
                       该轮次难度梯度：{currentRound.difficulty_override}
                     </Typography.Text>
                   )}
+                </Form.Item>
+
+                <Form.Item label="题库">
+                  <Select
+                    placeholder="选择题库（默认默认题库）"
+                    value={state.groupId ?? undefined}
+                    onChange={(v) => onChange({ groupId: v ?? null })}
+                    options={topicGroups.map((g) => ({
+                      label: g.isDefault ? `${g.name}（默认）` : g.name,
+                      value: g.id
+                    }))}
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    disabled={!state.eventId || topicGroups.length === 0}
+                  />
+                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                    {topicGroups.length > 0
+                      ? state.groupId
+                        ? '只从所选题库的辩题中抽取'
+                        : '未选择题库：从全体辩题中抽取'
+                      : '该赛事未绑定题库，将按全体辩题抽取'}
+                  </Typography.Text>
                 </Form.Item>
 
                 <Form.Item label="辩题数量" required>

@@ -28,6 +28,7 @@ import { findDuplicates } from '../services/dedup-engine'
 import type { DedupOptions, DuplicateGroup } from '../services/dedup-engine'
 import { topicRepo } from '../db/repository/topic.repo'
 import type { Topic, TopicCreateInput } from '../db/repository/topic.repo'
+import { topicGroupRepo } from '../db/repository/topic-group.repo'
 import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { auditRepo } from '../db/repository/audit.repo'
 import { eventRepo } from '../db/repository/event.repo'
@@ -88,7 +89,7 @@ export function registerImportIpc(): void {
       try {
         assertParam(req && typeof req === 'object', '参数 req 必须为对象')
         assertParam(Array.isArray(req.topics), '参数 topics 必须为数组')
-        const { topics, checkDuplicates = true, fileName, valueMapping } = req
+        const { topics, checkDuplicates = true, fileName, valueMapping, groupIds } = req
         // P2-33: 入口校验空 topics 数组，避免创建空批次记录
         if (!topics || topics.length === 0) {
           return { success: false, error: '没有可导入的辩题数据' }
@@ -224,8 +225,10 @@ export function registerImportIpc(): void {
         }
 
         // 6. 批量插入（事务包装，失败回滚）
+        let createdIds: string[] = []
         try {
           const created = topicRepo.createMany(topicsToImport)
+          createdIds = created.map((t) => t.id)
           imported = created.length
         } catch (e) {
           // createMany 内部事务失败会回滚，所有题都不会入库
@@ -236,6 +239,24 @@ export function registerImportIpc(): void {
             importBatchRepo.deleteBatch(batch.id)
           } catch (e2) {
             console.error('[import.ipc] deleteBatch on createMany failure failed:', e2)
+          }
+        }
+
+        // 6.1 新题关联题组（赛事题库 T2 桥接）：
+        //   - 指定目标题组 groupIds（可多选）→ 新题关联到每个目标题组
+        //   - 未指定 → 新题默认进「默认题库」
+        // 失败不阻断主流程（仅记录日志），避免因题组关联异常导致整批导入报错。
+        if (imported > 0 && createdIds.length > 0) {
+          try {
+            if (groupIds && groupIds.length > 0) {
+              for (const gid of groupIds) {
+                topicGroupRepo.addTopicsToGroup(gid, createdIds)
+              }
+            } else {
+              topicGroupRepo.ensureTopicsInDefaultGroup(createdIds)
+            }
+          } catch (e) {
+            console.error('[import.ipc] topic group association failed:', e)
           }
         }
 
@@ -415,6 +436,10 @@ export function registerImportIpc(): void {
             groupCount: pkg.groups?.length ?? 0,
             drawSessionCount: pkg.drawSessions?.length ?? 0,
             teamHistoryCount: pkg.teamHistory?.length ?? 0,
+            eventTopicGroupCount: pkg.eventTopicGroupIds?.length ?? 0,
+            roundTopicGroupCount: Object.keys(pkg.roundTopicGroupIds ?? {}).length,
+            topicGroupCount: pkg.topicGroups?.length ?? 0,
+            topicGroupItemCount: pkg.topicGroupItems?.length ?? 0,
             hasConflict,
             exportedAt: pkg.exportedAt
           }
@@ -608,6 +633,61 @@ export function registerImportIpc(): void {
             })
           }
 
+          // 3.8 恢复赛事题库（T7）：
+          //   - 按包内定义（topicGroups）按原 id 幂等创建「被引用但缺失」的题库（topic_groups），
+          //     已存在则不覆盖（ensureGroupById）；无定义引用的题库跳过（无法恢复）。
+          //   - 恢复赛事→题库绑定（event_topic_groups，INSERT OR IGNORE 去重，不与既有绑定冲突）。
+          //   - 恢复轮次→题库绑定（round_topic_groups，group_id 重映射到包内新轮次）。
+          //   - 恢复题库成员（topic_group_items，仅 topic 已存在于库内时关联，避免 FK 违约）。
+          const eventTopicGroupIds = pkg.eventTopicGroupIds ?? []
+          const roundTopicGroupIds = pkg.roundTopicGroupIds ?? {}
+          const topicGroups = pkg.topicGroups ?? []
+          const topicGroupItems = pkg.topicGroupItems ?? []
+          const referencedGroupIds = new Set<string>([
+            ...eventTopicGroupIds,
+            ...Object.values(roundTopicGroupIds).flat()
+          ])
+          if (referencedGroupIds.size > 0) {
+            const defMap = new Map(topicGroups.map((g) => [g.id, g]))
+            const restorableGroupIds = new Set<string>()
+            for (const gid of referencedGroupIds) {
+              const def = defMap.get(gid)
+              if (!def) continue
+              topicGroupRepo.ensureGroupById(gid, def.name, !!def.is_default, def.created_at ?? null)
+              restorableGroupIds.add(gid)
+            }
+            // 赛事绑定（createEvent 已自动绑定默认题库，这里幂等补全包内其余绑定）
+            if (eventTopicGroupIds.length > 0) {
+              topicGroupRepo.bindEventGroups(
+                newEvent.id,
+                eventTopicGroupIds.filter((g) => restorableGroupIds.has(g))
+              )
+            }
+            // 轮次绑定（映射到包内新轮次 id）
+            for (const [srcRoundId, groupIds] of Object.entries(roundTopicGroupIds)) {
+              const newRoundId = roundIdMap.get(srcRoundId)
+              if (!newRoundId) continue
+              topicGroupRepo.bindRoundGroups(
+                newRoundId,
+                groupIds.filter((g) => restorableGroupIds.has(g))
+              )
+            }
+            // 题库成员（仅 topic 已存在于库内；按题库分组后批量幂等插入）
+            if (topicGroupItems.length > 0) {
+              const pendingByGroup = new Map<string, string[]>()
+              for (const it of topicGroupItems) {
+                if (!restorableGroupIds.has(it.group_id)) continue
+                if (!allTopicIds.has(it.topic_id)) continue
+                const arr = pendingByGroup.get(it.group_id) ?? []
+                arr.push(it.topic_id)
+                pendingByGroup.set(it.group_id, arr)
+              }
+              for (const [gid, topicIds] of pendingByGroup) {
+                topicGroupRepo.addTopicsToGroup(gid, topicIds)
+              }
+            }
+          }
+
           return {
             eventId: newEvent.id,
             roundCount: rounds.length,
@@ -691,6 +771,19 @@ interface EventPackagePayload {
       team_ids?: string[] | null
       group_id?: string | null
     }>
+  }>
+  // T7：赛事题库随包
+  eventTopicGroupIds?: string[]
+  roundTopicGroupIds?: Record<string, string[]>
+  topicGroups?: Array<{
+    id: string
+    name: string
+    is_default?: number
+    created_at?: string | null
+  }>
+  topicGroupItems?: Array<{
+    group_id: string
+    topic_id: string
   }>
   exportedAt?: string
 }

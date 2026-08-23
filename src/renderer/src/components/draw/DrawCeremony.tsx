@@ -71,14 +71,8 @@ function playTick() {
   }
 }
 
-/** 长辩题自动缩放字号 */
-function topicFontSize(title: string): string {
-  const len = title.length;
-  if (len <= 20) return 'clamp(46px, 7vw, 86px)';
-  if (len <= 40) return 'clamp(34px, 5.5vw, 66px)';
-  if (len <= 60) return 'clamp(26px, 4.5vw, 52px)';
-  return 'clamp(22px, 3.5vw, 42px)';
-}
+/** 统一辩题字号：结果与滚动一致，避免单题过大或折行遮挡（refine-draw-ceremony-tone） */
+const RESULT_FONT_SIZE = 'clamp(18px, 2.2vw, 30px)';
 
 export default function DrawCeremony({
   open,
@@ -89,7 +83,7 @@ export default function DrawCeremony({
   roundName,
   onStart,
   onExit,
-  revealMode = 'flip'
+  revealMode = 'fade'
 }: DrawCeremonyProps) {
   const [phase, setPhase] = useState<CeremonyPhase>('idle');
   const [flash, setFlash] = useState('');
@@ -271,7 +265,7 @@ export default function DrawCeremony({
         <div className="draw-ceremony-center">
           <div
             className="bigscreen-topic-title ceremony-rolling-title"
-            style={{ fontSize: topicFontSize(flash || '…') }}
+            style={{ fontSize: RESULT_FONT_SIZE, maxWidth: '86vw', wordBreak: 'break-word' }}
           >
             {flash}
           </div>
@@ -296,21 +290,20 @@ export default function DrawCeremony({
             </span>
           </Space>
 
-          {/* 第一题：翻牌揭晓 + 金色高亮闪烁 */}
+          {/* 第一题：轻渐显揭晓，与其余同字号（refine-draw-ceremony-tone：去翻牌/去超大标题） */}
           <RevealAnimation key={`reveal-${topics[0].id}`} mode={revealMode}>
             <div
-              className="bigscreen-topic-title ceremony-flash"
-              style={{ fontSize: topicFontSize(topics[0].title), maxWidth: '86vw' }}
+              style={{ color: 'rgba(255,255,255,0.82)', fontSize: RESULT_FONT_SIZE, maxWidth: '86vw', wordBreak: 'break-word' }}
             >
               {topics[0].title}
             </div>
           </RevealAnimation>
 
-          {/* 其余题列表 */}
+          {/* 其余题列表（同字号） */}
           {topics.length > 1 && (
             <div className="draw-ceremony-rest">
               {topics.slice(1).map((t) => (
-                <span key={t.id} className="draw-ceremony-rest-item" style={{ fontSize: 'clamp(16px, 1.8vw, 24px)' }}>
+                <span key={t.id} className="draw-ceremony-rest-item" style={{ fontSize: RESULT_FONT_SIZE }}>
                   {t.title}
                 </span>
               ))}

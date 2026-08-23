@@ -92,7 +92,23 @@ import type {
   type BadgeItem,
   JudgeHistoryRecord,
   JudgeHistoryCreateInput,
-  JudgeHistoryFilter
+  JudgeHistoryFilter,
+  TopicGroup,
+  GroupTopic,
+  TopicGroupCreateInput,
+  TopicGroupRenameInput,
+  TopicGroupAddTopicsInput,
+  TopicGroupRemoveTopicsInput,
+  TopicGroupBatchAddInput,
+  TopicGroupBatchRemoveInput,
+  TopicGroupCopyInput,
+  GroupCopyResult,
+  EventBindGroupsInput,
+  EventUnbindGroupInput,
+  EventBankConfig,
+  EventSetBankConfigInput,
+  RoundBindGroupsInput,
+  RoundUnbindGroupInput
 } from '../shared/types'
 import type { ExportJudgeReportRequest, ExportJudgeReportResult } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
@@ -500,6 +516,50 @@ export interface JudgeAPI {
   deleteHistory: (id: string) => Promise<ApiResponse<boolean>>
 }
 
+/** 题组（题库）API（赛事题库 T2 桥接） */
+export interface GroupTopicAPI {
+  /** 列出全部题组（默认题库在最前） */
+  list: () => Promise<ApiResponse<TopicGroup[]>>
+  /** 获取默认题库（幂等保证存在） */
+  getDefaultTopicGroup: () => Promise<ApiResponse<TopicGroup>>
+  /** 新建题组 */
+  createGroup: (input: TopicGroupCreateInput) => Promise<ApiResponse<TopicGroup>>
+  /** 重命名题组 */
+  renameGroup: (input: TopicGroupRenameInput) => Promise<ApiResponse<TopicGroup>>
+  /** 删除题组（默认题库返回失败） */
+  deleteGroup: (id: string) => Promise<ApiResponse<boolean>>
+  /** 列出某题组内的完整辩题 */
+  listTopicsByGroup: (groupId: string) => Promise<ApiResponse<GroupTopic[]>>
+  /** 往题组加入若干辩题（可多选） */
+  addTopicsToGroup: (input: TopicGroupAddTopicsInput) => Promise<ApiResponse<number>>
+  /** 从题组移除若干辩题 */
+  removeTopicsFromGroup: (input: TopicGroupRemoveTopicsInput) => Promise<ApiResponse<number>>
+  /** 批量把一组题同时加入多个题库（去重，忽略已存在成员） */
+  batchAddToGroups: (input: TopicGroupBatchAddInput) => Promise<ApiResponse<number>>
+  /** 从某题库批量移除若干辩题 */
+  batchRemoveFromGroup: (input: TopicGroupBatchRemoveInput) => Promise<ApiResponse<number>>
+  /** 整库复制：把源题库全部题复制到多个目标题库（去重，同库跳过） */
+  copyGroupToGroup: (input: TopicGroupCopyInput) => Promise<ApiResponse<GroupCopyResult[]>>
+  /** 整库移动：把源题库全部题移到多个目标题库，随后清空源 */
+  moveGroupToGroup: (input: TopicGroupCopyInput) => Promise<ApiResponse<GroupCopyResult[]>>
+  /** 列出某赛事绑定的题组 */
+  listGroupsByEvent: (eventId: string) => Promise<ApiResponse<TopicGroup[]>>
+  /** 给赛事绑定若干题组（可多选） */
+  bindEventGroups: (input: EventBindGroupsInput) => Promise<ApiResponse<number>>
+  /** 解绑赛事与某个题组的关联 */
+  unbindEventGroup: (input: EventUnbindGroupInput) => Promise<ApiResponse<boolean>>
+  /** 读赛事选题模式配置（缺省回退 single） */
+  getEventBankConfig: (eventId: string) => Promise<ApiResponse<EventBankConfig>>
+  /** 写赛事选题模式配置 */
+  setEventBankConfig: (input: EventSetBankConfigInput) => Promise<ApiResponse<EventBankConfig | undefined>>
+  /** 列出某轮次绑定的题组 */
+  listGroupsByRound: (roundId: string) => Promise<ApiResponse<TopicGroup[]>>
+  /** 给轮次绑定若干题组（可多选） */
+  bindRoundGroups: (input: RoundBindGroupsInput) => Promise<ApiResponse<number>>
+  /** 解绑轮次与某个题组的关联 */
+  unbindRoundGroup: (input: RoundUnbindGroupInput) => Promise<ApiResponse<boolean>>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -528,6 +588,7 @@ declare global {
     updaterAPI: UpdaterAPI
     sttAPI: SttAPI
     judgeAPI: JudgeAPI
+    groupAPI: GroupTopicAPI
   }
 }
 

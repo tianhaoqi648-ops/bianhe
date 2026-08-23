@@ -42,7 +42,9 @@ import {
   HistoryOutlined,
   GroupOutlined,
   ImportOutlined,
-  ExportOutlined
+  ExportOutlined,
+  DatabaseOutlined,
+  BookOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import AccentCard from '../components/common/AccentCard';
@@ -73,6 +75,8 @@ import ImportEventModal from '../components/events/ImportEventModal';
 import EventWizardModal from '../components/EventWizardModal';
 import GroupEditModal from '../components/events/GroupEditModal';
 import RandomGroupAssignModal from '../components/events/RandomGroupAssignModal';
+import TopicGroupManagerModal from '../components/TopicGroupManagerModal';
+import EventTopicBankModal from '../components/EventTopicBankModal';
 import RoundEditModal from '../components/RoundEditModal';
 import TeamEditModal from '../components/TeamEditModal';
 import TeamHistoryModal from '../components/TeamHistoryModal';
@@ -170,6 +174,10 @@ export default function EventManage() {
   const [presetModalOpen, setPresetModalOpen] = useState(false);
   // 赛事导入弹窗
   const [importModalOpen, setImportModalOpen] = useState(false);
+  // 题组管理（题库）弹窗
+  const [topicGroupManagerOpen, setTopicGroupManagerOpen] = useState(false);
+  // 赛事题库（T4）弹窗
+  const [eventTopicBankOpen, setEventTopicBankOpen] = useState(false);
   // 赛事导出 loading
   const [exporting, setExporting] = useState(false);
   // 预设选中态（最近应用的方案）
@@ -1254,6 +1262,23 @@ export default function EventManage() {
                 >
                   导入赛事
                 </Button>
+                <Button
+                  icon={<DatabaseOutlined />}
+                  onClick={() => setTopicGroupManagerOpen(true)}
+                >
+                  题组管理
+                </Button>
+                <Tooltip
+                  title={selectedEvent ? '' : '请先在列表中选择要查看的赛事'}
+                >
+                  <Button
+                    icon={<BookOutlined />}
+                    disabled={!selectedEvent}
+                    onClick={() => setEventTopicBankOpen(true)}
+                  >
+                    赛事题库
+                  </Button>
+                </Tooltip>
                 <Tooltip
                   title={selectedEvent ? '' : '请先在列表中选择要导出的赛事'}
                 >
@@ -1724,6 +1749,29 @@ export default function EventManage() {
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         onSuccess={handleImportSuccess}
+      />
+
+      {/* 题组管理（题库）独立入口 */}
+      <TopicGroupManagerModal
+        open={topicGroupManagerOpen}
+        onClose={() => setTopicGroupManagerOpen(false)}
+      />
+
+      {/* 赛事题库（T4）：该赛事绑定题组下的辩题 + 已抽/未抽 + 允许重复开关 */}
+      <EventTopicBankModal
+        open={eventTopicBankOpen}
+        event={selectedEvent}
+        onClose={() => setEventTopicBankOpen(false)}
+        onEventUpdated={async () => {
+          if (selectedEvent) {
+            const fresh = await window.eventAPI.getEvent(selectedEvent.id);
+            if (fresh.success && fresh.data) setSelectedEvent(fresh.data);
+          }
+        }}
+        onOpenGroupManager={() => {
+          setEventTopicBankOpen(false);
+          setTopicGroupManagerOpen(true);
+        }}
       />
 
       {/* 新建/编辑赛事向导弹窗 */}

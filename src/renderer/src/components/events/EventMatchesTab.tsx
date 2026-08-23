@@ -45,6 +45,7 @@ import {
 import { useLocalAudioSrc } from '../../utils/useLocalAudioSrc'
 import MatchResultModal from './MatchResultModal'
 import MatchVerdictCard from './MatchVerdictCard'
+import TopicPickModal from './TopicPickModal'
 import type {
   Match,
   ScheduleDiffPreview,
@@ -83,7 +84,6 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
 
   // 配题
   const [topicFor, setTopicFor] = useState<Match | null>(null)
-  const [topicPick, setTopicPick] = useState<string | undefined>()
 
   // 计分亮牌
   const [resultFor, setResultFor] = useState<Match | null>(null)
@@ -221,16 +221,12 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
   }
 
   // ---- 配题（抽题结果计入该场）----
-  const handleAssignTopic = async () => {
-    if (!topicFor || !topicPick) {
-      toast.warning('请选择辩题')
-      return
-    }
-    const res = await window.matchAPI.update(topicFor.id, { topicId: topicPick })
+  const handleAssignTopic = async (topicId: string) => {
+    if (!topicFor) return
+    const res = await window.matchAPI.update(topicFor.id, { topicId })
     if (res.success) {
       toast.success('辩题已计入该场比赛')
       setTopicFor(null)
-      setTopicPick(undefined)
       void load()
     } else {
       toast.error(res.error || '配题失败')
@@ -492,16 +488,13 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         </Space>
       </Modal>
 
-      {/* 配题 */}
-      <Modal title="为该场配辩题" open={!!topicFor} onCancel={() => setTopicFor(null)} onOk={() => void handleAssignTopic()} okText="计入该场">
-        <Select
-          showSearch optionFilterProp="label" placeholder="选择辩题"
-          style={{ width: '100%' }}
-          value={topicPick}
-          onChange={setTopicPick}
-          options={topicStore.items.map((t) => ({ value: t.id, label: t.title }))}
-        />
-      </Modal>
+      {/* 配题（搜索/筛选/快速新建/标签，T5） */}
+      <TopicPickModal
+        open={!!topicFor}
+        eventId={eventId}
+        onClose={() => setTopicFor(null)}
+        onConfirm={(topicId) => void handleAssignTopic(topicId)}
+      />
 
       {/* 计入赛果（亮牌：多裁判评决） */}
       <MatchResultModal

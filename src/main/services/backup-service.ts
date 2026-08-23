@@ -23,6 +23,7 @@ import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../db/repository/undo-log.repo'
 import { judgeHistoryRepo } from '../db/repository/judge-history.repo'
+import { topicGroupRepo } from '../db/repository/topic-group.repo'
 import {
   findForBackup as badgeFindForBackup,
   encodeBadgeFiles as badgeEncodeBadgeFiles,
@@ -121,6 +122,14 @@ export function exportBackup(params: BackupParams): BackupPackage {
       tables.badges = badgeData.registry
       tables.team_bindings = badgeData.bindings
       tables.badge_files = badgeEncodeBadgeFiles(badgeData.fileNames)
+    }
+
+    if (cats.includes('topic_groups')) {
+      const data = topicGroupRepo.findAllForBackup()
+      tables.topic_groups = data.topic_groups
+      tables.topic_group_items = data.topic_group_items
+      tables.event_topic_groups = data.event_topic_groups
+      tables.round_topic_groups = data.round_topic_groups
     }
   })
   tx()

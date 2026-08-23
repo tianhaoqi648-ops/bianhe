@@ -19,8 +19,9 @@ import type { Topic } from '@shared/types'
 // vi.hoisted：提升 mock 函数
 // ============================================================
 
-const { mockCreateTopic } = vi.hoisted(() => ({
-  mockCreateTopic: vi.fn()
+const { mockCreateTopic, mockEnsureTopicInDefaultGroup } = vi.hoisted(() => ({
+  mockCreateTopic: vi.fn(),
+  mockEnsureTopicInDefaultGroup: vi.fn()
 }))
 
 // ============================================================
@@ -30,6 +31,12 @@ const { mockCreateTopic } = vi.hoisted(() => ({
 vi.mock('@main/db/repository/topic.repo', () => ({
   topicRepo: {
     createTopic: mockCreateTopic
+  }
+}))
+
+vi.mock('@main/db/repository/topic-group.repo', () => ({
+  topicGroupRepo: {
+    ensureTopicInDefaultGroup: mockEnsureTopicInDefaultGroup
   }
 }))
 
@@ -68,6 +75,7 @@ beforeEach(() => {
   mockCreateTopic.mockImplementation((input: { title: string }) =>
     makeCreatedTopic(input.title)
   )
+  mockEnsureTopicInDefaultGroup.mockResolvedValue(1)
 })
 
 describe('create_topic：title 校验', () => {
@@ -190,6 +198,29 @@ describe('create_topic：正常创建', () => {
       source_type: null,
       tags: null
     })
+  })
+})
+
+describe('create_topic：默认归入默认题库（赛事题库 T2）', () => {
+  it('创建成功后把新题 id 归入默认题库', async () => {
+    const created = makeCreatedTopic('默认归入')
+    created.id = 'topic-abc'
+    mockCreateTopic.mockReturnValue(created)
+
+    const result = await createTopicTool.execute({ title: '默认归入' })
+
+    expect(result.id).toBe('topic-abc')
+    expect(mockEnsureTopicInDefaultGroup).toHaveBeenCalledTimes(1)
+    expect(mockEnsureTopicInDefaultGroup).toHaveBeenCalledWith('topic-abc')
+  })
+
+  it('createTopic 失败时不触发默认归入', async () => {
+    mockCreateTopic.mockImplementation(() => {
+      throw new Error('插入失败')
+    })
+
+    await expect(createTopicTool.execute({ title: '失败用例' })).rejects.toThrow(/插入失败/)
+    expect(mockEnsureTopicInDefaultGroup).not.toHaveBeenCalled()
   })
 })
 

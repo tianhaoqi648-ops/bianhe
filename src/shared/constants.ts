@@ -43,7 +43,8 @@ export const BACKUP_CATEGORIES = [
   { key: 'settings', label: '设置配置', tables: ['settings'] },
   { key: 'audit_history', label: '审计与历史', tables: ['audit_log', 'import_batch', 'batch_edit_history', 'batch_edit_history_item', 'undo_log'] },
   { key: 'judge_history', label: 'AI 裁判历史', tables: ['judge_history'] },
-  { key: 'badges', label: '队徽库', tables: ['badges', 'team_bindings', 'badge_files'] }
+  { key: 'badges', label: '队徽库', tables: ['badges', 'team_bindings', 'badge_files'] },
+  { key: 'topic_groups', label: '赛事题库', tables: ['topic_groups', 'topic_group_items', 'event_topic_groups', 'round_topic_groups'] }
 ] as const
 
 export type BackupCategoryKey = (typeof BACKUP_CATEGORIES)[number]['key']
@@ -68,5 +69,6 @@ export const BACKUP_RESTORE_ORDER: BackupCategoryKey[] = [
   'settings', // 独立
   'audit_history', // 独立
   'judge_history', // 独立
-  'badges' // 独立
+  'badges', // 独立
+  'topic_groups' // topic_groups 依赖 topics + events（topic_group_items→topics，event_topic_groups→events）
 ]

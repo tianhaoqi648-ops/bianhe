@@ -15,6 +15,7 @@ import * as XLSX from 'xlsx'
 import { topicRepo } from '../db/repository/topic.repo'
 import { drawRepo } from '../db/repository/draw.repo'
 import { eventRepo } from '../db/repository/event.repo'
+import { topicGroupRepo, type TopicGroup } from '../db/repository/topic-group.repo'
 import {
   IPC_CHANNELS,
   type ApiResponse,
@@ -307,6 +308,40 @@ export function registerExportIpc(): void {
           page: 1,
           pageSize: 100000
         })
+
+        // T7：赛事题库随包导出
+        // - eventTopicGroupIds：赛事绑定的题库 id 列表（来自 event_topic_groups）
+        // - roundTopicGroupIds：roundId -> 该轮绑定题库 id（来自 round_topic_groups）
+        // - topicGroups：上述被引用题库各自的定义（topic_groups 行，缺失时导入侧按 id 幂等恢复）
+        // - topicGroupItems：上述题库的成员（topic_group_items 行，仅导入侧 topic 已存在时关联）
+        const eventTopicGroupIds = topicGroupRepo.listGroupsByEvent(req.eventId).map((g) => g.id)
+        const roundTopicGroupIds: Record<string, string[]> = {}
+        const groupDefMap = new Map<string, TopicGroup>()
+        for (const g of topicGroupRepo.listGroupsByEvent(req.eventId)) {
+          groupDefMap.set(g.id, g)
+        }
+        for (const r of rounds) {
+          const roundGroups = topicGroupRepo.listGroupsByRound(r.id)
+          if (roundGroups.length > 0) {
+            roundTopicGroupIds[r.id] = roundGroups.map((g) => g.id)
+          }
+          for (const g of roundGroups) {
+            if (!groupDefMap.has(g.id)) groupDefMap.set(g.id, g)
+          }
+        }
+        const topicGroupItems: Array<{ group_id: string; topic_id: string }> = []
+        for (const gid of groupDefMap.keys()) {
+          for (const tid of topicGroupRepo.listTopicIdsByGroup(gid)) {
+            topicGroupItems.push({ group_id: gid, topic_id: tid })
+          }
+        }
+        const topicGroups = Array.from(groupDefMap.values()).map((g) => ({
+          id: g.id,
+          name: g.name,
+          is_default: g.isDefault ? 1 : 0,
+          created_at: g.createdAt
+        }))
+
         const pkg = {
           event,
           rounds,
@@ -314,6 +349,10 @@ export function registerExportIpc(): void {
           groups,
           teamHistory,
           drawSessions: sessions,
+          eventTopicGroupIds,
+          roundTopicGroupIds,
+          topicGroups,
+          topicGroupItems,
           exportedAt: new Date().toISOString()
         }
         const win = getActiveWindow()
@@ -342,7 +381,10 @@ export function registerExportIpc(): void {
               teams.length +
               groups.length +
               teamHistory.length +
-              sessions.length
+              sessions.length +
+              eventTopicGroupIds.length +
+              topicGroups.length +
+              topicGroupItems.length
           }
         }
       } catch (e) {

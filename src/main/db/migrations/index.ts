@@ -19,6 +19,8 @@ import { addMissingIndexes } from './20260903_add_missing_indexes'
 import { createMatchesTable } from './20260904_create_matches'
 import { addTeamHistoryTopicTitle } from './20260905_add_team_history_topic_title'
 import { createJudgeHistoryTable } from './20260912_create_judge_history'
+import { createTopicGroupsTable } from './20260913_create_topic_groups'
+import { createRoundTopicGroupsTable } from './20260914_create_round_topic_groups'
 
 interface Migration {
   id: string
@@ -474,6 +476,22 @@ const MIGRATIONS: Migration[] = [
       // T1：AI 裁判历史表（judge_match / judge_debate / judge_speech /
       //     detect_stage / simulate_opponent 结果持久化，跨页/重启保留）。
       createJudgeHistoryTable(db)
+    }
+  },
+  {
+    id: '20260913_create_topic_groups',
+    up: (db) => {
+      // T1（赛事题库·数据层）：topic_groups / topic_group_items / event_topic_groups
+      //     三张题组表 + 默认题库种子。
+      createTopicGroupsTable(db)
+    }
+  },
+  {
+    id: '20260914_create_round_topic_groups',
+    up: (db) => {
+      // T1（赛事题库深化·数据层）：round_topic_groups 轮次库绑定表
+      //      + events.bank_config 选题模式配置列。
+      createRoundTopicGroupsTable(db)
     }
   },
   {

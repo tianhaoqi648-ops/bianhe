@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS events (
   end_date      TEXT,
   status        TEXT,
   created_at    TEXT,
-  allow_repeat  INTEGER NOT NULL DEFAULT 0   -- 是否允许辩题重复（0=不允许，1=允许）
+  allow_repeat  INTEGER NOT NULL DEFAULT 0,  -- 是否允许辩题重复（0=不允许，1=允许）
+  bank_config   TEXT                         -- JSON：赛事选题模式配置 { mode, priorityOrder?, roundBanks? }
 );
 
 -- ------------------------------------------------------------
@@ -153,6 +154,45 @@ CREATE TABLE IF NOT EXISTS topic_custom_fields (
   created_at  TEXT NOT NULL
 );
 
+-- ------------------------------------------------------------
+-- 12. topic_groups: 题组（题库）
+-- ------------------------------------------------------------
+-- 全局可复用的题组，可绑定多个赛事抽题/导入。is_default=1 为预置「默认题库」。
+CREATE TABLE IF NOT EXISTS topic_groups (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  is_default  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT
+);
+
+-- ------------------------------------------------------------
+-- 13. topic_group_items: 题组 ↔ 辩题（多对多）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS topic_group_items (
+  group_id  TEXT NOT NULL REFERENCES topic_groups(id) ON DELETE CASCADE,
+  topic_id  TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+  PRIMARY KEY (group_id, topic_id)
+);
+
+-- ------------------------------------------------------------
+-- 14. event_topic_groups: 赛事 ↔ 题组（多对多）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS event_topic_groups (
+  event_id  TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  group_id  TEXT NOT NULL REFERENCES topic_groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (event_id, group_id)
+);
+
+-- ------------------------------------------------------------
+-- 15. round_topic_groups: 轮次 ↔ 题组（多对多）
+-- ------------------------------------------------------------
+-- 用于「按轮次指定题库」（by_round 选题模式），如小组赛用 A 库、决赛用 B 库。
+CREATE TABLE IF NOT EXISTS round_topic_groups (
+  round_id  TEXT NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  group_id  TEXT NOT NULL REFERENCES topic_groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (round_id, group_id)
+);
+
 -- ============================================================
 -- 索引
 -- ============================================================
@@ -174,3 +214,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action             ON audit_log(action)
 CREATE INDEX IF NOT EXISTS idx_audit_log_target_type        ON audit_log(target_type);
 CREATE INDEX IF NOT EXISTS idx_topics_created_at            ON topics(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_created_at            ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_topic_groups_is_default       ON topic_groups(is_default);
+CREATE INDEX IF NOT EXISTS idx_topic_group_items_topic_id    ON topic_group_items(topic_id);
+CREATE INDEX IF NOT EXISTS idx_event_topic_groups_group_id   ON event_topic_groups(group_id);
+CREATE INDEX IF NOT EXISTS idx_round_topic_groups_group_id   ON round_topic_groups(group_id);

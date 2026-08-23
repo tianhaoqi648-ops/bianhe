@@ -419,6 +419,8 @@ export interface DrawParams {
   test_mode?: boolean
   /** 允许辩题重复：跳过题池不足检查，使用有放回抽样 */
   allow_repeat?: boolean
+  /** 抽题选库：限定从某个题组（题库）抽取。为空时不限（全库候选）。 */
+  group_id?: string | null
   /** P3.1 Task 1：揭晓动画模式（仅客户端使用，引擎忽略此字段） */
   reveal_mode?: 'flip' | 'tear' | 'spotlight' | 'fade'
 }
@@ -568,6 +570,7 @@ export type BackupCategory =
   | 'audit_history'
   | 'judge_history'
   | 'badges'
+  | 'topic_groups'
 
 export type BackupImportStrategy = 'clear_rebuild' | 'skip_existing' | 'overwrite_existing'
 
@@ -1174,6 +1177,127 @@ export interface JudgeHistoryFilter {
   toolName?: string | null
 }
 
+// ============================================================
+// 题组（题库 · Event Topic Bank T2）
+//
+// 与 topic-group.repo.ts 对齐：题组是全局可复用、可绑多赛事的题库；
+// 含预置「默认题库」（isDefault=true），新辩题默认归入。
+// ============================================================
+
+/** 题组（题库）：id/name/isDefault/createdAt。默认题库 isDefault=true 且不可删除。 */
+export interface TopicGroup {
+  id: string
+  name: string
+  isDefault: boolean
+  createdAt: string | null
+}
+
+/** 题组内的一道辩题（join topics 后的应用层形态，对齐 topic-group.repo 的 GroupTopic）。 */
+export interface GroupTopic {
+  id: string
+  title: string
+  type: string | null
+  domain: string | null
+  difficulty: string | null
+  source: string | null
+  source_type: string | null
+  tags: string[] | null
+  status: string
+  created_at: string
+}
+
+/** 新建题组入参。 */
+export interface TopicGroupCreateInput {
+  name: string
+}
+
+/** 重命名题组入参。 */
+export interface TopicGroupRenameInput {
+  id: string
+  name: string
+}
+
+/** 往题组加入若干辩题（可多选 add）. */
+export interface TopicGroupAddTopicsInput {
+  groupId: string
+  topicIds: string[]
+}
+
+/** 从题组移除若干辩题。 */
+export interface TopicGroupRemoveTopicsInput {
+  groupId: string
+  topicIds: string[]
+}
+
+/** 批量把一组题同时加入多个题库（去重，忽略已存在成员）。 */
+export interface TopicGroupBatchAddInput {
+  topicIds: string[]
+  groupIds: string[]
+}
+
+/** 从某题库批量移除若干辩题。 */
+export interface TopicGroupBatchRemoveInput {
+  groupId: string
+  topicIds: string[]
+}
+
+/** 整库复制/移动入参：把源题库全部题复制/移动到多个目标题库（同库目标跳过）。 */
+export interface TopicGroupCopyInput {
+  srcGroupId: string
+  targetGroupIds: string[]
+}
+
+/** 整库复制/移动结果：每个目标题库实际新增的成员数。 */
+export interface GroupCopyResult {
+  groupId: string
+  added: number
+}
+
+/** 给赛事绑定若干题组（可多选）。 */
+export interface EventBindGroupsInput {
+  eventId: string
+  groupIds: string[]
+}
+
+/** 解绑赛事与某个题组。 */
+export interface EventUnbindGroupInput {
+  eventId: string
+  groupId: string
+}
+
+/** 选题模式：single=单选库 / union=绑定并集 / priority=顺序后备 / by_round=按轮次指定库。 */
+export type DrawBankMode = 'single' | 'union' | 'priority' | 'by_round'
+
+/**
+ * 赛事选题模式配置（存 events.bank_config JSON，缺省回退 single）。
+ * 结构等价 topic-group.repo 的 EventBankConfig；此定义供两侧共享。
+ */
+export interface EventBankConfig {
+  mode: DrawBankMode
+  /** 题库优先级/顺序（single 取首库，priority 全序）。 */
+  priorityOrder?: string[]
+  /** by_round 模式：roundId -> 该轮使用的题库 id 列表。 */
+  roundBanks?: Record<string, string[]>
+}
+
+/** 写入赛事选题模式配置的入参。 */
+export interface EventSetBankConfigInput {
+  eventId: string
+  config: EventBankConfig
+}
+
+/** 给轮次绑定若干题组（对应 round_topic_groups 表）。 */
+export interface RoundBindGroupsInput {
+  roundId: string
+  groupIds: string[]
+}
+
+/** 解绑轮次与某个题组。 */
+export interface RoundUnbindGroupInput {
+  roundId: string
+  groupId: string
+}
+
 export const IPC_CHANNELS = {
   // topic
   TOPIC_LIST: 'topic:list',
@@ -1387,7 +1511,34 @@ export const IPC_CHANNELS = {
   JUDGE_LIST_HISTORY: 'judge:listHistory',
   JUDGE_GET_HISTORY: 'judge:getHistory',
   JUDGE_SAVE_HISTORY: 'judge:saveHistory',
-  JUDGE_DELETE_HISTORY: 'judge:deleteHistory'
+  JUDGE_DELETE_HISTORY: 'judge:deleteHistory',
+
+  // 题组（题库 · Event Topic Bank T2 桥接）
+  GROUP_TOPIC_LIST: 'groupTopic:list',
+  GROUP_TOPIC_CREATE: 'groupTopic:create',
+  GROUP_TOPIC_RENAME: 'groupTopic:rename',
+  GROUP_TOPIC_DELETE: 'groupTopic:delete',
+  GROUP_TOPIC_GET_DEFAULT: 'groupTopic:getDefault',
+  // 成员
+  GROUP_TOPIC_LIST_TOPICS: 'groupTopic:listTopics',
+  GROUP_TOPIC_ADD_TOPICS: 'groupTopic:addTopics',
+  GROUP_TOPIC_REMOVE_TOPICS: 'groupTopic:removeTopics',
+  // 批量增减 与 整库复制/移动（T1：赛事题库 UX 后端操作 helper）
+  GROUP_TOPIC_BATCH_ADD: 'groupTopic:batchAddToGroups',
+  GROUP_TOPIC_BATCH_REMOVE: 'groupTopic:batchRemoveFromGroup',
+  GROUP_TOPIC_COPY_GROUP: 'groupTopic:copyGroupToGroup',
+  GROUP_TOPIC_MOVE_GROUP: 'groupTopic:moveGroupToGroup',
+  // 赛事绑定
+  GROUP_TOPIC_LIST_BY_EVENT: 'groupTopic:listGroupsByEvent',
+  GROUP_TOPIC_BIND_EVENT: 'groupTopic:bindEventGroups',
+  GROUP_TOPIC_UNBIND_EVENT: 'groupTopic:unbindEventGroup',
+  // 赛事选题模式配置（读 events.bank_config）
+  GROUP_TOPIC_GET_EVENT_BANK_CONFIG: 'groupTopic:getEventBankConfig',
+  GROUP_TOPIC_SET_EVENT_BANK_CONFIG: 'groupTopic:setEventBankConfig',
+  // 轮次库绑定（round_topic_groups）
+  GROUP_TOPIC_BIND_ROUND_GROUPS: 'groupTopic:bindRoundGroups',
+  GROUP_TOPIC_UNBIND_ROUND_GROUP: 'groupTopic:unbindRoundGroup',
+  GROUP_TOPIC_LIST_BY_ROUND: 'groupTopic:listGroupsByRound'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -1402,6 +1553,8 @@ export interface ImportExecuteRequest {
   fileName?: string
   /** 新值映射规则（渲染进程已应用 map 改写 topics，主进程仅需持久化 add） */
   valueMapping?: ValueMapping
+  /** 目标题组（可多选，赛事题库 T2）：非空时新题关联到这些题组；为空时新题默认进「默认题库」 */
+  groupIds?: string[]
 }
 
 export interface ImportExecuteResult {
@@ -1544,6 +1697,14 @@ export interface ImportEventPackagePreviewResult {
   drawSessionCount: number
   /** 队伍历史记录数 */
   teamHistoryCount: number
+  /** 赛事绑定的题库数（T7） */
+  eventTopicGroupCount?: number
+  /** 轮次绑定的题库组数（T7） */
+  roundTopicGroupCount?: number
+  /** 包内携带的题库定义数（T7） */
+  topicGroupCount?: number
+  /** 包内携带的题库成员数（T7） */
+  topicGroupItemCount?: number
   /** 是否与库内已有赛事同名（冲突检测） */
   hasConflict: boolean
   /** 导出时间（ISO 字符串，可选） */

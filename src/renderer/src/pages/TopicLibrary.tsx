@@ -17,6 +17,7 @@ import {
   Checkbox,
   Tooltip,
   Table,
+  Tag,
   Row,
   Col,
   Radio,
@@ -57,7 +58,10 @@ import {
   DownloadOutlined,
   EyeOutlined,
   MoreOutlined,
-  SettingOutlined
+  SettingOutlined,
+  SwapOutlined,
+  FolderAddOutlined,
+  FolderOpenOutlined
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import type { InputRef } from 'antd';
@@ -73,6 +77,10 @@ import type {
 } from '../../../shared/types';
 import TopicCard from '../components/TopicCard';
 import DimensionTag from '../components/common/DimensionTag';
+import { useTopicGroupStore } from '../stores/topicGroupStore';
+import { useTopicGroupFileOps } from '../hooks/useTopicGroupFileOps';
+import TopicGroupTargetPicker from '../components/TopicGroupTargetPicker';
+import TopicGroupManagerModal from '../components/TopicGroupManagerModal';
 import FilterPanel, {
   TYPE_OPTIONS,
   DIFFICULTY_OPTIONS
@@ -246,6 +254,9 @@ export default function TopicLibrary() {
   const store = useTopicStore();
   const toast = useToast();
   const navigate = useNavigate();
+  // 题组（题库）成员映射 / 文件式操作（T2：徽标、按库筛选、就地加/移、批量复制/移动）
+  const groupStore = useTopicGroupStore();
+  const ops = useTopicGroupFileOps();
   // 搜索框 ref（供 Ctrl+K / / 快捷键聚焦）
   const searchInputRef = useRef<InputRef>(null);
 
@@ -298,6 +309,8 @@ export default function TopicLibrary() {
   // 导入弹窗 & 去重检查弹窗
   const [importOpen, setImportOpen] = useState(false);
   const [importHistoryOpen, setImportHistoryOpen] = useState(false);
+  // 题库管理弹窗（新建 / 重命名 / 删除题库 / 进入工作区）
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
   // 批量编辑
   const batchEditStore = useBatchEditStore();
@@ -308,8 +321,34 @@ export default function TopicLibrary() {
 
   // ====== 自定义字段元数据（动态加载到 DIMENSIONS 和 FilterPanel） ======
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
-  // 自定义字段候选值：fieldKey → 候选值数组（用于 FilterPanel 下拉）
+  // ====== 自定义字段候选值：fieldKey → 候选值数组（用于 FilterPanel 下拉） ======
   const [customFieldOptions, setCustomFieldOptions] = useState<Record<string, string[]>>({});
+
+  // ====== T2：按题库筛选 + 就地/批量题组操作 ======
+  // '__all__' 表示不限题库
+  const [activeGroupFilterId, setActiveGroupFilterId] = useState<string>('__all__');
+  // 目标题库选择弹窗：add=加入题组 / remove=移出题组 / copy=复制到题库 / move=移动到题库
+  const [targetPicker, setTargetPicker] = useState<{
+    mode: 'add' | 'remove' | 'copy' | 'move';
+    title: string;
+    sourceGroupId?: string | null;
+  } | null>(null);
+  const [targetSaving, setTargetSaving] = useState(false);
+
+  // 首次进入：全量加载 topic↔group 成员映射（徽标 + 按库筛选数据源）
+  useEffect(() => {
+    void groupStore.loadMemberMapping();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 按题库筛选后的列表（前端过滤当前页 store.items）
+  const filteredItems = useMemo(() => {
+    if (activeGroupFilterId === '__all__') return store.items;
+    const memberSet = new Set(
+      groupStore.memberTopicIdsByGroup[activeGroupFilterId] ?? []
+    );
+    return store.items.filter((t) => memberSet.has(t.id));
+  }, [store.items, activeGroupFilterId, groupStore.memberTopicIdsByGroup]);
 
   // 拉取所有 tag 候选（取自当前列表，简化处理）
   const tagOptions = useMemo(() => {
@@ -969,6 +1008,67 @@ export default function TopicLibrary() {
     }
   };
 
+  // ====== T2：就地/批量 题组操作（加入 / 移出 / 复制到 / 移动到 题库） ======
+  const openAddToGroup = () =>
+    setTargetPicker({ mode: 'add', title: '加入题组' });
+  const openRemoveFromGroup = () =>
+    setTargetPicker({ mode: 'remove', title: '移出题组' });
+  const openCopyToGroup = () =>
+    setTargetPicker({ mode: 'copy', title: '复制到题库' });
+  const openMoveToGroup = () => {
+    if (activeGroupFilterId === '__all__') {
+      toast.info('请先按上方的「按题库筛选」确定源题库，再执行移动');
+      return;
+    }
+    setTargetPicker({
+      mode: 'move',
+      title: '移动到题库',
+      sourceGroupId: activeGroupFilterId
+    });
+  };
+
+  // 在目标题库选择弹窗确认后执行
+  const handleTargetConfirm = async (targetGroupIds: string[]) => {
+    if (!targetPicker) return;
+    const ids = await store.getSelectedIdsForBatchOp();
+    setTargetSaving(true);
+    try {
+      if (ids.length === 0) {
+        toast.warning('请先选择辩题');
+        return;
+      }
+      const mode = targetPicker.mode;
+      if (mode === 'remove') {
+        const groupId = targetGroupIds[0];
+        const n = await ops.removeTopicsFromGroup(groupId, ids);
+        toast.success(`已从题库移出 ${n} 道题`);
+      } else if (mode === 'move') {
+        if (targetPicker.sourceGroupId) {
+          const n = await ops.moveSelectedTopicsToGroups(
+            ids,
+            targetGroupIds,
+            targetPicker.sourceGroupId
+          );
+          toast.success(`已移动 ${ids.length} 道题（新增 ${n} 道）`);
+        }
+      } else {
+        // add / copy（均为「加入目标题库」，源保留）
+        const n = await ops.addTopicsToGroups(ids, targetGroupIds);
+        toast.success(
+          mode === 'copy' ? `已复制 ${n} 道题到目标题库` : `已加入 ${n} 道题`
+        );
+      }
+      setTargetPicker(null);
+      store.clearSelection();
+      store.fetchList();
+      await groupStore.loadMemberMapping();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '操作失败');
+    } finally {
+      setTargetSaving(false);
+    }
+  };
+
   // ====== 批量编辑（弹窗） ======
   const handleOpenBatchEdit = () => {
     if (!hasSelection) {
@@ -1045,6 +1145,39 @@ export default function TopicLibrary() {
         label: d,
         onClick: () => handleBatchChangeDifficulty(d)
       }))
+    },
+    {
+      key: 'groupOps',
+      icon: <FolderOpenOutlined />,
+      label: '题库操作',
+      children: [
+        {
+          key: 'copyToGroup',
+          icon: <CopyOutlined />,
+          label: '复制到题库…',
+          onClick: openCopyToGroup
+        },
+        {
+          key: 'moveToGroup',
+          icon: <SwapOutlined />,
+          label: '移动到题库…',
+          onClick: openMoveToGroup
+        },
+        { type: 'divider' as const },
+        {
+          key: 'addToGroup',
+          icon: <FolderAddOutlined />,
+          label: '加入题组…',
+          onClick: openAddToGroup
+        },
+        {
+          key: 'removeFromGroup',
+          icon: <FolderOpenOutlined />,
+          label: '移出题组…',
+          danger: true,
+          onClick: openRemoveFromGroup
+        }
+      ]
     },
     { type: 'divider' },
     {
@@ -1213,6 +1346,29 @@ export default function TopicLibrary() {
         }
       },
       {
+        title: '所属题库',
+        dataIndex: 'groups',
+        key: 'groups',
+        width: 160,
+        render: (_: unknown, record: Topic) => {
+          const names = groupStore.topicToGroupNameMap[record.id] ?? [];
+          if (names.length === 0) return <Text type="secondary">-</Text>;
+          const visible = names.slice(0, 3);
+          return (
+            <Space size={4} wrap>
+              {visible.map((g) => (
+                <Tag key={g} color="blue" style={{ marginInlineEnd: 0 }}>
+                  {g}
+                </Tag>
+              ))}
+              {names.length > 3 && (
+                <Text type="secondary">+{names.length - 3}</Text>
+              )}
+            </Space>
+          );
+        }
+      },
+      {
         title: '操作',
         key: 'action',
         width: 140,
@@ -1248,7 +1404,7 @@ export default function TopicLibrary() {
     ],
     // 依赖 token 颜色、handleEdit、handleDelete（这两个 handler 通过 useCallback 闭包稳定）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [token.colorText, token.colorTextSecondary]
+    [token.colorText, token.colorTextSecondary, groupStore.topicToGroupNameMap]
   );
 
   // ====== 可见列过滤（SubTask 5.3 + 21.2） ======
@@ -1370,6 +1526,26 @@ export default function TopicLibrary() {
                 />
                 <Button icon={<ReloadOutlined />} onClick={() => store.fetchList()}>
                   刷新
+                </Button>
+                <Select
+                  size="middle"
+                  value={activeGroupFilterId}
+                  onChange={(v) => setActiveGroupFilterId(v)}
+                  style={{ width: 200 }}
+                  placeholder="按题库筛选"
+                  options={[
+                    { value: '__all__', label: '全部题库' },
+                    ...groupStore.groups.map((g) => ({
+                      value: g.id,
+                      label: g.name
+                    }))
+                  ]}
+                />
+                <Button
+                  icon={<FolderOpenOutlined />}
+                  onClick={() => setGroupManagerOpen(true)}
+                >
+                  题库管理
                 </Button>
                 {store.items.length > 0 && (
                   <Checkbox
@@ -1656,7 +1832,7 @@ export default function TopicLibrary() {
                 {/* SubTask 5.1：行双击打开编辑 Modal；SubTask 5.2：行右键上下文菜单；SubTask 5.3：表头右键列配置 */}
                 <Dropdown menu={{ items: contextMenuItems }} trigger={['contextMenu']}>
                   <Table<Topic>
-                    dataSource={store.items}
+                    dataSource={filteredItems}
                     columns={visibleColumns}
                     rowKey="id"
                     size={
@@ -1744,7 +1920,7 @@ export default function TopicLibrary() {
                  响应式断点：移动 <768px → 2 列 (xs=12) / 平板 768-1023px → 3 列 (md=8) / 桌面 ≥1024px → 4 列 (lg=6)
                  保留 Task 14 添加的 staggered 进入动画 */
               <Row gutter={[16, 16]}>
-                {store.items.map((t, index) => (
+                {filteredItems.map((t, index) => (
                   <Col key={t.id} xs={12} sm={12} md={8} lg={6}>
                     <div
                       className={index < 8 ? 'fade-in-up-staggered' : undefined}
@@ -1956,6 +2132,33 @@ export default function TopicLibrary() {
           </div>
         </div>
       </Modal>
+
+      {/* T1：题库管理（新建 / 重命名 / 删除题库 / 进入工作区） */}
+      <TopicGroupManagerModal
+        open={groupManagerOpen}
+        onClose={() => setGroupManagerOpen(false)}
+      />
+
+      {/* T2：目标题库选择（加入 / 移出 / 复制到 / 移动到） */}
+      <TopicGroupTargetPicker
+        open={targetPicker !== null}
+        title={targetPicker?.title ?? ''}
+        description={
+          targetPicker?.mode === 'move'
+            ? '选中题将加入以下目标题库，并从当前筛选的源题库移除'
+            : targetPicker?.mode === 'remove'
+              ? '把选中题从以下题库中移出（移除后题目保留在全局题库与其他题组）'
+              : targetPicker?.mode === 'copy'
+                ? '把选中题复制（加入）到以下目标题库'
+                : '把选中题加入以下题库'
+        }
+        groups={groupStore.groups}
+        disabledGroupIds={[]}
+        singleSelect={targetPicker?.mode === 'remove'}
+        confirmLoading={targetSaving}
+        onCancel={() => setTargetPicker(null)}
+        onConfirm={handleTargetConfirm}
+      />
     </>
   );
 }

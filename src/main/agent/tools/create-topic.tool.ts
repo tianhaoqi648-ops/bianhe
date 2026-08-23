@@ -18,6 +18,7 @@ import type { Topic } from '@shared/types'
 // 此处直接引用 repo 的类型，确保与 createTopic 入参精确对齐。
 import type { TopicCreateInput } from '../../db/repository/topic.repo'
 import { topicRepo } from '../../db/repository/topic.repo'
+import { topicGroupRepo } from '../../db/repository/topic-group.repo'
 
 /** create_topic 工具入参（与 parameters schema 对齐） */
 interface CreateTopicArgs {
@@ -121,6 +122,11 @@ export const createTopicTool: ToolDefinition<CreateTopicArgs, Topic> = {
     }
 
     // 3. 调用 repo 创建并返回
-    return topicRepo.createTopic(input)
+    const created = topicRepo.createTopic(input)
+
+    // 4. 新辩题默认归入「默认题库」（赛事题库 T2：未指定题组的新题进默认题库）
+    await topicGroupRepo.ensureTopicInDefaultGroup(created.id)
+
+    return created
   }
 }

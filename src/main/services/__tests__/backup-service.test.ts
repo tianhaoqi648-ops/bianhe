@@ -76,6 +76,15 @@ vi.mock('../../db/repository/judge-history.repo', () => ({
     findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
   }
 }))
+vi.mock('../../db/repository/topic-group.repo', () => ({
+  topicGroupRepo: {
+    findAllForBackup: vi.fn<() => {
+      topic_groups: Array<Record<string, unknown>>
+      topic_group_items: Array<Record<string, unknown>>
+      event_topic_groups: Array<Record<string, unknown>>
+    }>(() => ({ topic_groups: [], topic_group_items: [], event_topic_groups: [] }))
+  }
+}))
 vi.mock('../../services/badge-storage', () => ({
   findForBackup: vi.fn<() => { registry: unknown[]; bindings: Record<string, unknown>; fileNames: string[] }>(),
   encodeBadgeFiles: vi.fn<() => Record<string, string>>(),
@@ -113,7 +122,11 @@ vi.mock('../../db/repository/utils', () => ({
     batch_edit_history: ['id'],
     batch_edit_history_item: ['id'],
     undo_log: ['id'],
-    judge_history: ['id']
+    judge_history: ['id'],
+    topic_groups: ['id'],
+    topic_group_items: ['group_id', 'topic_id'],
+    event_topic_groups: ['event_id', 'group_id'],
+    round_topic_groups: ['round_id', 'group_id']
   } as Record<string, string[]>
 }))
 
@@ -157,6 +170,7 @@ import { importBatchRepo } from '../../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../../db/repository/undo-log.repo'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { topicGroupRepo } from '../../db/repository/topic-group.repo'
 import {
   findForBackup as badgeFindForBackup,
   encodeBadgeFiles as badgeEncodeBadgeFiles,
@@ -242,7 +256,8 @@ describe('backup-service', () => {
       'settings',
       'audit_history',
       'judge_history',
-      'badges'
+      'badges',
+      'topic_groups'
     ]
 
     beforeEach(() => {
@@ -292,6 +307,12 @@ describe('backup-service', () => {
       vi.mocked(judgeHistoryRepo.findAllForBackup).mockReturnValue([
         { id: 'jh1', judge_id: 'j1', result_json: '{"winner":"aff"}' }
       ])
+      vi.mocked(topicGroupRepo.findAllForBackup).mockReturnValue({
+        topic_groups: [{ id: 'tg1', name: '默认题库', is_default: 1 }],
+        topic_group_items: [{ group_id: 'tg1', topic_id: 't1' }],
+        event_topic_groups: [{ event_id: 'e1', group_id: 'tg1' }],
+        round_topic_groups: [{ round_id: 'r1', group_id: 'tg1' }]
+      })
       vi.mocked(badgeFindForBackup).mockReturnValue({
         registry: [{ id: 'custom-1', name: '校徽A', kind: 'custom', fileName: 'a.png' }],
         bindings: { team1: 'custom-1' },
@@ -305,9 +326,9 @@ describe('backup-service', () => {
 
       // 版本号正确
       expect(pkg.version).toBe(SUPPORTED_BACKUP_VERSION)
-      // categories 包含全部 9 个
+      // categories 包含全部 10 个
       expect(pkg.categories).toEqual(allCategories)
-      expect(pkg.categories).toHaveLength(9)
+      expect(pkg.categories).toHaveLength(10)
       // tables 包含所有预期的表 key
       const expectedTables = [
         'topics',
@@ -347,6 +368,8 @@ describe('backup-service', () => {
       ])
       expect(pkg.tables.team_bindings).toEqual({ team1: 'custom-1' })
       expect(pkg.tables.badge_files).toEqual({ 'a.png': 'base64badge' })
+      // 轮次库绑定表随 topic_groups 类别导出
+      expect(pkg.tables.round_topic_groups).toEqual([{ round_id: 'r1', group_id: 'tg1' }])
       // exportedAt 是合法 ISO 时间字符串
       const exportedAt = pkg.exportedAt
       expect(typeof exportedAt).toBe('string')
@@ -373,11 +396,16 @@ describe('backup-service', () => {
       expect(pkg.tables).not.toHaveProperty('badges')
       expect(pkg.tables).not.toHaveProperty('team_bindings')
       expect(pkg.tables).not.toHaveProperty('badge_files')
+      // 未勾选 topic_groups 时不应导出题组三表
+      expect(pkg.tables).not.toHaveProperty('topic_groups')
+      expect(pkg.tables).not.toHaveProperty('topic_group_items')
+      expect(pkg.tables).not.toHaveProperty('event_topic_groups')
       // 其他 repo 不应被调用
       expect(eventRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(drawRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(auditRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(judgeHistoryRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(topicGroupRepo.findAllForBackup).not.toHaveBeenCalled()
       expect(badgeFindForBackup).not.toHaveBeenCalled()
       expect(badgeEncodeBadgeFiles).not.toHaveBeenCalled()
     })
@@ -709,6 +737,144 @@ describe('backup-service', () => {
         )
         expect(result.inserted).toBe(2)
         expect(result.badgeFilesRestored).toBe(0)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('topic_groups 类别四表（含轮次库）通过 clear + bulkInsert 还原', () => {
+      const pkg = makePkg({
+        categories: ['topic_groups'],
+        tables: {
+          topic_groups: [{ id: 'default-group', name: '默认题库', is_default: 1 }],
+          topic_group_items: [{ group_id: 'default-group', topic_id: 't1' }],
+          event_topic_groups: [{ event_id: 'e1', group_id: 'default-group' }],
+          round_topic_groups: [{ round_id: 'r1', group_id: 'default-group' }]
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        // 每张表 bulkInsert 返回 1，四张表共 4
+        vi.mocked(bulkInsert).mockReturnValue(1)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['topic_groups']
+        }
+        const result = importBackup(params)
+
+        // 四张表都被清空
+        expect(clearTable).toHaveBeenCalledWith('topic_groups')
+        expect(clearTable).toHaveBeenCalledWith('topic_group_items')
+        expect(clearTable).toHaveBeenCalledWith('event_topic_groups')
+        expect(clearTable).toHaveBeenCalledWith('round_topic_groups')
+        // 四张表都通过 bulkInsert 还原
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'topic_groups',
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'default-group' })
+          ]),
+          'clear_rebuild'
+        )
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'topic_group_items',
+          expect.arrayContaining([
+            expect.objectContaining({ group_id: 'default-group', topic_id: 't1' })
+          ]),
+          'clear_rebuild'
+        )
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'event_topic_groups',
+          expect.arrayContaining([
+            expect.objectContaining({ event_id: 'e1', group_id: 'default-group' })
+          ]),
+          'clear_rebuild'
+        )
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'round_topic_groups',
+          expect.arrayContaining([
+            expect.objectContaining({ round_id: 'r1', group_id: 'default-group' })
+          ]),
+          'clear_rebuild'
+        )
+        expect(result.inserted).toBe(4)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('round_topic_groups 往返：导出数据在导入时原样写回（T7 验证）', () => {
+      // 模拟导出一份含轮次库绑定表的备份（与 exportBackup 的 topic_groups 类别输出一致）
+      const roundBinding = { round_id: 'r1', group_id: 'grpA' }
+      const pkg = makePkg({
+        categories: ['topic_groups'],
+        tables: {
+          topic_groups: [
+            { id: 'grpA', name: 'A库', is_default: 0 },
+            { id: 'default-group', name: '默认题库', is_default: 1 }
+          ],
+          topic_group_items: [{ group_id: 'grpA', topic_id: 't1' }],
+          event_topic_groups: [{ event_id: 'e1', group_id: 'grpA' }],
+          round_topic_groups: [roundBinding]
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(1)
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'skip_existing',
+          categories: ['topic_groups']
+        }
+        importBackup(params)
+
+        // round_topic_groups 必须真正进入 bulkInsert 写回（而非仅白名单），且行内容一致
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'round_topic_groups',
+          [{ round_id: 'r1', group_id: 'grpA' }],
+          'skip_existing'
+        )
+        // 其余三张题组表也一并写回
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'event_topic_groups',
+          [{ event_id: 'e1', group_id: 'grpA' }],
+          'skip_existing'
+        )
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'topic_group_items',
+          [{ group_id: 'grpA', topic_id: 't1' }],
+          'skip_existing'
+        )
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('旧备份不含 topic_groups 类别时导入不回退、不报错', () => {
+      // 模拟一份不含 topic_groups 类别的旧备份（categories 只有 topics）
+      const pkg = makePkg({
+        categories: ['topics'],
+        tables: { topics: [{ id: 't1', title: '题1' }], topic_custom_fields: [] }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(1)
+
+        // 用户勾选 topic_groups，但备份中不存在该类别
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['topic_groups']
+        }
+        const result = importBackup(params)
+
+        // 不触发 topic_groups 表的 clear / bulkInsert，也不抛错
+        expect(clearTable).not.toHaveBeenCalledWith('topic_groups')
+        expect(bulkInsert).not.toHaveBeenCalledWith('topic_groups', expect.any(Array), 'clear_rebuild')
+        expect(result.inserted).toBe(0)
+        expect(result.skipped).toBe(0)
+        expect(result.overwritten).toBe(0)
       } finally {
         cleanup(filePath)
       }

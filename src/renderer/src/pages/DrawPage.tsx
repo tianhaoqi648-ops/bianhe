@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Typography, Breadcrumb, Space, Card, Button, Alert } from 'antd';
+import { Typography, Breadcrumb, Space, Card, Button, Alert, Tag } from 'antd';
 import AccentCard from '../components/common/AccentCard';
 import PageHeader from '../components/common/PageHeader';
 import KbdHint from '../components/common/KbdHint';
@@ -24,8 +24,10 @@ import type {
   Team,
   DrawPageLocationState,
   ExportFormat,
-  DrawSessionDetail
+  DrawSessionDetail,
+  TopicGroup
 } from '../../../shared/types';
+import { bankModeLabel } from '../utils/eventTopicBank';
 import DrawConfigPanel, { type DrawConfigState } from '../components/draw/DrawConfigPanel';
 import DrawResultList from '../components/draw/DrawResultList';
 import InsufficientTopicsModal from '../components/draw/InsufficientTopicsModal';
@@ -77,6 +79,7 @@ const DEFAULT_CONFIG: DrawConfigState = {
   drawMode: 'versus',
   groupIds: [],
   teamsPerTopic: 2,
+  groupId: null,
   revealMode: 'flip'
 };
 
@@ -240,6 +243,12 @@ export default function DrawPage() {
     actualCount: number;
     originalCount: number;
   } | null>(null);
+  // 抽题选库：当前赛事绑定的题库列表
+  const [topicGroups, setTopicGroups] = useState<TopicGroup[]>([]);
+  // 赛事选题模式（读 events.bank_config，仅作展示与提示）
+  const [bankMode, setBankMode] = useState<'single' | 'union' | 'priority' | 'by_round'>('single');
+  // by_round 模式下当前选中轮次绑定的题库（展示用）
+  const [roundBankGroups, setRoundBankGroups] = useState<TopicGroup[]>([]);
 
   // 拉取赛事列表（仅一次）
   useEffect(() => {
@@ -273,6 +282,69 @@ export default function DrawPage() {
       eventStore.fetchGroups(config.eventId);
     }
   }, [config.eventId]);
+
+  // 抽题选库：赛事变更时拉取绑定的题库，并默认选中默认题库
+  // 未选中赛事或该赛事未绑定题库时，topicGroups 为空 → 不传 group_id（全库候选）
+  useEffect(() => {
+    if (!config.eventId) {
+      setTopicGroups([]);
+      setConfig((c) => ({ ...c, groupId: null }));
+      return;
+    }
+    let cancelled = false;
+    window.groupAPI
+      .listGroupsByEvent(config.eventId)
+      .then((res) => {
+        if (cancelled) return;
+        const groups = res.success && res.data ? res.data : [];
+        setTopicGroups(groups);
+        setConfig((c) => ({
+          ...c,
+          // 默认选中默认题库；若已手动选择则保留，否则取默认题库（存在时）
+          groupId: c.groupId ?? groups.find((g) => g.isDefault)?.id ?? null
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTopicGroups([]);
+      });
+    return () => { cancelled = true };
+  }, [config.eventId]);
+
+  // 选项模式（bank_config）展示：赛事变更时读选题模式；by_round 时随轮次拉取该轮绑定库
+  useEffect(() => {
+    if (!config.eventId) {
+      setBankMode('single');
+      setRoundBankGroups([]);
+      return;
+    }
+    let cancelled = false;
+    window.groupAPI
+      .getEventBankConfig(config.eventId)
+      .then((res) => {
+        if (cancelled) return;
+        const mode = res.success && res.data ? res.data.mode : 'single';
+        setBankMode(mode);
+        if (mode === 'by_round' && config.roundId) {
+          return window.groupAPI.listGroupsByRound(config.roundId).then((r) => {
+            if (!cancelled) setRoundBankGroups(r.success && r.data ? r.data : []);
+          });
+        }
+        setRoundBankGroups([]);
+        return undefined;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBankMode('single');
+        setRoundBankGroups([]);
+      });
+    return () => { cancelled = true };
+  }, [config.eventId, config.roundId]);
+
+  // by_round 且未选中轮次时清空轮次库展示
+  useEffect(() => {
+    if (bankMode === 'by_round' && !config.roundId) setRoundBankGroups([]);
+  }, [bankMode, config.roundId]);
 
   // SubTask 6.5：赛事加载完成后，按 event.allow_repeat 初始化 allowRepeat
   // 测试模式开启时不覆盖（测试模式强制 allowRepeat=true）
@@ -376,6 +448,12 @@ export default function DrawPage() {
       teams_per_topic: config.drawMode === 'multi_team' ? config.teamsPerTopic : undefined,
       user_pairing: hasUserPairing
     };
+
+    // 抽题选库：仅在当前赛事绑定题库中包含所选题库时，才限定从该题库抽取
+    // 未选/清空（groupId=null）或所选题不在绑定列表时 → 不传 group_id（全库候选）
+    if (config.groupId && topicGroups.some((g) => g.id === config.groupId)) {
+      params.group_id = config.groupId;
+    }
 
     // 单人持方模式：传 solo_team_id，引擎为每道题随机分配正反方
     if (config.includeStance && config.stanceMode === 'solo' && config.soloTeamId) {
@@ -705,6 +783,7 @@ export default function DrawPage() {
               rounds={eventStore.rounds}
               teams={eventStore.teams}
               groups={eventStore.groups}
+              topicGroups={topicGroups}
               tagOptions={tagOptions}
               loading={drawStore.loading}
               onDraw={handleDraw}
@@ -719,6 +798,37 @@ export default function DrawPage() {
 
         {/* 右栏：预览/结果区（flex: 1） */}
         <div style={{ flex: 1, minWidth: 0, overflow: 'visible' }}>
+          {/* 当前选题模式提示 */}
+          {config.eventId && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: spacing.md }}
+              message={
+                <Space size={4}>
+                  <span>当前选题：{bankModeLabel[bankMode]}</span>
+                  {bankMode === 'by_round' && roundBankGroups.length > 0 && (
+                    <Space size={4}>
+                      <span>· 本轮题库：</span>
+                      {roundBankGroups.map((g) => (
+                        <Tag key={g.id} color="blue">{g.name}</Tag>
+                      ))}
+                    </Space>
+                  )}
+                </Space>
+              }
+              description={
+                bankMode === 'single'
+                  ? '从所选单一题库抽取；可用左侧「题库」下拉快速切换（有显式选择时优先）'
+                  : bankMode === 'union'
+                    ? '本赛事绑定的全部题库合并为候选池'
+                    : bankMode === 'priority'
+                      ? '按绑定顺序后备，前库不足自动用下一库补足'
+                      : '按当前轮次指定的题库抽取；未配置轮次库时回退'
+              }
+              closable={false}
+            />
+          )}
           {/* 顶部面包屑：当前赛事 / 轮次 / 难度 */}
           {(currentEvent || currentRound) && (
             <div style={{ marginBottom: spacing.md }}>

@@ -30,6 +30,7 @@ import { registerReportIpc } from './report.ipc'
 import { registerScheduleIpc } from './schedule.ipc'
 import { registerBadgeIpc } from './badge.ipc'
 import { registerJudgeIpc } from './judge.ipc'
+import { registerTopicGroupIpc } from './topic-group.ipc'
 
 export function registerAllIpc(): void {
   registerSystemIpc()
@@ -58,5 +59,6 @@ export function registerAllIpc(): void {
   registerScheduleIpc()
   registerBadgeIpc()
   registerJudgeIpc()
+  registerTopicGroupIpc()
   console.log('[main] All IPC handlers registered')
 }

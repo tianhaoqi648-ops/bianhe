@@ -267,6 +267,16 @@ vi.mock('../../db/repository/audit.repo', () => ({
   }
 }))
 
+// ---- mock topic-group.repo（draw-engine 的题库选题模式解析，smoke 走缺省 single/全库）----
+vi.mock('../../db/repository/topic-group.repo', () => ({
+  topicGroupRepo: {
+    getEventBankConfig: vi.fn(() => ({ mode: 'single' })),
+    listGroupsByEvent: vi.fn(() => []),
+    listGroupsByRound: vi.fn(() => []),
+    listTopicIdsByGroup: vi.fn(() => [])
+  }
+}))
+
 // ---- 现在 import draw-engine（会在加载时使用上面的 mock）----
 import { drawTopics, InsufficientTopicsError } from '../draw-engine'
 

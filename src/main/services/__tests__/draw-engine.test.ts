@@ -25,7 +25,11 @@ const {
   listDrawnTopicIdsByEventMock,
   listTeamHistoryMock,
   addTeamHistoryMock,
-  topicRepoListTopicsMock
+  topicRepoListTopicsMock,
+  listTopicIdsByGroupMock,
+  tgGetEventBankConfigMock,
+  tgListGroupsByEventMock,
+  tgListGroupsByRoundMock
 } = vi.hoisted(() => {
   // 10 道候选辩题：5 官方 + 5 自定义
   const topics = [
@@ -151,6 +155,18 @@ const {
     return { items, total: items.length }
   })
 
+  // T5: 抽题选库——按题组取 topic ids（默认全量，测试可覆盖为仅组内题）
+  const listTopicIdsByGroup = vi.fn((_groupId: string) =>
+    topics.map((t) => t.id)
+  )
+
+  // T2: 赛事选题模式配置（默认 single 未配置，保证未配置时全库候选）
+  const tgGetEventBankConfig = vi.fn((_eventId: string): EventBankConfig => ({ mode: 'single' }))
+  // T2: 事件绑定的题库（默认无绑定）
+  const tgListGroupsByEvent = vi.fn((_eventId: string): TopicGroup[] => [])
+  // T2: 轮次绑定的题库（默认无绑定）
+  const tgListGroupsByRound = vi.fn((_roundId: string): TopicGroup[] => [])
+
   // Task 10: 小题库（2 道），用于 allow_repeat 候选不足场景
   const topicsSmall = [
     {
@@ -194,7 +210,11 @@ const {
     listDrawnTopicIdsByEventMock: listDrawnTopicIdsByEvent,
     listTeamHistoryMock: listTeamHistory,
     addTeamHistoryMock: addTeamHistory,
-    topicRepoListTopicsMock: listTopics
+    topicRepoListTopicsMock: listTopics,
+    listTopicIdsByGroupMock: listTopicIdsByGroup,
+    tgGetEventBankConfigMock: tgGetEventBankConfig,
+    tgListGroupsByEventMock: tgListGroupsByEvent,
+    tgListGroupsByRoundMock: tgListGroupsByRound
   }
 })
 
@@ -232,6 +252,16 @@ vi.mock('../../db/repository/draw.repo', () => ({
   }
 }))
 
+// ---- mock topic-group.repo（T5 抽题选库 + T2 选题模式解析）----
+vi.mock('../../db/repository/topic-group.repo', () => ({
+  topicGroupRepo: {
+    listTopicIdsByGroup: listTopicIdsByGroupMock,
+    getEventBankConfig: tgGetEventBankConfigMock,
+    listGroupsByEvent: tgListGroupsByEventMock,
+    listGroupsByRound: tgListGroupsByRoundMock
+  }
+}))
+
 // ---- mock audit.repo ----
 vi.mock('../../db/repository/audit.repo', () => ({
   auditRepo: {
@@ -244,8 +274,11 @@ import {
   drawTopics,
   assignGroupStances,
   assignMultiTeamStances,
+  resolveBankTopicIds,
   InsufficientTopicsError
 } from '../draw-engine'
+import type { ResolveBankContext } from '../draw-engine'
+import type { EventBankConfig, TopicGroup } from '../../db/repository/topic-group.repo'
 import type { Topic } from '../../db/repository/topic.repo'
 import type { Team, TeamGroup } from '../../db/repository/event.repo'
 
@@ -1305,5 +1338,385 @@ describe('drawTopics: test_mode & allow_repeat', () => {
         allow_repeat: false
       })
     ).toThrow(InsufficientTopicsError)
+  })
+})
+
+// ============================================================
+// T5 抽题选库：drawTopics 按题组（group_id）过滤候选
+// ============================================================
+describe('drawTopics: 抽题选库（group_id）', () => {
+  beforeEach(() => {
+    createSessionMock.mockClear()
+    addLogMock.mockClear()
+    listGroupsByEventMock.mockClear()
+    listTeamsByEventMock.mockClear()
+    listDrawnTopicIdsByEventMock.mockClear()
+    listTeamHistoryMock.mockClear()
+    addTeamHistoryMock.mockClear()
+    topicRepoListTopicsMock.mockClear()
+    listTopicIdsByGroupMock.mockClear()
+    // 默认恢复全量候选（未覆盖时按原实现返回全部 topic ids）
+    listTopicIdsByGroupMock.mockImplementation((groupId: string) =>
+      // 组 id 含 'official' 标签则只返回官方题，便于测试观察
+      groupId === 'group-official'
+        ? ['topic-official-0', 'topic-official-1', 'topic-official-2', 'topic-official-3', 'topic-official-4']
+        : ['topic-official-0', 'topic-official-1', 'topic-official-2', 'topic-official-3', 'topic-official-4', 'topic-custom-0', 'topic-custom-1', 'topic-custom-2', 'topic-custom-3', 'topic-custom-4']
+    )
+  })
+
+  it('传 group_id → 仅组内题可作为候选（本次只从官方题中抽）', () => {
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false,
+      group_id: 'group-official'
+    })
+
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('group-official')
+    // 只从官方 5 道中抽 3 道
+    expect(result.topics).toHaveLength(3)
+    for (const t of result.topics) {
+      expect(t.source_type).toBe('官方')
+      expect(t.id.startsWith('topic-official-')).toBe(true)
+    }
+  })
+
+  it('组内候选不足且 allow_repeat=false 时抛 InsufficientTopicsError（叠加受限）', () => {
+    // 组内只有 2 道题，需要 4 道
+    listTopicIdsByGroupMock.mockImplementationOnce(() => ['topic-official-0', 'topic-official-1'])
+
+    expect(() =>
+      drawTopics({
+        event_id: 'event-1',
+        topic_count: 4,
+        include_stance: false,
+        allow_repeat: false,
+        group_id: 'group-official'
+      })
+    ).toThrow(InsufficientTopicsError)
+  })
+
+  it('组内候选不足但 allow_repeat=true 走有放回（仍然抽够 4 道且来自组内）', () => {
+    // 组内只有 2 道题
+    listTopicIdsByGroupMock.mockImplementationOnce(() => ['topic-official-0', 'topic-official-1'])
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 4,
+      include_stance: false,
+      allow_repeat: true,
+      group_id: 'group-official'
+    })
+
+    expect(result.topics).toHaveLength(4)
+    const uniqueIds = new Set(result.topics.map((t) => t.id))
+    // 有放回：仍来自组内这 2 道，必有重复
+    expect(uniqueIds.size).toBeLessThanOrEqual(2)
+    for (const t of result.topics) {
+      expect(['topic-official-0', 'topic-official-1']).toContain(t.id)
+    }
+  })
+
+  it('不传 group_id（默认）→ 不调用 listTopicIdsByGroup，行为不变（全库候选）', () => {
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false
+    })
+
+    expect(listTopicIdsByGroupMock).not.toHaveBeenCalled()
+    expect(result.topics).toHaveLength(3)
+  })
+})
+
+// ============================================================
+// T2 多库选题模式解析（single/union/priority/by_round）
+// ============================================================
+
+// 构造纯函数用的注入 ctx（不依赖模块 mock，便于直接单测 resolveBankTopicIds）
+function makeBankCtx(opts: {
+  config?: EventBankConfig
+  groupsByEvent?: string[]
+  groupsByRound?: string[]
+  topicsByGroup?: Record<string, string[]>
+} = {}): ResolveBankContext {
+  return {
+    getEventBankConfig: () => opts.config ?? { mode: 'single' },
+    listGroupsByEvent: () =>
+      (opts.groupsByEvent ?? []).map((id) => ({ id, name: id, isDefault: false, createdAt: null })),
+    listGroupsByRound: () =>
+      (opts.groupsByRound ?? []).map((id) => ({ id, name: id, isDefault: false, createdAt: null })),
+    listTopicIdsByGroup: (gid) => opts.topicsByGroup?.[gid] ?? []
+  }
+}
+
+describe('resolveBankTopicIds 纯函数：多库选题模式解析', () => {
+  it('single：取 priorityOrder[0] 的题库', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'single', priorityOrder: ['bankA', 'bankB'] },
+      topicsByGroup: { bankA: ['t1', 't2'], bankB: ['t3'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2'])
+  })
+
+  it('single：无 priorityOrder 回退全库（null）', () => {
+    const ctx = makeBankCtx({ config: { mode: 'single' } })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 3, include_stance: false },
+      ctx
+    )
+    expect(ids).toBeNull()
+  })
+
+  it('union：事件绑定题库的并集（去重）', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'union' },
+      groupsByEvent: ['bankA', 'bankB'],
+      topicsByGroup: { bankA: ['t1', 't2'], bankB: ['t2', 't3'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2', 't3'])
+  })
+
+  it('union：事件无绑定题库时回退全库（null）', () => {
+    const ctx = makeBankCtx({ config: { mode: 'union' }, groupsByEvent: [] })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 3, include_stance: false },
+      ctx
+    )
+    expect(ids).toBeNull()
+  })
+
+  it('priority：前库不足时用下一库补足（达到题数即停）', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'priority', priorityOrder: ['bankA', 'bankB', 'bankC'] },
+      topicsByGroup: { bankA: ['t1'], bankB: ['t2', 't3'], bankC: ['t4'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 3, include_stance: false },
+      ctx
+    )
+    // bankA 只有 1 题不足 3，补 bankB（2 题）后达到 3 → 不取 bankC
+    expect(ids).toEqual(['t1', 't2', 't3'])
+  })
+
+  it('priority：首库已足则只取首库', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'priority', priorityOrder: ['bankA', 'bankB'] },
+      topicsByGroup: { bankA: ['t1', 't2', 't3'], bankB: ['t4'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 2, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2', 't3'])
+  })
+
+  it('priority：无 priorityOrder 退化为 union（事件绑定并集）', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'priority' },
+      groupsByEvent: ['bankA', 'bankB'],
+      topicsByGroup: { bankA: ['t1'], bankB: ['t2'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2'])
+  })
+
+  it('by_round：命中 round 绑定的题库并集', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'by_round' },
+      groupsByRound: ['bankA', 'bankB'],
+      topicsByGroup: { bankA: ['t1'], bankB: ['t2'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', round_id: 'round-1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2'])
+  })
+
+  it('by_round：无轮次绑定时退化为 single（priorityOrder[0]）', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'by_round', priorityOrder: ['bankA'] },
+      topicsByGroup: { bankA: ['t1'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', round_id: 'round-1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1'])
+  })
+
+  it('by_round：无轮次绑定且无 priorityOrder 时退化为 union', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'by_round' },
+      groupsByEvent: ['bankA', 'bankB'],
+      topicsByGroup: { bankA: ['t1'], bankB: ['t2'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', round_id: 'round-1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1', 't2'])
+  })
+
+  it('by_round：无 round_id 走单库/并集回退，不按轮次解析', () => {
+    const ctx = makeBankCtx({
+      config: { mode: 'by_round', priorityOrder: ['bankA'] },
+      topicsByGroup: { bankA: ['t1'] }
+    })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 9, include_stance: false },
+      ctx
+    )
+    expect(ids).toEqual(['t1'])
+  })
+
+  it('无效/缺省模式回退全库（null）', () => {
+    const ctx = makeBankCtx({ config: { mode: 'single' } })
+    const ids = resolveBankTopicIds(
+      { event_id: 'e1', topic_count: 3, include_stance: false },
+      ctx
+    )
+    expect(ids).toBeNull()
+  })
+})
+
+describe('drawTopics: 多库选题模式（T2）', () => {
+  beforeEach(() => {
+    createSessionMock.mockClear()
+    addLogMock.mockClear()
+    listGroupsByEventMock.mockClear()
+    listTeamsByEventMock.mockClear()
+    listDrawnTopicIdsByEventMock.mockClear()
+    listTeamHistoryMock.mockClear()
+    addTeamHistoryMock.mockClear()
+    topicRepoListTopicsMock.mockClear()
+    listTopicIdsByGroupMock.mockClear()
+    tgGetEventBankConfigMock.mockClear()
+    tgListGroupsByEventMock.mockClear()
+    tgListGroupsByRoundMock.mockClear()
+    // 恢复各 mock 默认态
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'single' })
+    tgListGroupsByEventMock.mockReturnValue([])
+    tgListGroupsByRoundMock.mockReturnValue([])
+    listTopicIdsByGroupMock.mockReturnValue([
+      'topic-official-0', 'topic-official-1', 'topic-official-2', 'topic-official-3', 'topic-official-4',
+      'topic-custom-0', 'topic-custom-1', 'topic-custom-2', 'topic-custom-3', 'topic-custom-4'
+    ])
+  })
+
+  it('single：未传 group_id 时按 priorityOrder[0] 过滤（仅官方题）', () => {
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'single', priorityOrder: ['bankA'] })
+    listTopicIdsByGroupMock.mockReturnValue(['topic-official-0', 'topic-official-1', 'topic-official-2'])
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false
+    })
+
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankA')
+    expect(result.topics).toHaveLength(3)
+    for (const t of result.topics) expect(t.source_type).toBe('官方')
+  })
+
+  it('union：按事件绑定题库并集过滤（官方+自定义均在）', () => {
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'union' })
+    tgListGroupsByEventMock.mockReturnValue([
+      { id: 'bankA', name: 'A库', isDefault: false, createdAt: null },
+      { id: 'bankB', name: 'B库', isDefault: false, createdAt: null }
+    ])
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false
+    })
+
+    // listGroupsByEvent 与 listTopicIdsByGroup 均被调用
+    expect(tgListGroupsByEventMock).toHaveBeenCalledWith('event-1')
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankA')
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankB')
+    expect(result.topics).toHaveLength(3)
+  })
+
+  it('priority：前库不足时补后（只用足量的前几个库）', () => {
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'priority', priorityOrder: ['bankA', 'bankB'] })
+    // 首次调用 bankA 只给 2 道（官方），需要 4 道不足 → 补 bankB
+    listTopicIdsByGroupMock.mockImplementation((gid: string) =>
+      gid === 'bankA'
+        ? ['topic-official-0', 'topic-official-1']
+        : ['topic-official-2', 'topic-official-3', 'topic-custom-0', 'topic-custom-1']
+    )
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 4,
+      include_stance: false
+    })
+
+    // 应同时用到 bankA 与 bankB
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankA')
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankB')
+    expect(result.topics).toHaveLength(4)
+  })
+
+  it('by_round：命中 round 绑定的题库并集', () => {
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'by_round' })
+    tgListGroupsByRoundMock.mockReturnValue([
+      { id: 'bankA', name: 'A库', isDefault: false, createdAt: null },
+      { id: 'bankB', name: 'B库', isDefault: false, createdAt: null }
+    ])
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      round_id: 'round-1',
+      topic_count: 3,
+      include_stance: false
+    })
+
+    expect(tgListGroupsByRoundMock).toHaveBeenCalledWith('round-1')
+    expect(result.topics).toHaveLength(3)
+  })
+
+  it('缺省模式（single 无库）→ 未配置时行为与现状一致（全库候选，不限制题库）', () => {
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false
+    })
+
+    // 未配置 priorityOrder，single 回退全库：无需按题库过滤
+    expect(listTopicIdsByGroupMock).not.toHaveBeenCalled()
+    expect(result.topics).toHaveLength(3)
+  })
+
+  it('显式 group_id 优先：越过选题模式，仍按该题库单一过滤', () => {
+    tgGetEventBankConfigMock.mockReturnValue({ mode: 'union', priorityOrder: ['bankOther'] })
+    listTopicIdsByGroupMock.mockReturnValue(['topic-custom-0', 'topic-custom-1', 'topic-custom-2'])
+
+    const result = drawTopics({
+      event_id: 'event-1',
+      topic_count: 3,
+      include_stance: false,
+      group_id: 'bankExplicit'
+    })
+
+    expect(listTopicIdsByGroupMock).toHaveBeenCalledWith('bankExplicit')
+    // 未触发 union 的 listGroupsByEvent
+    expect(tgListGroupsByEventMock).not.toHaveBeenCalled()
+    expect(result.topics).toHaveLength(3)
+    for (const t of result.topics) expect(t.id.startsWith('topic-custom-')).toBe(true)
   })
 })

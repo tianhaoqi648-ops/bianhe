@@ -21,7 +21,7 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
     'id', 'title', 'type', 'domain', 'difficulty', 'source', 'source_type',
     'tags', 'weight', 'status', 'created_at', 'updated_at', 'custom_data', 'batch_id'
   ],
-  events: ['id', 'name', 'start_date', 'end_date', 'status', 'created_at', 'allow_repeat'],
+  events: ['id', 'name', 'start_date', 'end_date', 'status', 'created_at', 'allow_repeat', 'bank_config'],
   rounds: [
     'id', 'event_id', 'name', 'round_number', 'difficulty_override',
     'topic_count', 'is_round_robin'
@@ -71,7 +71,11 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   judge_history: [
     'id', 'created_at', 'event_id', 'round_id', 'match_id', 'judge_id',
     'tool_name', 'stage', 'side', 'topic', 'result_json', 'error'
-  ]
+  ],
+  topic_groups: ['id', 'name', 'is_default', 'created_at'],
+  topic_group_items: ['group_id', 'topic_id'],
+  event_topic_groups: ['event_id', 'group_id'],
+  round_topic_groups: ['round_id', 'group_id']
 }
 
 /**

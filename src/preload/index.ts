@@ -103,7 +103,23 @@ import {
   type BadgeItem,
   type JudgeHistoryRecord,
   type JudgeHistoryCreateInput,
-  type JudgeHistoryFilter
+  type JudgeHistoryFilter,
+  type TopicGroup,
+  type GroupTopic,
+  type TopicGroupCreateInput,
+  type TopicGroupRenameInput,
+  type TopicGroupAddTopicsInput,
+  type TopicGroupRemoveTopicsInput,
+  type TopicGroupBatchAddInput,
+  type TopicGroupBatchRemoveInput,
+  type TopicGroupCopyInput,
+  type GroupCopyResult,
+  type EventBindGroupsInput,
+  type EventUnbindGroupInput,
+  type EventBankConfig,
+  type EventSetBankConfigInput,
+  type RoundBindGroupsInput,
+  type RoundUnbindGroupInput
 } from '../shared/types'
 import type { ExportJudgeReportRequest, ExportJudgeReportResult } from '../shared/types'
 import type { BellAsset, StageSide, TimerTheme } from '../shared/debate-formats/types'
@@ -726,6 +742,74 @@ const judgeAPI = {
 }
 
 // ============================================================
+// 题组（题库）API（赛事题库 T2 桥接）
+// 题组 CRUD / 成员增删查 / 赛事绑定 / 默认题库，数据源 topicGroupRepo。
+// ============================================================
+const groupAPI = {
+  /** 列出全部题组（默认题库在最前） */
+  list: () => invoke<ApiResponse<TopicGroup[]>>(IPC_CHANNELS.GROUP_TOPIC_LIST),
+  /** 获取默认题库（幂等保证存在） */
+  getDefaultTopicGroup: () => invoke<ApiResponse<TopicGroup>>(IPC_CHANNELS.GROUP_TOPIC_GET_DEFAULT),
+  /** 新建题组 */
+  createGroup: (input: TopicGroupCreateInput) =>
+    invoke<ApiResponse<TopicGroup>>(IPC_CHANNELS.GROUP_TOPIC_CREATE, input),
+  /** 重命名题组 */
+  renameGroup: (input: TopicGroupRenameInput) =>
+    invoke<ApiResponse<TopicGroup>>(IPC_CHANNELS.GROUP_TOPIC_RENAME, input),
+  /** 删除题组（默认题库返回失败） */
+  deleteGroup: (id: string) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.GROUP_TOPIC_DELETE, id),
+  /** 列出某题组内的完整辩题 */
+  listTopicsByGroup: (groupId: string) =>
+    invoke<ApiResponse<GroupTopic[]>>(IPC_CHANNELS.GROUP_TOPIC_LIST_TOPICS, groupId),
+  /** 往题组加入若干辩题（可多选） */
+  addTopicsToGroup: (input: TopicGroupAddTopicsInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_ADD_TOPICS, input),
+  /** 从题组移除若干辩题 */
+  removeTopicsFromGroup: (input: TopicGroupRemoveTopicsInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_REMOVE_TOPICS, input),
+  /** 批量把一组题同时加入多个题库（去重，忽略已存在成员） */
+  batchAddToGroups: (input: TopicGroupBatchAddInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_BATCH_ADD, input),
+  /** 从某题库批量移除若干辩题 */
+  batchRemoveFromGroup: (input: TopicGroupBatchRemoveInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_BATCH_REMOVE, input),
+  /** 整库复制：把源题库全部题复制到多个目标题库（去重，同库跳过） */
+  copyGroupToGroup: (input: TopicGroupCopyInput) =>
+    invoke<ApiResponse<GroupCopyResult[]>>(IPC_CHANNELS.GROUP_TOPIC_COPY_GROUP, input),
+  /** 整库移动：把源题库全部题移到多个目标题库，随后清空源 */
+  moveGroupToGroup: (input: TopicGroupCopyInput) =>
+    invoke<ApiResponse<GroupCopyResult[]>>(IPC_CHANNELS.GROUP_TOPIC_MOVE_GROUP, input),
+  /** 列出某赛事绑定的题组 */
+  listGroupsByEvent: (eventId: string) =>
+    invoke<ApiResponse<TopicGroup[]>>(IPC_CHANNELS.GROUP_TOPIC_LIST_BY_EVENT, eventId),
+  /** 给赛事绑定若干题组（可多选） */
+  bindEventGroups: (input: EventBindGroupsInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_BIND_EVENT, input),
+  /** 解绑赛事与某个题组的关联 */
+  unbindEventGroup: (input: EventUnbindGroupInput) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.GROUP_TOPIC_UNBIND_EVENT, input),
+  /** 读赛事选题模式配置（缺省回退 single） */
+  getEventBankConfig: (eventId: string) =>
+    invoke<ApiResponse<EventBankConfig>>(IPC_CHANNELS.GROUP_TOPIC_GET_EVENT_BANK_CONFIG, eventId),
+  /** 写赛事选题模式配置 */
+  setEventBankConfig: (input: EventSetBankConfigInput) =>
+    invoke<ApiResponse<EventBankConfig | undefined>>(
+      IPC_CHANNELS.GROUP_TOPIC_SET_EVENT_BANK_CONFIG,
+      input
+    ),
+  /** 列出某轮次绑定的题组 */
+  listGroupsByRound: (roundId: string) =>
+    invoke<ApiResponse<TopicGroup[]>>(IPC_CHANNELS.GROUP_TOPIC_LIST_BY_ROUND, roundId),
+  /** 给轮次绑定若干题组（可多选） */
+  bindRoundGroups: (input: RoundBindGroupsInput) =>
+    invoke<ApiResponse<number>>(IPC_CHANNELS.GROUP_TOPIC_BIND_ROUND_GROUPS, input),
+  /** 解绑轮次与某个题组的关联 */
+  unbindRoundGroup: (input: RoundUnbindGroupInput) =>
+    invoke<ApiResponse<boolean>>(IPC_CHANNELS.GROUP_TOPIC_UNBIND_ROUND_GROUP, input)
+}
+
+// ============================================================
 // Agent 对话 API（AI Agent v1.3.0）
 //
 // 流式事件通过 IPC 'agent:event' 通道推送，onEvent 回调转发给渲染进程。
@@ -988,6 +1072,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('agent', agentAPI)
     contextBridge.exposeInMainWorld('sttAPI', sttAPI)
     contextBridge.exposeInMainWorld('judgeAPI', judgeAPI)
+    contextBridge.exposeInMainWorld('groupAPI', groupAPI)
   } catch (error) {
     console.error(error)
   }
@@ -1024,6 +1109,7 @@ if (process.contextIsolated) {
     agent: typeof agentAPI
     sttAPI: typeof sttAPI
     judgeAPI: typeof judgeAPI
+    groupAPI: typeof groupAPI
   }
   const w = window as unknown as GlobalWindow
   w.electron = extendedElectronAPI
@@ -1053,4 +1139,5 @@ if (process.contextIsolated) {
   w.agent = agentAPI
   w.sttAPI = sttAPI
   w.judgeAPI = judgeAPI
+  w.groupAPI = groupAPI
 }
