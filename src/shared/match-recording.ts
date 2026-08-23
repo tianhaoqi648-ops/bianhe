@@ -6,9 +6,52 @@
 // electron / node ABI 依赖，便于在 vitest 中直接单测。
 // ============================================================
 
-import type { MatchRecordingMarker, MatchRecordingMeta } from './types'
+import type { MatchRecordingMarker, MatchRecordingMeta, BoundRecording } from './types'
 import type { StageDef, StageSide } from './debate-formats/types'
 import { stageSpeakerLabel } from './debate-formats/utils'
+
+/** 录音子目录名（数据根 /recordings） */
+export const RECORDINGS_DIR_NAME = 'recordings'
+
+/** 取路径最后一段文件名（无 path 依赖，双分隔符兼容） */
+export function lastPathSegment(p: string): string {
+  const s = String(p)
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i >= 0 ? s.slice(i + 1) : s
+}
+
+/** 拼接根与子目录名（无 path 依赖，去尾分隔符后用 '/' 连接） */
+export function joinSegment(root: string, seg: string): string {
+  return `${root.replace(/[\\/]+$/, '')}/${seg}`
+}
+
+/**
+ * 归一化录音目录（纯函数，可单测）：root 视为「数据根」，实际录音目录 = <根>/recordings。
+ * - root 空 → defaultDataRoot/recordings；
+ * - root 末段已是 `recordings`（大小写不敏感）→ 直接用 root（兼容旧设置直接存绝对录音目录，避免 recordings/recordings，旧录音不失联）；
+ * - 否则 → root/recordings。
+ * 与 recording-storage.resolveRecordingsDir 规则一致（后者用 electron app.getPath 提供默认根）。
+ */
+export function resolveRecordingsDirPlain(root: string | null | undefined, defaultDataRoot: string): string {
+  const trimmed = (root || '').trim()
+  if (!trimmed) return joinSegment(defaultDataRoot, RECORDINGS_DIR_NAME)
+  if (lastPathSegment(trimmed).toLowerCase() === RECORDINGS_DIR_NAME.toLowerCase()) return trimmed
+  return joinSegment(trimmed, RECORDINGS_DIR_NAME)
+}
+
+/**
+ * 解析数据根（纯函数，可单测）：root 末段已是 `recordings` → 其上一级为数据根；否则 root 本身；空 → defaultDataRoot。
+ * 与 recording-storage.resolveDataRoot 规则一致。
+ */
+export function resolveDataRootPlain(root: string | null | undefined, defaultDataRoot: string): string {
+  const trimmed = (root || '').trim()
+  if (!trimmed) return defaultDataRoot
+  if (lastPathSegment(trimmed).toLowerCase() === RECORDINGS_DIR_NAME.toLowerCase()) {
+    const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    return i <= 0 ? defaultDataRoot : trimmed.slice(0, i)
+  }
+  return trimmed
+}
 
 /** 录音分段模式 */
 export type RecordingSegmentMode = 'whole' | 'split'
@@ -128,4 +171,81 @@ export function buildWholeMeta(filePath: string, markers: MatchRecordingMarker[]
 export function buildSplitMeta(markers: MatchRecordingMarker[]): MatchRecordingMeta {
   const first = markers.find((m) => m.filePath)
   return { filePath: first?.filePath ?? '', segmentMode: 'split', markers }
+}
+
+/** 依据文件绝对路径生成稳定的录音 id（basename 去扩展名；空路径用时间戳兜底）。 */
+export function recordingIdForFile(filePath: string): string {
+  const p = filePath || ''
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  const base = idx >= 0 ? p.slice(idx + 1) : p
+  const name = base.replace(/\.[^.]+$/, '')
+  return name || `rec-${Date.now()}`
+}
+
+/**
+ * 旧 MatchRecordingMeta → BoundRecording[] 迁移。
+ * - segmentMode='whole'：单一 filePath + markers → 一份 kind='whole' 录音；
+ * - segmentMode='split'：markers[].filePath 分片 → 每片一份 kind='stage' 录音（stageId/tsMs 取自对应 marker）。
+ * - 无 meta 或无可解析路径 → 返回空数组。
+ */
+export function boundRecordingsFromMeta(meta: MatchRecordingMeta | null | undefined): BoundRecording[] {
+  if (!meta) return []
+  if (meta.segmentMode === 'split') {
+    const list: BoundRecording[] = []
+    for (const m of meta.markers || []) {
+      if (!m.filePath) continue
+      list.push({
+        id: recordingIdForFile(m.filePath),
+        kind: 'stage',
+        filePath: m.filePath,
+        stageId: m.stageId ?? null,
+        tsMs: m.tsMs,
+        markers: [m]
+      })
+    }
+    return list
+  }
+  if (!meta.filePath) return []
+  return [
+    {
+      id: recordingIdForFile(meta.filePath),
+      kind: 'whole',
+      filePath: meta.filePath,
+      markers: meta.markers || []
+    }
+  ]
+}
+
+/**
+ * BoundRecording[] → 旧 MatchRecordingMeta（兼容既有渲染进程读取）。
+ * - 存在 stage 录音 → 组装校验 split 结构：拆分 markers 并回填各片 filePath；
+ * - 否则取首份 whole → 单一 filePath + markers 的 whole 结构；
+ * - 空列表 → null。
+ */
+export function metaFromBoundRecordings(recordings: BoundRecording[] | null | undefined): MatchRecordingMeta | null {
+  const list = Array.isArray(recordings) ? recordings : []
+  const stage = list.filter((r) => r.kind === 'stage')
+  if (stage.length > 0) {
+    const markers: MatchRecordingMarker[] = []
+    for (const r of stage) {
+      if (r.markers && r.markers.length) {
+        for (const m of r.markers) markers.push({ ...m, filePath: m.filePath ?? r.filePath })
+      } else {
+        markers.push({
+          tsMs: r.tsMs ?? 0,
+          stageId: r.stageId ?? 'stage',
+          stageName: '环节',
+          side: null,
+          speaker: null,
+          filePath: r.filePath
+        })
+      }
+    }
+    const firstEdge = markers.find((mk) => mk.filePath)
+    return { filePath: firstEdge?.filePath ?? stage[0].filePath, segmentMode: 'split', markers }
+  }
+  const whole = list.filter((r) => r.kind === 'whole')
+  if (whole.length === 0) return null
+  const w = whole[0]
+  return { filePath: w.filePath, segmentMode: 'whole', markers: w.markers || [] }
 }

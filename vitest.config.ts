@@ -5,6 +5,11 @@ import { fileURLToPath } from 'url'
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 export default defineConfig({
+  // 该库 tsconfig 将 jsx 设为 preserve，vitest(内嵌 Vite 8/oxc) 默认不会转译 JSX；
+  // 显式指定 automatic，让 .tsx 单测与组件在被引入时被正确转译。
+  oxc: {
+    jsx: { runtime: 'automatic' }
+  },
   resolve: {
     alias: {
       '@main/': `${resolve(__dirname, 'src/main')}/`,
@@ -20,6 +25,7 @@ export default defineConfig({
       'src/shared/**/*.test.ts',
       'src/shared/utils/__tests__/**/*.test.ts',
       'src/renderer/src/utils/__tests__/**/*.test.ts',
+      'src/renderer/src/components/**/__tests__/**/*.test.tsx',
       'src/renderer/src/stores/__tests__/**/*.test.ts',
       'src/main/agent/__tests__/**/*.test.ts',
       'src/main/agent/tools/__tests__/**/*.test.ts',

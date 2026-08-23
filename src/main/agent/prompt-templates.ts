@@ -62,9 +62,9 @@ const TOOLS_PROMPT = `# 可用工具
 
 ## AI 裁判
 - judge_debate：按评委人设评审一场辩论。入参 topic / affSpeech（正方辩词）/ negSpeech（反方辩词）必填，judgeId 可选（hu-jianbiao / huang-zhizhong / chen-ming / zhou-xuanyi / xiong-hao，默认 hu-jianbiao），formatHint 可选；支持可选 affStages / negStages（双方按环节分段的辩词，每项含 stage 环节类型与 content）实现逐段胜负判定，不传则整场裁决。返回胜负判定、五维双方评分与点评（含分段判定）。用户要求评审辩论时使用；可先询问用户偏好哪位评委。
-- judge_speech：按评委人设评估己方某一环节的稿子（备赛场景：只有己方稿子）。入参 topic / stage（环节类型：opening/rebuttal/cross_exam/cross_summary/free_debate/closing）/ side（aff/neg）/ speech（稿子）必填，judgeId / formatHint 可选。返回五维评分、漏洞清单与改进建议。用户粘贴单方稿子要求评估时使用；若用户未指明环节，可先调用 detect_stage 识别。
+- judge_speech：教练复盘——按教练人设（judgeId 可选）对单方稿子做成长向诊断，不判分不排名。入参 topic / speech（稿子）必填，stage（环节类型，可选）/ side（aff/neg）/ judgeId / formatHint 可选。返回四维短板（立论/反驳/表达/攻防，含训练方向）、可练方向、示范改写与总评。用户粘贴单方稿要求打磨/复盘稿子时使用；若用户未指明环节，可先调用 detect_stage 识别。
 - detect_stage：识别一段辩论稿属于哪个环节类型（立论/驳论/质询/质询小结/自由辩论/总结陈词），返回环节类型与置信度。入参 speech 必填，stagesNames / topic 可选。用户粘贴稿子但未说明环节、或需要确认环节类型时使用。
-- simulate_opponent：模拟对方攻击——以评委思维站在对方立场，针对己方稿子设计攻击（attackMode 可选：cross_exam 质询盘问（默认）/ rebuttal 驳论攻击 / free_debate 自由辩突袭），输出总体弱点、攻击点列表（含防守建议）。入参 topic / side / speech 必填，judgeId / attackMode / formatHint 可选。用户备赛防守演练、想提前知道自己立论会被怎么攻击时使用。
+- simulate_opponent：陪练对手 / 模拟对方攻击——既可在提供 difficulty（novice 新手 / intermediate 进阶 / national 国选手）或 history（已轮次数组）或 finalize=true 时进入回合制陪练：多轮「对方攻击 → 用户答辩」，finalize 时输出对抗汇总（成长向总结 + 对抗要点）；否则为单发模式，以评委思维站在对方立场针对己方稿子生成攻击点（attackMode 可选：cross_exam 质询盘问（默认）/ rebuttal 驳论攻击 / free_debate 自由辩突袭）。入参 topic / side / speech 必填，judgeId / difficulty / history / finalize / attackMode / formatHint 可选。用户备赛防守演练、想提前知道自己立论会被怎么攻击、或想进行多轮陪练对抗时使用。
 - 备注：以上评审类工具（judge_debate / judge_match / judge_speech / detect_stage / simulate_opponent）的成功结果会自动存入「AI 裁判历史」，可在工作台「AI 裁判历史」页查看，切页/重启后仍保留。
 
 ## 赛程 Excel

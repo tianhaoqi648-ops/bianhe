@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 import { buildReplayHtml, buildJudgeReplayHtml } from '../replay-html'
 
 const SAMPLE_RESULT = {
-  judgeName: '胡渐彪·攻防流',
+  judgeName: '攻防流',
   topic: '网络让人更亲近还是更疏远',
   verdict: { winner: 'aff', confidence: 0.82, reason: '正方立论完整、全场主线清晰' },
   dimensions: [
@@ -45,7 +45,7 @@ describe('buildJudgeReplayHtml', () => {
     expect(content).toContain('<html')
     expect(content).toContain('</html>')
     // 评委/辩题/对阵
-    expect(content).toContain('胡渐彪·攻防流')
+    expect(content).toContain('攻防流')
     expect(content).toContain('辩题标题')
     expect(content).toContain('甲队')
     expect(content).toContain('乙队')

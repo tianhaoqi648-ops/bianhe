@@ -1,7 +1,7 @@
 // ============================================================
-// judge-speech.tool.test.ts — judge_speech 单方稿评估工具测试（批1 2026-08-18）
+// judge-speech.tool.test.ts — judge_speech 教练复盘工具测试（2026-08-23）
 //
-// Mock：llm-client 的 chat（评委评分由 LLM 完成）。
+// Mock：llm-client 的 chat（教练诊断由 LLM 完成）。
 // 覆盖：入参校验 / 合法 JSON 解析 / 围栏容错 / 缺字段 / 缺 config / LLM 抛错 / 人设与环节注入
 // ============================================================
 
@@ -45,22 +45,15 @@ const VALID_CONFIG: LLMConfig = {
 }
 
 const VALID_JSON = JSON.stringify({
-  dimensions: [
-    { key: 'logicDepth', score: 7, comment: '框架清晰' },
-    { key: 'logicRigor', score: 8, comment: '链条完整' },
-    { key: 'rebuttal', score: 5, comment: '未预判反驳' },
-    { key: 'expressiveness', score: 6, comment: '可更精炼' },
-    { key: 'teamwork', score: 7, comment: '衔接不足' }
+  shortboards: [
+    { area: '立论', point: '判准只给了定义没给论证', practiceHint: '练：先写判准成立的论证' },
+    { area: '反驳', point: '对预设反驳回应不充分', practiceHint: '练：预判对方最可能的攻击' },
+    { area: '表达', point: '长句堆叠、重点不突出', practiceHint: '练：结论先行' },
+    { area: '攻防', point: '被质询时易被带偏', practiceHint: '练：先判问题类型再回应' }
   ],
-  gaps: [
-    { severity: 'high', description: '判准未论证', evidence: '第2段' },
-    { severity: 'medium', description: '第二论点缺论据' }
-  ],
-  improvements: [
-    { target: '判准', suggestion: '补充论证' },
-    { target: '第二论点', suggestion: '加数据' }
-  ],
-  summary: '整体立论成立，但判准薄弱。'
+  practiceDirections: ['打磨判准论证', '针对预判攻击备防守卡'],
+  rewriteExample: '我的判准是……（示范改写）',
+  summary: '整体立论成立，但判准薄弱，建议先补论证，提升交锋守势。'
 })
 
 const ctxWithConfig: ToolExecutionContext = { config: VALID_CONFIG }
@@ -97,31 +90,30 @@ describe('judge_speech：LLM 调用与解析', () => {
     expect(mockChat).not.toHaveBeenCalled()
   })
 
-  it('合法 JSON → 解析出 dimensions/gaps/improvements/summary，并注入评委与环节要点', async () => {
+  it('合法 JSON → 解析出四维短板/可练方向/示范改写/总评，并注入教练与环节要点', async () => {
     mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
     const res = await judgeSpeechTool.execute(VALID_ARGS, ctxWithConfig)
 
     if (!res.success) throw new Error(res.error)
     expect(res.judgeId).toBe('hu-jianbiao')
-    expect(res.judgeName).toBe('胡渐彪')
+    expect(res.judgeName).toBe('攻防流')
     expect(res.stage).toBe('opening')
     expect(res.side).toBe('aff')
-    expect(res.dimensions).toHaveLength(5)
-    expect(res.dimensions[0]).toMatchObject({ key: 'logicDepth', score: 7 })
-    expect(res.gaps).toHaveLength(2)
-    expect(res.gaps[0]).toMatchObject({ severity: 'high', evidence: '第2段' })
-    expect(res.improvements).toHaveLength(2)
+    expect(res.shortboards).toHaveLength(4)
+    expect(res.shortboards[0]).toMatchObject({ area: '立论', point: '判准只给了定义没给论证' })
+    expect(res.practiceDirections).toHaveLength(2)
+    expect(res.rewriteExample).toContain('示范改写')
     expect(res.summary).toContain('判准薄弱')
 
-    // 校验 prompt 注入：评委人设 + 环节评审要点（立论） + 立场
+    // 校验 prompt 注入：教练定位（buildCoachPrompt）+ 环节要点（立论）+ 立场
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('胡渐彪')
-    expect(system.content).toContain('立论')
-    expect(system.content).toContain('判准')
+    expect(system.content).toContain('攻防流')
+    expect(system.content).toContain('反思教练')
+    expect(system.content.toLowerCase()).not.toContain('judge_debate')
     const user = messages.find((m: { role: string }) => m.role === 'user')
     expect(user.content).toContain('正方')
-    expect(user.content).toContain('正方一辩：我方判准是')
+    expect(user.content).toContain('立论')
   })
 
   it('带 ```json 围栏 → 正确解析', async () => {
@@ -130,17 +122,17 @@ describe('judge_speech：LLM 调用与解析', () => {
     expect(res.success).toBe(true)
   })
 
-  it('指定评委人设生效', async () => {
+  it('指定教练人设生效', async () => {
     mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
     const res = await judgeSpeechTool.execute(
       { ...VALID_ARGS, judgeId: 'huang-zhizhong' },
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
-    expect(res.judgeName).toBe('黄执中')
+    expect(res.judgeName).toBe('价值流')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('黄执中')
+    expect(system.content).toContain('价值流')
   })
 })
 
@@ -151,11 +143,11 @@ describe('judge_speech：异常处理', () => {
     expect(res.success).toBe(false)
   })
 
-  it('dimensions 缺维度 → success:false', async () => {
+  it('shortboards 无有效条目 → success:false', async () => {
     const bad = JSON.stringify({
-      dimensions: [{ key: 'logicDepth', score: 7, comment: 'c' }],
-      gaps: [],
-      improvements: [],
+      shortboards: [{ area: '开杠', point: 'x' }],
+      practiceDirections: [],
+      rewriteExample: 'r',
       summary: 's'
     })
     mockChat.mockResolvedValue({ role: 'assistant', content: bad })
@@ -163,18 +155,22 @@ describe('judge_speech：异常处理', () => {
     expect(res.success).toBe(false)
   })
 
-  it('score 越界 → success:false', async () => {
+  it('rewriteExample 缺失 → success:false', async () => {
     const bad = JSON.stringify({
-      dimensions: [
-        { key: 'logicDepth', score: 11, comment: 'c' },
-        { key: 'logicRigor', score: 8, comment: 'c' },
-        { key: 'rebuttal', score: 5, comment: 'c' },
-        { key: 'expressiveness', score: 6, comment: 'c' },
-        { key: 'teamwork', score: 7, comment: 'c' }
-      ],
-      gaps: [],
-      improvements: [],
+      shortboards: [{ area: '立论', point: 'p', practiceHint: 'p' }],
+      practiceDirections: [],
       summary: 's'
+    })
+    mockChat.mockResolvedValue({ role: 'assistant', content: bad })
+    const res = await judgeSpeechTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(res.success).toBe(false)
+  })
+
+  it('summary 缺失 → success:false', async () => {
+    const bad = JSON.stringify({
+      shortboards: [{ area: '立论', point: 'p', practiceHint: 'p' }],
+      practiceDirections: [],
+      rewriteExample: 'r'
     })
     mockChat.mockResolvedValue({ role: 'assistant', content: bad })
     const res = await judgeSpeechTool.execute(VALID_ARGS, ctxWithConfig)

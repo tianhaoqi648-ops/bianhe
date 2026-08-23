@@ -173,6 +173,58 @@ describe('matchRepo', () => {
     expect(h.runCalls.some((c) => c.sql.includes('UPDATE matches'))).toBe(true)
     expect(m).toBeTruthy()
   })
+
+  it('update（recordings）：按 BoundRecording[] 序列化写入 recording_meta', () => {
+    h.setRow(baseRow())
+    const recs = [{ id: 'rec-a', kind: 'whole' as const, filePath: '/x/a.webm', markers: [] }]
+    matchRepo.update('m1', { recordings: recs })
+    const upd = h.runCalls.find((c) => c.sql.includes('UPDATE matches'))
+    expect(upd).toBeTruthy()
+    const json = upd!.args.find((a) => typeof a === 'string' && String(a).includes('filePath'))
+    expect(JSON.parse(String(json))).toEqual(recs)
+  })
+
+  it('update（旧 recordingMeta）：迁移为 BoundRecording[] 后写入 recording_meta', () => {
+    h.setRow(baseRow())
+    matchRepo.update('m1', {
+      recordingMeta: { filePath: '/x/w.webm', segmentMode: 'whole', markers: [] }
+    })
+    const upd = h.runCalls.find((c) => c.sql.includes('UPDATE matches'))
+    const json = upd!.args.find((a) => typeof a === 'string' && String(a).includes('filePath'))
+    const arr = JSON.parse(String(json)) as Array<{ kind: string; filePath: string }>
+    expect(arr).toHaveLength(1)
+    expect(arr[0]).toMatchObject({ kind: 'whole', filePath: '/x/w.webm' })
+  })
+
+  it('getById：读取旧 recordingMeta 对象 → 派生成一整场 whole 录音并回填 recordingMeta', () => {
+    h.setRow(
+      baseRow({
+        recording_meta: JSON.stringify({
+          filePath: '/x/w.webm',
+          segmentMode: 'whole',
+          markers: [{ tsMs: 0, stageId: 's1', stageName: '立论', side: 'aff', speaker: null }]
+        })
+      })
+    )
+    const m = matchRepo.getById('m1')
+    expect(m?.recordings).toHaveLength(1)
+    expect(m?.recordings![0].kind).toBe('whole')
+    expect(m?.recordings![0].markers).toHaveLength(1)
+    expect(m?.recordingMeta?.segmentMode).toBe('whole')
+  })
+
+  it('getById：读取 BoundRecording[] → 派生旧 recordingMeta（split）', () => {
+    h.setRow(
+      baseRow({
+        recording_meta: JSON.stringify([{ id: 'rec-s1', kind: 'stage', filePath: '/x/s1.webm', stageId: 's1', tsMs: 0 }])
+      })
+    )
+    const m = matchRepo.getById('m1')
+    expect(m?.recordings).toHaveLength(1)
+    expect(m?.recordings![0].kind).toBe('stage')
+    expect(m?.recordingMeta?.segmentMode).toBe('split')
+    expect(m?.recordingMeta?.markers[0].stageId).toBe('s1')
+  })
 })
 
 // 纯函数聚合测试（computeResult 不依赖 DB，可直接测真实三票制/百分制）

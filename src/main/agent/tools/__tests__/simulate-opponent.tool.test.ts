@@ -108,15 +108,16 @@ describe('simulate_opponent：LLM 调用与解析', () => {
     const res = await simulateOpponentTool.execute(VALID_ARGS, ctxWithConfig)
 
     if (!res.success) throw new Error(res.error)
+    if (!('attackPoints' in res)) throw new Error('unexpected legacy result')
     expect(res.attackMode).toBe('cross_exam')
-    expect(res.judgeName).toBe('胡渐彪')
+    expect(res.judgeName).toBe('攻防流')
     expect(res.weaknessSummary).toContain('判准')
     expect(res.attackPoints).toHaveLength(2)
     expect(res.attackPoints[0]).toMatchObject({ layer: 'theory', target: '第一段判准' })
 
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('胡渐彪')
+    expect(system.content).toContain('攻防流')
     expect(system.content).toContain('站在对方立场')
     expect(system.content).toContain('质询')
     const user = messages.find((m: { role: string }) => m.role === 'user')
@@ -134,6 +135,7 @@ describe('simulate_opponent：LLM 调用与解析', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
+    if (!('attackMode' in res)) throw new Error('unexpected legacy result')
     expect(res.attackMode).toBe('rebuttal')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
@@ -150,6 +152,7 @@ describe('simulate_opponent：LLM 调用与解析', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
+    if (!('attackMode' in res)) throw new Error('unexpected legacy result')
     expect(res.attackMode).toBe('free_debate')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
@@ -166,7 +169,7 @@ describe('simulate_opponent：LLM 调用与解析', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
-    expect(res.judgeName).toBe('黄执中')
+    expect(res.judgeName).toBe('价值流')
   })
 })
 
@@ -179,6 +182,7 @@ describe('simulate_opponent：异常处理', () => {
     mockChat.mockResolvedValue({ role: 'assistant', content: bad })
     const res = await simulateOpponentTool.execute(VALID_ARGS, ctxWithConfig)
     if (!res.success) throw new Error(res.error)
+    if (!('attackPoints' in res)) throw new Error('unexpected legacy result')
     expect(res.attackPoints).toHaveLength(2)
   })
 
@@ -255,5 +259,131 @@ describe('simulate_opponent：写评审历史', () => {
     })
     const res = await simulateOpponentTool.execute(VALID_ARGS, ctxWithConfig)
     expect(res.success).toBe(true)
+  })
+})
+
+// ============================================================
+// 陪练回合制（2026-08-23）
+// ============================================================
+
+describe('simulate_opponent：陪练回合制（发起/下一轮）', () => {
+  it('提供 difficulty → 进入回合制，返回本轮攻击文本（mode sparring_turn）', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '请问对方辩友，您的判准为何成立？' })
+    const res = await simulateOpponentTool.execute(
+      { ...VALID_ARGS, difficulty: 'national' },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    if (!('opponentAttack' in res)) throw new Error('unexpected sparring result')
+    expect(res.mode).toBe('sparring_turn')
+    expect(res.difficulty).toBe('national')
+    expect(res.roundIndex).toBe(1)
+    expect(res.opponentAttack).toContain('判准')
+
+    const [messages] = mockChat.mock.calls[0]
+    const system = messages.find((m: { role: string }) => m.role === 'system')
+    expect(system.content).toContain('陪练对手')
+    expect(system.content).toContain('国家级赛事辩手')
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).toContain('正方一辩')
+  })
+
+  it('提供 history → 下一轮 roundIndex 递增，把历史轮次写入 prompt', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '第二轮的质询……' })
+    const res = await simulateOpponentTool.execute(
+      {
+        ...VALID_ARGS,
+        difficulty: 'intermediate',
+        history: [{ opponent: '第一轮攻击', userReply: '我的第一轮答辩' }]
+      },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    if (!('opponentAttack' in res)) throw new Error('unexpected sparring result')
+    expect(res.mode).toBe('sparring_turn')
+    expect(res.roundIndex).toBe(2)
+
+    const [messages] = mockChat.mock.calls[0]
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).toContain('第 1 轮')
+    expect(user.content).toContain('第一轮攻击')
+    expect(user.content).toContain('我的第一轮答辩')
+  })
+
+  it('提供 scope=具体环节 → system 与 user 均注入"只在该环节内应对"', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '质询连问……' })
+    const res = await simulateOpponentTool.execute(
+      { ...VALID_ARGS, difficulty: 'intermediate', scope: 'crossfire' },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    if (!('opponentAttack' in res)) throw new Error('unexpected sparring result')
+    expect(res.mode).toBe('sparring_turn')
+    const [messages] = mockChat.mock.calls[0]
+    const system = messages.find((m: { role: string }) => m.role === 'system')
+    expect(system.content).toContain('不要跳到其他环节')
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).toContain('环节范围')
+    expect(user.content).toContain('质询')
+  })
+
+  it('回合制返回空文本 → success:false', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '   ' })
+    const res = await simulateOpponentTool.execute(
+      { ...VALID_ARGS, difficulty: 'novice' },
+      ctxWithConfig
+    )
+    expect(res.success).toBe(false)
+  })
+})
+
+describe('simulate_opponent：陪练回合制（结束并汇总）', () => {
+  const FINALIZE_JSON = JSON.stringify({
+    summary: '整体在判准回应上失守，但论点拆解进步明显。',
+    keyPoints: [
+      { point: '判准被反复追打', tip: '先给出判准成立的论证' },
+      { point: '归谬化解及时', tip: '继续预设数据边界' }
+    ]
+  })
+
+  it('finalize=true → 返回对抗汇总（mode sparring_finalize）', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: FINALIZE_JSON })
+    const res = await simulateOpponentTool.execute(
+      {
+        ...VALID_ARGS,
+        difficulty: 'intermediate',
+        history: [{ opponent: 'q1', userReply: 'a1' }, { opponent: 'q2', userReply: 'a2' }],
+        finalize: true
+      },
+      ctxWithConfig
+    )
+    if (!res.success) throw new Error(res.error)
+    if (!('roundsPlayed' in res)) throw new Error('unexpected finalize result')
+    expect(res.mode).toBe('sparring_finalize')
+    expect(res.roundsPlayed).toBe(2)
+    expect(res.summary).toContain('判准回应上失守')
+    expect(res.keyPoints).toHaveLength(2)
+
+    const [messages] = mockChat.mock.calls[0]
+    const user = messages.find((m: { role: string }) => m.role === 'user')
+    expect(user.content).toContain('第 2 轮')
+  })
+
+  it('finalize 返回无 summary → success:false', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '{"keyPoints":[]}' })
+    const res = await simulateOpponentTool.execute(
+      { ...VALID_ARGS, difficulty: 'novice', finalize: true },
+      ctxWithConfig
+    )
+    expect(res.success).toBe(false)
+  })
+
+  it('finalize 非 JSON → success:false', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '不是JSON' })
+    const res = await simulateOpponentTool.execute(
+      { ...VALID_ARGS, difficulty: 'novice', finalize: true },
+      ctxWithConfig
+    )
+    expect(res.success).toBe(false)
   })
 })

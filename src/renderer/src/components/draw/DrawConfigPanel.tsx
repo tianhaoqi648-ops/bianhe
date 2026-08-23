@@ -423,10 +423,9 @@ export default function DrawConfigPanel({
                     value={state.revealMode}
                     onChange={(v) => onChange({ revealMode: v })}
                     options={[
-                      { value: 'flip', label: '翻牌（3D 翻转，默认）' },
                       { value: 'tear', label: '撕开（金色封面左右分离）' },
                       { value: 'spotlight', label: '聚光灯（左到右扫描）' },
-                      { value: 'fade', label: '渐显（最简洁）' }
+                      { value: 'fade', label: '渐显（最简洁，默认）' }
                     ]}
                   />
                   <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>

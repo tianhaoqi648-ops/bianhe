@@ -14,13 +14,13 @@
 import React, { useState } from 'react'
 import { Alert, Typography, Tag, Progress, theme } from 'antd'
 import { STAGE_DEFINITIONS } from '../../../../shared/debate-stages'
-import { getJudgeById } from '../../../../shared/ai-judges'
+import { getJudgeAnonLabel } from '../../../../shared/ai-judges'
 import { RadarChart } from './RadarChart'
 
-/** 按 judgeId 映射评委风格类别（不显示真人名）；查不到兜底「AI 裁判」 */
+/** 按 judgeId 映射评委匿名风格标签（纯风格原型，不显示真人名）；查不到兜底「AI 裁判」 */
 export function judgeCategoryOf(judgeId: string | undefined): string {
   if (!judgeId) return 'AI 裁判'
-  return getJudgeById(judgeId)?.category ?? 'AI 裁判'
+  return getJudgeAnonLabel(judgeId)
 }
 
 // ---------- 结果接口（与 main/agent/tools/*.tool.ts 对齐） ----------
@@ -105,6 +105,101 @@ export interface SimulateOpponentResult {
     target: string
     defenseHint: string
   }>
+}
+
+/** judge_speech 教练复盘结果（2026-08-23：成长向诊断，非判分） */
+export interface CoachReviewResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  stage?: string | null
+  side: 'aff' | 'neg'
+  shortboards: Array<{
+    area: '立论' | '反驳' | '表达' | '攻防'
+    point: string
+    practiceHint: string
+  }>
+  practiceDirections: string[]
+  rewriteExample: string
+  summary: string
+}
+
+/** coach_match 整场分环节复盘结果（2026-08-23） */
+export interface CoachMatchResult {
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  stageReviews: Array<{
+    stage?: string | null
+    stageName: string
+    shortboards: Array<{
+      area: '立论' | '反驳' | '表达' | '攻防'
+      point: string
+      practiceHint: string
+    }>
+    practiceDirections: string[]
+    rewriteExample: string
+    summary: string
+  }>
+  summary: string
+}
+
+/** simulate_opponent 回合制：一轮对方攻击结果 */
+export interface SparringTurnResult {
+  mode: 'sparring_turn'
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  difficulty: string
+  roundIndex: number
+  opponentAttack: string
+}
+
+/** simulate_opponent 回合制：结束并汇总结果 */
+export interface SparringFinalizeResult {
+  mode: 'sparring_finalize'
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  difficulty: string
+  roundsPlayed: number
+  summary: string
+  keyPoints: Array<{ point: string; tip: string }>
+}
+
+/** judge_live 实时对辩：一轮对方发言结果（Task 4） */
+export interface LiveDebateTurnResult {
+  success: true
+  mode: 'live_turn'
+  role: 'opponent'
+  phase: 'constructive' | 'crossfire' | 'free' | 'summary'
+  speech: string
+  nextRounds: unknown[] | null
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  difficulty: string
+  roundIndex: number
+}
+
+/** judge_live 实时对辩：结束并汇总结果（对抗要点） */
+export interface LiveDebateFinalizeResult {
+  success: true
+  mode: 'live_finalize'
+  role: 'opponent'
+  phase: 'summary'
+  judgeId: string
+  judgeName: string
+  topic: string
+  side: 'aff' | 'neg'
+  difficulty: string
+  roundsPlayed: number
+  summary: string
+  keyPoints: Array<{ point: string; tip: string }>
 }
 
 // ---------- 映射（STAGE_NAMES 由 STAGE_DEFINITIONS 派生） ----------
@@ -730,6 +825,628 @@ export function SimulateOpponentCard({ result }: { result: SimulateOpponentResul
 
 // ---------- 切换器 ----------
 
+/** 陪练难度 → 展示名 */
+const SPARRING_DIFFICULTY_LABEL: Record<string, string> = {
+  novice: '新手',
+  intermediate: '进阶',
+  national: '国选手'
+}
+
+/**
+ * 教练复盘（judge_speech）结果卡片（2026-08-23）。
+ * 成长向诊断：四维短板 + 训练方向、可练方向、示范改写、教练总评。
+ */
+export function CoachReviewCard({ result }: { result: CoachReviewResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, stage, side, shortboards, practiceDirections, rewriteExample, summary } = result
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：教练 + 环节 + 立场 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🧭 {judgeCategoryOf(result.judgeId)} · 教练复盘
+        </Typography.Text>
+        {stage ? <Tag color="geekblue">{STAGE_NAMES[stage] ?? stage}</Tag> : null}
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
+      </div>
+
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      {/* 四维短板 + 训练方向 */}
+      {shortboards.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            立论 / 反驳 / 表达 / 攻防 短板
+          </div>
+          {shortboards.map((s, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: 12,
+                marginBottom: 4,
+                backgroundColor: token.colorFillQuaternary,
+                borderRadius: 4,
+                padding: '4px 8px',
+                lineHeight: 1.5
+              }}
+            >
+              <Tag color="purple" style={{ marginRight: 6 }}>
+                {s.area}
+              </Tag>
+              {s.point}
+              {s.practiceHint ? (
+                <div style={{ color: token.colorSuccess, marginTop: 2 }}>
+                  练：{s.practiceHint}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 可练方向 */}
+      {practiceDirections.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            可练方向
+          </div>
+          {practiceDirections.map((d, i) => (
+            <div key={i} style={{ fontSize: 12, marginBottom: 2, lineHeight: 1.5 }}>
+              · {d}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* 示范改写 */}
+      {rewriteExample ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            示范改写
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              lineHeight: 1.6,
+              backgroundColor: token.colorFillQuaternary,
+              borderRadius: 4,
+              padding: '6px 8px',
+              whiteSpace: 'pre-wrap'
+            }}
+          >
+            {rewriteExample}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 教练总评 */}
+      {summary ? (
+        <Typography.Paragraph
+          style={{
+            fontSize: 12,
+            color: token.colorText,
+            marginTop: 4,
+            marginBottom: 0,
+            whiteSpace: 'pre-wrap'
+          }}
+        >
+          {summary}
+        </Typography.Paragraph>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * 教练整场分环节复盘（coach_match）结果卡片。
+ * 按环节分组展示各自的四维短板/可练方向/示范改写/总评，末尾展示整场汇总。
+ */
+export function CoachMatchCard({ result }: { result: CoachMatchResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, side, stageReviews, summary } = result
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      {/* 头部：教练 + 立场 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🧭 {judgeCategoryOf(result.judgeId)} · 整场分环节复盘
+        </Typography.Text>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方稿' : '反方稿'}</Tag>
+        <Tag color="geekblue">{stageReviews.length} 个环节</Tag>
+      </div>
+
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      {/* 逐环节诊断（按环节分组） */}
+      {stageReviews.map((sr, i) => (
+        <div
+          key={i}
+          style={{
+            marginBottom: 10,
+            padding: 8,
+            borderRadius: 6,
+            border: `1px solid ${token.colorBorderSecondary}`,
+            backgroundColor: token.colorBgContainer
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              marginBottom: 6,
+              flexWrap: 'wrap'
+            }}
+          >
+            <Tag color="geekblue" style={{ marginRight: 0 }}>
+              {STAGE_NAMES[sr.stage ?? ''] || sr.stageName}
+            </Tag>
+          </div>
+
+          {/* 四维短板 */}
+          {sr.shortboards.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+                立论 / 反驳 / 表达 / 攻防 短板
+              </div>
+              {sr.shortboards.map((s, j) => (
+                <div
+                  key={j}
+                  style={{
+                    fontSize: 12,
+                    marginBottom: 4,
+                    backgroundColor: token.colorFillQuaternary,
+                    borderRadius: 4,
+                    padding: '4px 8px',
+                    lineHeight: 1.5
+                  }}
+                >
+                  <Tag color="purple" style={{ marginRight: 6 }}>
+                    {s.area}
+                  </Tag>
+                  {s.point}
+                  {s.practiceHint ? (
+                    <div style={{ color: token.colorSuccess, marginTop: 2 }}>练：{s.practiceHint}</div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {/* 可练方向 */}
+          {sr.practiceDirections.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+                可练方向
+              </div>
+              {sr.practiceDirections.map((d, j) => (
+                <div key={j} style={{ fontSize: 12, marginBottom: 2, lineHeight: 1.5 }}>
+                  · {d}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {/* 环节总评 */}
+          {sr.summary ? (
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
+            >
+              {sr.summary}
+            </Typography.Text>
+          ) : null}
+        </div>
+      ))}
+
+      {/* 整场汇总 */}
+      {summary ? (
+        <div
+          style={{
+            marginTop: 4,
+            padding: 8,
+            borderRadius: 6,
+            backgroundColor: token.colorFillQuaternary
+          }}
+        >
+          <Typography.Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+            整场汇总
+          </Typography.Text>
+          <Typography.Paragraph
+            style={{ fontSize: 12, marginBottom: 0, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}
+          >
+            {summary}
+          </Typography.Paragraph>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 陪练回合制：一轮对方攻击结果卡片 */
+export function SparringTurnCard({ result }: { result: SparringTurnResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, side, difficulty, roundIndex, opponentAttack } = result
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          ⚔️ 陪练 · 第 {roundIndex} 轮攻击
+        </Typography.Text>
+        <Tag color="geekblue">{SPARRING_DIFFICULTY_LABEL[difficulty] ?? difficulty}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方' : '反方'}</Tag>
+      </div>
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+      <Typography.Paragraph
+        style={{ fontSize: 12, marginBottom: 0, whiteSpace: 'pre-wrap', color: token.colorText }}
+      >
+        {opponentAttack}
+      </Typography.Paragraph>
+    </div>
+  )
+}
+
+/** 陪练回合制：结束并汇总结果卡片 */
+export function SparringFinalizeCard({ result }: { result: SparringFinalizeResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, side, difficulty, roundsPlayed, summary, keyPoints } = result
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🏁 陪练对抗汇总（{roundsPlayed} 轮）
+        </Typography.Text>
+        <Tag color="geekblue">{SPARRING_DIFFICULTY_LABEL[difficulty] ?? difficulty}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方' : '反方'}</Tag>
+      </div>
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+      {summary ? (
+        <Typography.Paragraph
+          style={{ fontSize: 12, marginBottom: 8, whiteSpace: 'pre-wrap', color: token.colorText }}
+        >
+          {summary}
+        </Typography.Paragraph>
+      ) : null}
+      {keyPoints.length > 0 ? (
+        <div>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            对抗要点
+          </div>
+          {keyPoints.map((k, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: 12,
+                marginBottom: 4,
+                backgroundColor: token.colorFillQuaternary,
+                borderRadius: 4,
+                padding: '4px 8px',
+                lineHeight: 1.5
+              }}
+            >
+              {k.point}
+              {k.tip ? (
+                <div style={{ color: token.colorSuccess, marginTop: 2 }}>应对建议：{k.tip}</div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 实时对辩：结束并汇总结果卡片（对抗要点，成长向） */
+export function LiveDebateFinalizeCard({ result }: { result: LiveDebateFinalizeResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, side, difficulty, roundsPlayed, summary, keyPoints } = result
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🏁 实时对辩对抗汇总（{roundsPlayed} 轮）
+        </Typography.Text>
+        <Tag color="geekblue">{SPARRING_DIFFICULTY_LABEL[difficulty] ?? difficulty}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方' : '反方'}</Tag>
+      </div>
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+      {summary ? (
+        <Typography.Paragraph
+          style={{ fontSize: 12, marginBottom: 8, whiteSpace: 'pre-wrap', color: token.colorText }}
+        >
+          {summary}
+        </Typography.Paragraph>
+      ) : null}
+      {keyPoints.length > 0 ? (
+        <div>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            对抗要点
+          </div>
+          {keyPoints.map((k, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: 12,
+                marginBottom: 4,
+                backgroundColor: token.colorFillQuaternary,
+                borderRadius: 4,
+                padding: '4px 8px',
+                lineHeight: 1.5
+              }}
+            >
+              {k.point}
+              {k.tip ? (
+                <div style={{ color: token.colorSuccess, marginTop: 2 }}>应对建议：{k.tip}</div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 实时对辩环节 → 展示名 */
+const LIVE_PHASE_NAMES: Record<string, string> = {
+  constructive: '申论',
+  crossfire: '质询',
+  free: '自由辩论',
+  summary: '总结'
+}
+
+/**
+ * 实时对辩：一轮对方发言结果卡片（judge_live 的对辩轮次）。
+ * 非 finalize（live_turn 或无 mode 的 legacy 记录）时展示：
+ * 环节 / 难度 / 立场 / 轮次 / 对手发言；若带此前回合（含用户回应）一并展示。
+ */
+export function LiveDebateTurnCard({ result }: { result: LiveDebateTurnResult }): JSX.Element {
+  const { token } = theme.useToken()
+  const { topic, side, difficulty, phase, roundIndex, speech, nextRounds } = result
+
+  // nextRounds 为 unknown[]，露出一致的回合结构读字段
+  const rounds = (Array.isArray(nextRounds) ? nextRounds : []) as Array<{
+    phase?: unknown
+    opponent?: unknown
+    userReply?: unknown
+  }>
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+          flexWrap: 'wrap'
+        }}
+      >
+        <Typography.Text strong style={{ fontSize: 13 }}>
+          🗣️ {judgeCategoryOf(result.judgeId)} · 对方发言
+        </Typography.Text>
+        <Tag color="geekblue">{LIVE_PHASE_NAMES[phase as string] ?? phase}</Tag>
+        <Tag color="default">{SPARRING_DIFFICULTY_LABEL[difficulty] ?? difficulty}</Tag>
+        <Tag color={side === 'aff' ? 'blue' : 'orange'}>{side === 'aff' ? '正方' : '反方'}</Tag>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          第 {roundIndex} 轮
+        </Typography.Text>
+      </div>
+
+      {topic ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+          辩题：{topic}
+        </Typography.Text>
+      ) : null}
+
+      <Typography.Paragraph
+        style={{ fontSize: 12, marginBottom: 0, whiteSpace: 'pre-wrap', color: token.colorText }}
+      >
+        {speech}
+      </Typography.Paragraph>
+
+      {rounds.length > 0 ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>
+            此前回合
+          </div>
+          {rounds.map((r, i) => {
+            const opp = typeof r.opponent === 'string' && r.opponent !== '' ? r.opponent : ''
+            const reply = typeof r.userReply === 'string' && r.userReply !== '' ? r.userReply : ''
+            const phaseName = LIVE_PHASE_NAMES[String(r.phase)] ?? String(r.phase ?? '')
+            return (
+              <div
+                key={i}
+                style={{
+                  fontSize: 12,
+                  marginBottom: 4,
+                  backgroundColor: token.colorFillQuaternary,
+                  borderRadius: 4,
+                  padding: '4px 8px',
+                  lineHeight: 1.5,
+                  wordBreak: 'break-word'
+                }}
+              >
+                <Tag color="default" style={{ marginRight: 6 }}>
+                  第 {i + 1} {phaseName ? `轮·${phaseName}` : '轮'}
+                </Tag>
+                {opp ? <div>对方发言：{opp}</div> : null}
+                {reply ? <div style={{ color: token.colorSuccess }}>你的回应：{reply}</div> : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * 通用兜底卡片：当 JudgeResultCardByTool 未匹配到专属卡片时渲染，
+ * 用 JSON <pre> 展示原始结果，并注明「暂无专属卡片」，避免「查看」后展开区空白。
+ */
+export function GenericJudgeResultCard({
+  toolName,
+  result
+}: {
+  toolName?: string
+  result: unknown
+}): JSX.Element {
+  const { token } = theme.useToken()
+  const text = (() => {
+    try {
+      return JSON.stringify(result, null, 2)
+    } catch {
+      return String(result)
+    }
+  })()
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 8,
+        borderRadius: 6,
+        backgroundColor: token.colorPrimaryBg,
+        border: `1px solid ${token.colorPrimaryBorder}`
+      }}
+    >
+      <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+        🔎 工具结果{toolName ? `（${toolName}）` : ''}
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+        该历史类型暂无专属卡片，以下为原始结果。
+      </Typography.Text>
+      <pre
+        style={{
+          margin: 0,
+          padding: 8,
+          borderRadius: 4,
+          fontSize: 12,
+          lineHeight: 1.5,
+          maxHeight: 320,
+          overflow: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          backgroundColor: token.colorFillQuaternary,
+          color: token.colorText
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  )
+}
+
 /** JudgeResultCardByTool Props */
 export interface JudgeResultCardByToolProps {
   toolName: string
@@ -754,12 +1471,32 @@ export function JudgeResultCardByTool({
     case 'judge_debate':
       return <JudgeResultCard result={result as JudgeDebateResult} />
     case 'judge_speech':
-      return <JudgeSpeechResultCard result={result as JudgeSpeechResult} />
+      return <CoachReviewCard result={result as unknown as CoachReviewResult} />
+    case 'coach_match':
+      return <CoachMatchCard result={result as CoachMatchResult} />
     case 'detect_stage':
       return <DetectStageResultCard result={result as DetectStageResult} />
-    case 'simulate_opponent':
+    case 'simulate_opponent': {
+      const mode = (result as { mode?: string }).mode
+      if (mode === 'sparring_turn') {
+        return <SparringTurnCard result={result as unknown as SparringTurnResult} />
+      }
+      if (mode === 'sparring_finalize') {
+        return <SparringFinalizeCard result={result as unknown as SparringFinalizeResult} />
+      }
       return <SimulateOpponentCard result={result as SimulateOpponentResult} />
+    }
+    case 'judge_live': {
+      const mode = (result as { mode?: string }).mode
+      if (mode === 'live_finalize') {
+        return <LiveDebateFinalizeCard result={result as unknown as LiveDebateFinalizeResult} />
+      }
+      // 实时对辩的对辩轮次（live_turn 或无 mode 的 legacy 记录）：
+      // 渲染对方发言卡片，确保点「查看」必不空白。
+      return <LiveDebateTurnCard result={result as unknown as LiveDebateTurnResult} />
+    }
     default:
-      return null
+      // 未知/尚无专属卡片的类型：渲染通用兜底，避免展开区空白。
+      return <GenericJudgeResultCard toolName={toolName} result={result} />
   }
 }

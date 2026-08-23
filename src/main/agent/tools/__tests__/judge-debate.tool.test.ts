@@ -117,12 +117,12 @@ describe('judge_debate：LLM 调用与解析', () => {
     // 确认传入了评委人设 prompt（默认胡渐彪）
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('胡渐彪')
+    expect(system.content).toContain('攻防流')
     expect(system.content).toContain('白纸理论')
 
     if (!res.success) throw new Error(res.error)
     expect(res.judgeId).toBe('hu-jianbiao')
-    expect(res.judgeName).toBe('胡渐彪')
+    expect(res.judgeName).toBe('攻防流')
     expect(res.verdict).toEqual({ winner: 'aff', confidence: 0.7, reason: '正方在核心交锋点完成有效回应' })
     expect(res.dimensions).toHaveLength(5)
     expect(res.dimensions[0]).toMatchObject({ key: 'logicDepth', name: '立论深度', affScore: 8, negScore: 6 })
@@ -152,10 +152,10 @@ describe('judge_debate：LLM 调用与解析', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
-    expect(res.judgeName).toBe('黄执中')
+    expect(res.judgeName).toBe('价值流')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('黄执中')
+    expect(system.content).toContain('价值流')
   })
 })
 
@@ -324,10 +324,10 @@ describe('judge_debate：分段模式（批3）', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
-    expect(res.judgeName).toBe('黄执中')
+    expect(res.judgeName).toBe('价值流')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('黄执中')
+    expect(system.content).toContain('价值流')
   })
 })
 

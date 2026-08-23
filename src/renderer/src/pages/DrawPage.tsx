@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: DrawConfigState = {
   groupIds: [],
   teamsPerTopic: 2,
   groupId: null,
-  revealMode: 'flip'
+  revealMode: 'fade'
 };
 
 /** 引导步骤卡片 */
@@ -112,7 +112,7 @@ function GuideSteps() {
   ];
 
   return (
-    <div style={emptyStateStyle}>
+    <div style={{ ...emptyStateStyle, height: 'auto', minHeight: 0 }}>
       <div style={{ marginBottom: spacing.xxxl }}>
         <div
           style={{
@@ -759,7 +759,8 @@ export default function DrawPage() {
           display: 'flex',
           flexDirection: isMobile ? 'column' : 'row',
           gap: spacing.sectionGap,
-          minHeight: 'calc(100vh - 56px)',
+          // 不再用整屏高度占位，避免选中赛事但未抽取时产生可滚动空白；左侧面板 sticky 依赖页面滚动祖先，不受此容器高度影响
+          minHeight: 0,
           padding: spacing.lg,
           background: 'transparent'
         }}

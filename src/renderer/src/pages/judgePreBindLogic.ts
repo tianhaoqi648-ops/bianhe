@@ -8,12 +8,15 @@
 // ============================================================
 
 import type { Match, Round } from '../../../shared/types'
+import type { DebaterRole } from '../../../shared/ai-judges'
 
 /** 路由预绑定意图（state 或 query 中携带的三元组，均可选） */
 export interface JudgePreBindIntent {
   eventId?: string | null
   roundId?: string | null
   matchId?: string | null
+  /** 可选：打开工作台时定位到的三角色 Tab（judge 裁判 / sparring 陪练 / coach 复盘） */
+  role?: DebaterRole
 }
 
 /** 规整所需的已加载数据源（轮次 + 场次） */

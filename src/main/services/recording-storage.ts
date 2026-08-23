@@ -7,12 +7,12 @@
 
 import { app } from 'electron'
 import { promises as fs } from 'fs'
-import { basename, isAbsolute, join } from 'path'
+import { basename, dirname, isAbsolute, join } from 'path'
 import { auditRepo } from '../db/repository/audit.repo'
 import { RECORDING_SEGMENT_KEY, RECORDING_FORMAT_KEY, resolveSegmentMode, resolveRecordingFormat, uniqueRecordingFileName, type RecordingSegmentMode, type RecordingFormat } from '../../shared/match-recording'
 
 export const RECORDINGS_DIR_NAME = 'recordings'
-/** settings 表里录音目录的 key（绝对路径；空/缺失则用默认 userData/recordings） */
+/** settings 表里录音「数据根」的 key（存用户选择的数据根目录；空/缺失则用默认 userData → <根>/recordings） */
 export const RECORDING_DIR_KEY = 'recording.dir'
 
 /** settings 表里录音分段模式的 key（whole/split，缺失默认 'whole'） */
@@ -33,21 +33,65 @@ export function getRecordingFormat(): RecordingFormat {
   return resolveRecordingFormat(auditRepo.getSetting(RECORDING_FORMAT_KEY))
 }
 
-/** 用户配置的录音目录（settings 中存的绝对路径；未配置返回 null） */
+/** 用户配置的录音「数据根」（settings 中存的数据根；未配置返回 null）。空字符串/未配置视为恢复默认 userData。 */
 export function getConfiguredRecordingDir(): string | null {
   const v = auditRepo.getSetting(RECORDING_DIR_KEY)
   return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
-/** 设置录音目录（空字符串视为恢复默认） */
+/** 设置录音数据根（空字符串视为恢复默认 userData） */
 export function setConfiguredRecordingDir(dir: string): void {
   auditRepo.setSetting(RECORDING_DIR_KEY, dir && dir.trim() ? dir.trim() : '')
 }
 
-/** 录音目录绝对路径（优先用配置，缺省 userData/recordings；按需创建） */
+/**
+ * 解析录音「数据根」目录。
+ * recording.dir 存的是用户选择的数据根，实际录音目录固定落为 `<根>/recordings`（仿 stt.dir→<根>/stt）。
+ * - root 为空 → 默认 userData；
+ * - root 最后一段已是 `recordings`（大小写不敏感）→ 其 dirname 即为数据根（兼容旧设置里直接存「绝对录音目录」形如 `<根>/recordings`，
+ *   取上一级作数据根后，生效录音目录不变，旧录音不失联）；
+ * - 否则 → root 本身即为数据根。
+ */
+export function resolveDataRoot(root: string | null): string {
+  if (!root || !root.trim()) {
+    return app.getPath('userData')
+  }
+  const finalSeg = basename(root)
+  if (finalSeg.toLowerCase() === RECORDINGS_DIR_NAME.toLowerCase()) {
+    return dirname(root)
+  }
+  return root
+}
+
+/**
+ * 当前生效的数据根（未配置回退默认 userData）。与 recordingsDir() 的关系：生效录音目录 = 数据根 /recordings。
+ */
+export function dataRootDir(): string {
+  return resolveDataRoot(getConfiguredRecordingDir())
+}
+
+/**
+ * 归一化录音目录。
+ * root 视为数据根，实际录音目录固定落为 `<根>/recordings`：
+ * - root 为空 → 默认 userData/recordings；
+ * - root 最后一段已是 `recordings` → 直接用 root（兼容旧设置直接存绝对录音目录，避免 recordings/recordings，旧录音不失联）；
+ * - 否则 → join(root, 'recordings')。
+ */
+export function resolveRecordingsDir(root: string | null): string {
+  if (!root || !root.trim()) {
+    return join(app.getPath('userData'), RECORDINGS_DIR_NAME)
+  }
+  const finalSeg = basename(root)
+  if (finalSeg.toLowerCase() === RECORDINGS_DIR_NAME.toLowerCase()) {
+    return root
+  }
+  return join(root, RECORDINGS_DIR_NAME)
+}
+
+/** 录音目录绝对路径（数据根 /recordings，数据根优先用配置，缺省 userData；按需创建）。 */
 export async function recordingsDir(): Promise<string> {
-  const configured = getConfiguredRecordingDir()
-  const dir = configured || join(app.getPath('userData'), RECORDINGS_DIR_NAME)
+  const root = getConfiguredRecordingDir()
+  const dir = resolveRecordingsDir(root)
   await fs.mkdir(dir, { recursive: true })
   return dir
 }
@@ -108,6 +152,22 @@ export async function readRecordingFile(filePath: string): Promise<Buffer | null
     return await fs.readFile(resolved)
   } catch {
     return null
+  }
+}
+
+/**
+ * 校验录音文件是否存在。
+ * - filePath 为绝对路径 → 直接 stat；
+ * - 相对路径 → join 到录音目录下。
+ * 不存在或读取失败返回 false。
+ */
+export async function recordingFileExists(filePath: string): Promise<boolean> {
+  try {
+    const resolved = isAbsolute(filePath) ? filePath : join(await recordingsDir(), filePath)
+    const st = await fs.stat(resolved)
+    return st.isFile()
+  } catch {
+    return false
   }
 }
 

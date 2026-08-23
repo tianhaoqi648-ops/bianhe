@@ -680,35 +680,45 @@ export async function transcribeRecordings(req: SttRequest): Promise<SttSegment[
     const isOriginalWav = extname(filePath).toLowerCase() === '.wav'
     const last = markers.length ? markers[markers.length - 1] : undefined
     let localWav: string | undefined
+    let ffmpegFailedToApi = false
 
     if (isOriginalWav) {
       // 原 wav：整段转写，不再按 30s 物理切片（避免切点掉字/质量下降）
       localWav = filePath
+    } else if (engine === 'api') {
+      // 仅 API：直接喂原始文件即可，无需 ffmpeg 转码（避免「ffmpeg 转码失败」卡住 API 用户）
+      localWav = filePath
     } else {
-      // 非 wav（m4a/webm/mp3 等）：优先本地转码成 16k mono wav + 整段转写；无 ffmpeg 才回退 API/报错
+      // 非 wav（m4a/webm/mp3 等）：本地引擎需 16k mono wav → 优先本机 ffmpeg 转码；
+      // 转码失败且已配 API 时回退 API（喂原始文件），避免硬错误；无 API 才报错提示。
       const ff = await getFfmpegStatus()
       const ffReady = ff.installed && (await isFile(ffmpegPath()))
       if (ffReady) {
         const wav = join(tmpSegDir, 'transcoded.wav')
         try {
           await transcodeToWav(filePath, wav, { ar: 16000, ac: 1 })
+          localWav = wav
         } catch (e) {
           const em = e instanceof Error ? e.message : String(e)
-          throw new Error(
-            `ffmpeg 转码失败：${em}。可改用 AI API（把引擎设为「仅 API」并配置 AI 助手），或更换 ffmpeg 后重试。`
-          )
+          if (hasApi) {
+            ffmpegFailedToApi = true // 有 API 时不被转码卡住，改用 API 转写原始文件
+          } else {
+            throw new Error(
+              `ffmpeg 转码失败：${em}。可改用 AI API（把引擎设为「仅 API」并配置 AI 助手），或更换 ffmpeg 后重试。`
+            )
+          }
         }
-        // 已转成 16k mono wav：此后按 wav 处理（整段转写 + 归段）
-        localWav = wav
       }
     }
 
     const isWav = localWav !== undefined
 
     // 2. 按引擎策略「整段」转写，得到带时间戳的转写段（不再逐小段拼接）
+    //    ffmpeg 转码失败但有 API 时，回退到 API 处理原始文件
+    const effEngine = ffmpegFailedToApi ? 'api' : engine
     let timeSegs: Array<{ startMs: number; endMs: number; text: string }> = []
 
-    if (engine === 'api') {
+    if (effEngine === 'api') {
       // 仅 API：整段文件转写为一段（T4 保持 API 单段语义）
       if (!hasApi) throw new Error('未配置 AI API（baseURL/apiKey），无法使用 API 转写')
       const text = (await transcribeSegmentApi(localWav ?? filePath, aiConfig)).trim()

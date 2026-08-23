@@ -692,6 +692,30 @@ export interface MatchRecordingMeta {
   markers: MatchRecordingMarker[]
 }
 
+/**
+ * 一份已绑定的录音（有序录音列表 `BoundRecording[]` 的元素）。
+ *
+ * 多录音模型：一场比赛可绑定任意多份录音，每份独立成轨/成段。
+ * - kind='whole'：整场整轨，filePath 指向完整录音，markers 为整轨环节/发言人标记；
+ * - kind='stage'：单环节成轨（旧 split 分片），filePath 指向某环节单独录音，stageId/tsMs 标注归属环节与相对时间。
+ */
+export interface BoundRecording {
+  /** 录音唯一 id（本场内稳定，供 绑定(增/删/换) 增删改定位） */
+  id: string
+  /** 类型：whole 整场整轨 / stage 单环节成轨 */
+  kind: 'whole' | 'stage'
+  /** 录音文件绝对路径 */
+  filePath: string
+  /** kind='stage' 时对应的环节 id */
+  stageId?: string | null
+  /** 环节/发言人标记（whole 整轨累积；stage 分片为其单条标记） */
+  markers?: MatchRecordingMarker[] | null
+  /** 距录音起点毫秒（kind='stage' 分片用） */
+  tsMs?: number | null
+  /** 录音时长毫秒（可选） */
+  durationMs?: number | null
+}
+
 /** 单环节评分（环节加权可配置，缺省等权） */
 export interface MatchStageScore {
   stageId: string
@@ -807,8 +831,11 @@ export interface Match {
   sessionId: string | null
   /** 可选录音引用（旧字段，保留兼容） */
   recordingRef: string | null
-  /** 录音元信息（路径+分段模式+环节/发言人标记） */
+  /** 录音元信息（旧结构：路径+分段模式+环节/发言人标记）。
+   *  读取自 recording_meta 列；无论该列存储的是新 BoundRecording[] 还是旧结构，此处恒以旧结构（单一 whole/split）给出，兼容既有渲染进程。 */
   recordingMeta: MatchRecordingMeta | null
+  /** 多录音模型：有序录音列表（优先于 recordingMeta 使用；recordingMeta 由此派生）。 */
+  recordings?: BoundRecording[] | null
   status: MatchStatus
   // 赛果（多裁判聚合，linquan）
   winner: MatchWinner | null
@@ -856,6 +883,8 @@ export interface MatchUpdateInput {
   drawItemId?: string | null
   recordingRef?: string | null
   recordingMeta?: MatchRecordingMeta | null
+  /** 多录音模型：直接以有序录音列表写入 recording_meta 列（与 recordingMeta 二选一，优先）。 */
+  recordings?: BoundRecording[] | null
 }
 
 /** 计入赛果（多裁判 + 亮牌） */
@@ -1051,6 +1080,26 @@ export interface RecordingSaveResult {
   code?: string
   message?: string
 }
+
+/** 录音目录信息（设置 → 录音存放位置 展示） */
+export interface RecordingDirInfo {
+  /** 用户配置的数据根（recording.dir，未配置为 null） */
+  configured: string | null
+  /** 解析后的数据根（含默认回退：未配置时为用户 userData） */
+  dataRoot: string
+  /** 生效的录音目录（数据根 /recordings） */
+  effective: string
+}
+
+/**
+ * 多录音「绑定」操作（对一场比赛的 recordings 列表做 增/删/换/整组 变更）。
+ * 统一走 RECORDING_BIND 通道，主进程据此读写 matches.recording_meta（BoundRecording[]）。
+ */
+export type RecordingBindAction =
+  | { kind: 'add'; matchId: string; recording: BoundRecording }
+  | { kind: 'remove'; matchId: string; id: string }
+  | { kind: 'replace'; matchId: string; id: string; recording: BoundRecording }
+  | { kind: 'set'; matchId: string; recordings: BoundRecording[] | null }
 
 // ==================== P1-6 赛程 Excel 导入导出 / 队徽库 ====================
 
@@ -1439,6 +1488,9 @@ export const IPC_CHANNELS = {
   RECORDING_READ: 'recording:read',
   RECORDING_PICK_DIR: 'recording:pickDir',
   RECORDING_GET_DIR: 'recording:getDir',
+  RECORDING_EXISTS: 'recording:exists',
+  RECORDING_LIST_FOR_MATCH: 'recording:listForMatch',
+  RECORDING_BIND: 'recording:bind',
   BELL_ASSET_LIST: 'bell:list',
   BELL_ASSET_UPLOAD: 'bell:upload',
   BELL_ASSET_DELETE: 'bell:delete',

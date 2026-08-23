@@ -81,6 +81,8 @@ import type {
   MatchAiReview,
   RecordingMeta,
   RecordingSaveResult,
+  BoundRecording,
+  RecordingBindAction,
   SttRequest,
   SttSegment,
   SttEngineStatus,
@@ -481,6 +483,12 @@ export interface RecordingAPI {
   delete: (fileName: string) => Promise<ApiResponse<boolean>>
   pickDir: () => Promise<ApiResponse<string | null>>
   getDir: () => Promise<ApiResponse<{ configured: string | null; effective: string }>>
+  /** 多录音模型（T3/T4）：校验某份录音文件是否真实存在（缺失/被删除时用于禁用依赖它的操作） */
+  exists: (filePath: string) => Promise<ApiResponse<boolean>>
+  /** 多录音模型：列出某场比赛的有序录音列表（BoundRecording[]） */
+  listForMatch: (matchId: string) => Promise<ApiResponse<BoundRecording[] | null>>
+  /** 多录音模型：对一场比赛的录音列表做 增/删/换/整组 绑定（add/remove/replace/set） */
+  bind: (action: RecordingBindAction) => Promise<ApiResponse<BoundRecording[] | null>>
 }
 
 export interface SttAPI {

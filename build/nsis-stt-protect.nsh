@@ -28,9 +28,10 @@
 ;       内容被保留。
 ; ---------------------------------------------------------------------------
 !macro customRemoveFiles
-  DetailPrint "辩盒: 保留安装目录内 stt 数据目录（模型 + ffmpeg），其余内容将被清除..."
-  ; $0 = 查找句柄, $1 = 当前文件名, $2 = 完整路径, $3 = 保护目录名
+  DetailPrint "辩盒: 保留安装目录内 stt 与 recordings 数据目录（模型/ffmpeg + 录音），其余内容将被清除..."
+  ; $0 = 查找句柄, $1 = 当前文件名, $2 = 完整路径, $3 = 保护目录1(stt), $4 = 保护目录2(recordings)
   StrCpy $3 "stt"
+  StrCpy $4 "recordings"
   ClearErrors
   FindFirst $0 $1 "$INSTDIR\*"
   customRemoveFilesLoop:
@@ -38,6 +39,7 @@
     StrCmp $1 "." customRemoveFilesNext
     StrCmp $1 ".." customRemoveFilesNext
     StrCmp $1 $3 customRemoveFilesNext
+    StrCmp $1 $4 customRemoveFilesNext
     StrCpy $2 "$INSTDIR\$1"
     IfFileExists "$2\*" 0 customRemoveFilesIsFile
       RMDir /r "$2"
@@ -49,5 +51,5 @@
     Goto customRemoveFilesLoop
   customRemoveFilesDone:
     FindClose $0
-  DetailPrint "辩盒: stt 目录已保留（$INSTDIR\stt）"
+  DetailPrint "辩盒: stt 与 recordings 目录已保留（$INSTDIR\stt、$INSTDIR\recordings）"
 !macroend

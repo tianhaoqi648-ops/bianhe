@@ -120,13 +120,60 @@ export function mapJudgeMatchToMatchAiReview(
 
 /** 裁判工具名 → 中文展示（历史列表条目/卡片标题用） */
 export const JUDGE_TOOL_LABELS: Record<string, string> = {
-  judge_speech: '单方评审',
+  judge_speech: '教练复盘',
+  coach_match: '整场分环节复盘',
   judge_debate: '双方评审',
   judge_match: '整场评审',
   simulate_opponent: '模拟对方攻击',
+  judge_live: '实时对辩',
   detect_stage: '环节识别'
 }
 
 export function judgeHistoryToolLabel(toolName: string): string {
   return JUDGE_TOOL_LABELS[toolName] ?? toolName
+}
+
+// ============================================================
+// 三角色分类（2026-08-23）：裁判 / 陪练 / 复盘
+// 前端用工具名推导角色，用于历史区按当前 Tab 过滤与标签标注
+// （最小改动：不动 DB，不做迁移）。
+// ============================================================
+
+/** 历史记录角色（三角色 + 辅助） */
+export type JudgeHistoryRole = 'judge' | 'sparring' | 'coach' | 'helper'
+
+/** 历史角色 → 展示名 */
+export const JUDGE_ROLE_LABELS: Record<JudgeHistoryRole, string> = {
+  judge: '裁判',
+  sparring: '陪练',
+  coach: '复盘',
+  helper: '辅助'
+}
+
+/**
+ * 由裁判工具名推导历史角色：
+ *   judge_debate / judge_match → judge（裁判）
+ *   simulate_opponent / judge_live → sparring（陪练）
+ *   judge_speech               → coach（复盘）
+ *   detect_stage 及其它        → helper（辅助）
+ */
+export function roleOfTool(toolName: string): JudgeHistoryRole {
+  switch (toolName) {
+    case 'judge_debate':
+    case 'judge_match':
+      return 'judge'
+    case 'simulate_opponent':
+    case 'judge_live':
+      return 'sparring'
+    case 'judge_speech':
+    case 'coach_match':
+      return 'coach'
+    default:
+      return 'helper'
+  }
+}
+
+/** 判定一条历史是否属于指定角色（用于按当前 Tab 过滤历史列表） */
+export function matchHistoryRole(toolName: string, role: JudgeHistoryRole): boolean {
+  return roleOfTool(toolName) === role
 }

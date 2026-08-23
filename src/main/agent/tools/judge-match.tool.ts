@@ -21,7 +21,7 @@
 // ============================================================
 
 import type { ToolDefinition, LLMConfig } from '@shared/agent-types'
-import { FIVE_DIMENSIONS, getJudgeById, type DimensionKey } from '@shared/ai-judges'
+import { FIVE_DIMENSIONS, getJudgeAnonLabel, getJudgeById, type DimensionKey } from '@shared/ai-judges'
 import { getStageDefinition, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
@@ -427,7 +427,7 @@ export const judgeMatchTool: ToolDefinition<JudgeMatchArgs, JudgeMatchResult | J
         const result: JudgeMatchResult = {
           success: true,
           judgeId: judge.id,
-          judgeName: judge.name,
+          judgeName: getJudgeAnonLabel(judge.id),
           topic,
           ...parsed
         }

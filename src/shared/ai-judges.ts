@@ -63,6 +63,23 @@ export const FIVE_DIMENSIONS: Array<{ key: DimensionKey; name: string }> = [
   { key: 'teamwork', name: '团队配合' }
 ]
 
+// ============================================================
+// 工作台三角色（2026-08-23）：裁判 / 陪练 / 复盘
+// ============================================================
+
+/** 辩盒工作台三角色：judge 裁判（判分）/ sparring 陪练（回合制对练）/ coach 复盘（教练诊断） */
+export type DebaterRole = 'judge' | 'sparring' | 'coach'
+
+/** 陪练对手难度 */
+export type SparringDifficulty = 'novice' | 'intermediate' | 'national'
+
+/** 陪练难度选项（展示用：新手 / 进阶 / 国选手） */
+export const SPARRING_DIFFICULTIES: Array<{ value: SparringDifficulty; name: string }> = [
+  { value: 'novice', name: '新手' },
+  { value: 'intermediate', name: '进阶' },
+  { value: 'national', name: '国选手' }
+]
+
 /** 评委人设集合（内置 5 位，覆盖四类审美） */
 export const JUDGES: JudgeProfile[] = [
   {
@@ -179,4 +196,34 @@ export const JUDGE_IDS: string[] = JUDGES.map((j) => j.id)
 export function getJudgeById(id: string | undefined): JudgeProfile | undefined {
   if (!id) return undefined
   return JUDGES.find((j) => j.id === id)
+}
+
+// ============================================================
+// 匿名化展示（2026-08-23）
+//
+// 面向用户的所有可见文本（工作台下拉、结果卡片、历史标签、评审 prompt 中的
+// 人设头衔）一律用纯「风格原型」标签（攻防流 / 价值流 / 价值+知识 / 学理流 / 建构流），
+// 不露真人姓名，也不拼出「某评委」。内部 JUDGES 数组与字段（name / bio / 权重等）
+// 保留不动，供人设数据源使用。
+// ============================================================
+
+/** 5 位评委 id → 匿名风格原型标签（纯风格原型，不含真人姓名，按 category 派生标题） */
+export const JUDGE_ANON_LABELS: Record<string, string> = {
+  'hu-jianbiao': '攻防流',
+  'huang-zhizhong': '价值流',
+  'chen-ming': '价值+知识',
+  'zhou-xuanyi': '学理流',
+  'xiong-hao': '建构流'
+}
+
+/**
+ * 取得评委的匿名展示标签。
+ * 优先取 JUDGE_ANON_LABELS；未知 id 按 category 派生；再兜底「评委」。
+ */
+export function getJudgeAnonLabel(id: string | undefined): string {
+  if (!id) return '评委'
+  const label = JUDGE_ANON_LABELS[id]
+  if (label) return label
+  const judge = getJudgeById(id)
+  return judge ? judge.category : '评委'
 }

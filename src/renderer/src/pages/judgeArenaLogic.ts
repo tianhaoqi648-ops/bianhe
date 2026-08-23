@@ -5,6 +5,8 @@
 // 供 JudgeArena 页面与单测复用（不依赖 jsdom）。
 // ============================================================
 
+import type { DebaterRole } from '../../../shared/ai-judges'
+
 /** 裁判工作台表单状态（页面 state 的投影） */
 export interface JudgeArenaFormState {
   /** 辩题（非空才可执行） */
@@ -27,6 +29,24 @@ export type JudgeAction =
   | 'simulate_opponent'
   | 'judge_debate'
   | 'detect_stage'
+
+/**
+ * JudgeAction → 工作台三角色（2026-08-23）。
+ *   judge_debate     → judge   裁判（双方评审）
+ *   simulate_opponent→ sparring 陪练（回合制对练）
+ *   judge_speech     → coach    复盘（教练诊断）
+ *   detect_stage     → 辅助工具，不属于三角色主流程（返回 undefined）
+ */
+const ACTION_TO_ROLE: Partial<Record<JudgeAction, DebaterRole>> = {
+  judge_debate: 'judge',
+  simulate_opponent: 'sparring',
+  judge_speech: 'coach'
+}
+
+/** 由操作推导工作台角色；detect_stage 等辅助操作返回 undefined。 */
+export function roleOfAction(action: JudgeAction): DebaterRole | undefined {
+  return ACTION_TO_ROLE[action]
+}
 
 /** 当前选中立场的稿子（judge_speech/simulate_opponent 用） */
 export function currentSpeech(s: JudgeArenaFormState): string {

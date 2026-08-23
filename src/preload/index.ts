@@ -68,6 +68,9 @@ import {
   type MatchAiReview,
   type RecordingMeta,
   type RecordingSaveResult,
+  type RecordingDirInfo,
+  type BoundRecording,
+  type RecordingBindAction,
   type DbMode,
   type ErrorLogInput,
   type BackupInfo,
@@ -569,7 +572,10 @@ const recordingAPI = {
     ),
   delete: (fileName: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.RECORDING_DELETE, fileName),
   pickDir: () => invoke<ApiResponse<string | null>>(IPC_CHANNELS.RECORDING_PICK_DIR),
-  getDir: () => invoke<ApiResponse<{ configured: string | null; effective: string }>>(IPC_CHANNELS.RECORDING_GET_DIR)
+  getDir: () => invoke<ApiResponse<RecordingDirInfo>>(IPC_CHANNELS.RECORDING_GET_DIR),
+  exists: (filePath: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.RECORDING_EXISTS, filePath),
+  listForMatch: (matchId: string) => invoke<ApiResponse<BoundRecording[] | null>>(IPC_CHANNELS.RECORDING_LIST_FOR_MATCH, matchId),
+  bind: (action: RecordingBindAction) => invoke<ApiResponse<BoundRecording[] | null>>(IPC_CHANNELS.RECORDING_BIND, action)
 }
 
 // ============================================================

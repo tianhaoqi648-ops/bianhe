@@ -27,6 +27,7 @@ import {
   PlayCircleOutlined,
   TrophyOutlined,
   RobotOutlined,
+  ExperimentOutlined,
   AuditOutlined,
   DeleteOutlined,
   BookOutlined,
@@ -238,14 +239,15 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
     void load()
   }
 
-  /** 打开 AI 裁判工作台并预绑定当前赛事-轮次-场次（T4） */
-  const handleOpenJudgeArena = (m: Match): void => {
+  /** 打开 AI 裁判工作台并预绑定当前赛事-轮次-场次（T4）；role 可指定打开的三角色 Tab */
+  const handleOpenJudgeArena = (m: Match, role?: 'judge' | 'sparring' | 'coach'): void => {
     navigate('/judge', {
       state: {
         eventId: m.eventId,
         roundId: m.roundId ?? null,
         matchId: m.id,
-        eventName: m.eventName
+        eventName: m.eventName,
+        ...(role ? { role } : {})
       }
     })
   }
@@ -388,6 +390,9 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
           </Button>
           <Button size="small" icon={<AuditOutlined />} onClick={() => handleOpenJudgeArena(m)}>
             打开AI裁判台
+          </Button>
+          <Button size="small" icon={<ExperimentOutlined />} onClick={() => handleOpenJudgeArena(m, 'coach')}>
+            复盘
           </Button>
           <Popconfirm title="删除该场对阵？" okText="删除" cancelText="取消" onConfirm={() => void (async () => {
             const r = await window.matchAPI.delete(m.id)

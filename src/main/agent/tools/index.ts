@@ -24,8 +24,10 @@ export { generateScheduleTool } from './generate-schedule.tool'
 export { judgeDebateTool } from './judge-debate.tool'
 export { judgeMatchTool } from './judge-match.tool'
 export { judgeSpeechTool } from './judge-speech.tool'
+export { coachMatchTool } from './coach-match.tool'
 export { detectStageTool } from './detect-stage.tool'
 export { simulateOpponentTool } from './simulate-opponent.tool'
+export { liveDebateTool } from './live-debate.tool'
 export { scheduleExportTool } from './schedule-export.tool'
 export { scheduleImportTool } from './schedule-import.tool'
 export { listBadgesTool } from './list-badges.tool'
@@ -47,8 +49,10 @@ import { generateScheduleTool } from './generate-schedule.tool'
 import { judgeDebateTool } from './judge-debate.tool'
 import { judgeMatchTool } from './judge-match.tool'
 import { judgeSpeechTool } from './judge-speech.tool'
+import { coachMatchTool } from './coach-match.tool'
 import { detectStageTool } from './detect-stage.tool'
 import { simulateOpponentTool } from './simulate-opponent.tool'
+import { liveDebateTool } from './live-debate.tool'
 import { scheduleExportTool } from './schedule-export.tool'
 import { scheduleImportTool } from './schedule-import.tool'
 import { listBadgesTool } from './list-badges.tool'
@@ -81,8 +85,10 @@ export const allTools: ToolDefinition<any, any>[] = [
   judgeDebateTool,
   judgeMatchTool,
   judgeSpeechTool,
+  coachMatchTool,
   detectStageTool,
   simulateOpponentTool,
+  liveDebateTool,
   scheduleExportTool,
   scheduleImportTool,
   listBadgesTool,

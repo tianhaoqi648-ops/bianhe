@@ -20,8 +20,10 @@ export const JUDGE_TOOL_NAMES: string[] = [
   'judge_match',
   'judge_debate',
   'judge_speech',
+  'coach_match',
   'detect_stage',
-  'simulate_opponent'
+  'simulate_opponent',
+  'judge_live'
 ]
 
 /**

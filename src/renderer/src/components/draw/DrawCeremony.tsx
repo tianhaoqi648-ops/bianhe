@@ -4,7 +4,8 @@ import { CloseOutlined } from '@ant-design/icons';
 import type { DrawResult } from '../../../../shared/types';
 import { radius } from '../../styles/tokens';
 import { kbdStyle } from '../../styles/shared';
-import RevealAnimation, { type RevealMode } from './RevealAnimation';
+import { type RevealMode } from './RevealAnimation';
+import { motionClass } from '../../styles/motion';
 import { useSoundManager } from '../SoundManager';
 
 // ============================================================
@@ -82,8 +83,7 @@ export default function DrawCeremony({
   eventName,
   roundName,
   onStart,
-  onExit,
-  revealMode = 'fade'
+  onExit
 }: DrawCeremonyProps) {
   const [phase, setPhase] = useState<CeremonyPhase>('idle');
   const [flash, setFlash] = useState('');
@@ -290,14 +290,25 @@ export default function DrawCeremony({
             </span>
           </Space>
 
-          {/* 第一题：轻渐显揭晓，与其余同字号（refine-draw-ceremony-tone：去翻牌/去超大标题） */}
-          <RevealAnimation key={`reveal-${topics[0].id}`} mode={revealMode}>
-            <div
-              style={{ color: 'rgba(255,255,255,0.82)', fontSize: RESULT_FONT_SIZE, maxWidth: '86vw', wordBreak: 'break-word' }}
-            >
+          {/* 第一题：轻渐显揭晓，与其余同字号（去翻转，纯 fade 块无 height 干扰，保证居中与间距） */}
+          <div
+            key={`reveal-${topics[0].id}`}
+            className={motionClass.fadeIn}
+            style={{
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              color: 'rgba(255,255,255,0.82)',
+              fontSize: RESULT_FONT_SIZE,
+              wordBreak: 'break-word',
+              marginBottom: 'clamp(6px, 1.2vh, 14px)'
+            }}
+          >
+            <div style={{ maxWidth: '86vw', textAlign: 'center', wordBreak: 'break-word' }}>
               {topics[0].title}
             </div>
-          </RevealAnimation>
+          </div>
 
           {/* 其余题列表（同字号） */}
           {topics.length > 1 && (

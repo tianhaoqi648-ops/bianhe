@@ -5,7 +5,7 @@
 // ============================================================
 
 import { describe, it, expect } from 'vitest'
-import { getAvailableActions, currentSpeech, type JudgeArenaFormState } from '../../pages/judgeArenaLogic'
+import { getAvailableActions, currentSpeech, roleOfAction, type JudgeArenaFormState } from '../../pages/judgeArenaLogic'
 
 function makeState(overrides: Partial<JudgeArenaFormState> = {}): JudgeArenaFormState {
   return {
@@ -80,5 +80,20 @@ describe('getAvailableActions 启用矩阵', () => {
     expect(actions).toEqual(
       expect.arrayContaining(['judge_speech', 'simulate_opponent', 'judge_debate', 'detect_stage'])
     )
+  })
+})
+
+describe('roleOfAction：action → 三角色映射（2026-08-23）', () => {
+  it('judge_debate → judge（裁判）', () => {
+    expect(roleOfAction('judge_debate')).toBe('judge')
+  })
+  it('simulate_opponent → sparring（陪练）', () => {
+    expect(roleOfAction('simulate_opponent')).toBe('sparring')
+  })
+  it('judge_speech → coach（复盘）', () => {
+    expect(roleOfAction('judge_speech')).toBe('coach')
+  })
+  it('detect_stage 为辅助工具，返回 undefined（不在三角色主流程）', () => {
+    expect(roleOfAction('detect_stage')).toBeUndefined()
   })
 })

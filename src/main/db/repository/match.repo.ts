@@ -27,8 +27,10 @@ import type {
   MatchSetResultInput,
   MatchStatus,
   MatchUpdateInput,
-  MatchWinner
+  MatchWinner,
+  BoundRecording
 } from '../../../shared/types'
+import { boundRecordingsFromMeta, metaFromBoundRecordings } from '../../../shared/match-recording'
 
 // ============================================================
 // 行类型 & 映射
@@ -101,7 +103,20 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function rowToMatch(row: MatchRow): Match {
-  const recordingMeta = safeJsonParse<MatchRecordingMeta | null>(row.recording_meta, null)
+  // 多录音模型：recording_meta 列统一以 BoundRecording[]（有序数组）持久化。
+  // 兼容旧数据：若是旧 MatchRecordingMeta 单结构，则迁移读作一份 whole / 多份 stage；
+  // 同时派生旧 recordingMeta（单一 whole/split）供既有渲染进程读取。
+  const recParsed = row.recording_meta ? safeJsonParse<unknown>(row.recording_meta, null) : null
+  let recordings: BoundRecording[] | null = null
+  let recordingMeta: MatchRecordingMeta | null = null
+  if (Array.isArray(recParsed)) {
+    recordings = recParsed as BoundRecording[]
+    recordingMeta = metaFromBoundRecordings(recordings)
+  } else if (recParsed && typeof recParsed === 'object') {
+    const meta = recParsed as MatchRecordingMeta
+    recordingMeta = meta.segmentMode ? meta : null
+    recordings = boundRecordingsFromMeta(meta)
+  }
   return {
     id: row.id,
     eventId: row.event_id,
@@ -118,6 +133,7 @@ function rowToMatch(row: MatchRow): Match {
     sessionId: row.session_id,
     recordingRef: row.recording_ref,
     recordingMeta,
+    recordings,
     status: row.status as MatchStatus,
     winner: row.winner as MatchWinner | null,
     affScore: row.aff_score,
@@ -269,8 +285,7 @@ function updateMatch(id: string, data: MatchUpdateInput): Match | null {
     formatId: 'format_id',
     judgeSystem: 'judge_system',
     drawItemId: 'draw_item_id',
-    recordingRef: 'recording_ref',
-    recordingMeta: 'recording_meta'
+    recordingRef: 'recording_ref'
   }
   const sets: string[] = []
   const vals: Array<string | number | null> = []
@@ -279,6 +294,18 @@ function updateMatch(id: string, data: MatchUpdateInput): Match | null {
     if (v === undefined) continue
     sets.push(`${col} = ?`)
     vals.push(typeof v === 'string' ? v : v === null ? null : JSON.stringify(v))
+  }
+  // 录音持久化：统一以 BoundRecording[] 写入 recording_meta 列。
+  // - 显式传 recordings（BoundRecording[]，多录音）→ 直接用；
+  // - 传旧 recordingMeta（MatchRecordingMeta，兼容既有渲染进程）→ 迁移为 BoundRecording[] 后写入。
+  if (data.recordings !== undefined || data.recordingMeta !== undefined) {
+    const rec = data.recordings !== undefined
+      ? data.recordings
+      : boundRecordingsFromMeta(data.recordingMeta)
+    sets.push('recording_meta = ?')
+    vals.push(rec === null || (Array.isArray(rec) && rec.length === 0)
+      ? null
+      : JSON.stringify(rec))
   }
   // 有队伍/辩题变更时刷新快照
   const refresh =

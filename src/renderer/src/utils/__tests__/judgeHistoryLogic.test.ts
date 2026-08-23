@@ -11,7 +11,9 @@ import {
   judgeMatchWinnerOf,
   judgeMatchCanWriteBack,
   mapJudgeMatchToMatchAiReview,
-  judgeHistoryToolLabel
+  judgeHistoryToolLabel,
+  roleOfTool,
+  matchHistoryRole
 } from '../../pages/judgeHistoryLogic'
 
 describe('buildJudgeHistoryInput', () => {
@@ -117,7 +119,36 @@ describe('mapJudgeMatchToMatchAiReview', () => {
 describe('judgeHistoryToolLabel', () => {
   it('已知工具返回中文，未知回退原名', () => {
     expect(judgeHistoryToolLabel('judge_match')).toBe('整场评审')
-    expect(judgeHistoryToolLabel('judge_speech')).toBe('单方评审')
+    expect(judgeHistoryToolLabel('judge_speech')).toBe('教练复盘')
     expect(judgeHistoryToolLabel('unknown_tool')).toBe('unknown_tool')
+  })
+})
+
+describe('roleOfTool / matchHistoryRole：历史角色归类（2026-08-23）', () => {
+  it('judge_debate / judge_match → judge（裁判）', () => {
+    expect(roleOfTool('judge_debate')).toBe('judge')
+    expect(roleOfTool('judge_match')).toBe('judge')
+    expect(matchHistoryRole('judge_debate', 'judge')).toBe(true)
+    expect(matchHistoryRole('judge_match', 'judge')).toBe(true)
+  })
+  it('simulate_opponent / judge_live → sparring（陪练）', () => {
+    expect(roleOfTool('simulate_opponent')).toBe('sparring')
+    expect(matchHistoryRole('simulate_opponent', 'sparring')).toBe(true)
+    expect(roleOfTool('judge_live')).toBe('sparring')
+    expect(matchHistoryRole('judge_live', 'sparring')).toBe(true)
+  })
+  it('judge_speech / coach_match → coach（复盘）', () => {
+    expect(roleOfTool('judge_speech')).toBe('coach')
+    expect(matchHistoryRole('judge_speech', 'coach')).toBe(true)
+    expect(roleOfTool('coach_match')).toBe('coach')
+    expect(matchHistoryRole('coach_match', 'coach')).toBe(true)
+  })
+  it('detect_stage 及其它 → helper（辅助）', () => {
+    expect(roleOfTool('detect_stage')).toBe('helper')
+    expect(roleOfTool('anything_else')).toBe('helper')
+  })
+  it('跨角色过滤为 false（judge 记录不匹配 coach）', () => {
+    expect(matchHistoryRole('judge_debate', 'coach')).toBe(false)
+    expect(matchHistoryRole('judge_speech', 'judge')).toBe(false)
   })
 })

@@ -292,11 +292,11 @@ describe('judge_match：LLM 调用与解析', () => {
     expect(mockChat).toHaveBeenCalledTimes(1)
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('胡渐彪')
+    expect(system.content).toContain('攻防流')
 
     if (!res.success) throw new Error(res.error)
     expect(res.judgeId).toBe('hu-jianbiao')
-    expect(res.judgeName).toBe('胡渐彪')
+    expect(res.judgeName).toBe('攻防流')
     expect(res.verdict).toEqual({ winner: 'aff', confidence: 0.7, reason: '正方在核心交锋点完成有效回应' })
     expect(res.dimensions).toHaveLength(5)
     expect(res.bestSpeaker).toBe('正方三辩')
@@ -328,10 +328,10 @@ describe('judge_match：LLM 调用与解析', () => {
       ctxWithConfig
     )
     if (!res.success) throw new Error(res.error)
-    expect(res.judgeName).toBe('熊浩')
+    expect(res.judgeName).toBe('建构流')
     const [messages] = mockChat.mock.calls[0]
     const system = messages.find((m: { role: string }) => m.role === 'system')
-    expect(system.content).toContain('熊浩')
+    expect(system.content).toContain('建构流')
   })
 
   it('退化 transcript：合法 JSON 正常解析', async () => {
