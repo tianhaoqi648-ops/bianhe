@@ -26,11 +26,12 @@ Desktop.ini
 $RECYCLE.BIN/
 # TypeScript 增量构建缓存
 *.tsbuildinfo
-# tsc composite 误输出到 src 的声明文件（保留手写 preload/index.d.ts、db/sql.d.ts 与 renderer/env.d.ts）
+# tsc composite 误输出到 src 的声明文件（保留手写 preload/index.d.ts、db/sql.d.ts、renderer/env.d.ts 与 node:sqlite shim）
 src/**/*.d.ts
 !src/preload/index.d.ts
 !src/main/db/sql.d.ts
 !src/renderer/src/env.d.ts
+!src/types/node-sqlite.d.ts
 # 根目录 electron.vite.config 编译产物（源为 electron.vite.config.ts，勿入库）
 electron.vite.config.js
 electron.vite.config.d.ts
