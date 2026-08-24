@@ -23,6 +23,7 @@ import { JUDGE_IDS, getJudgeAnonLabel, getJudgeById } from '@shared/ai-judges'
 import type { DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { buildJudgeProvenance } from '../provenance'
 import {
   buildCoachPrompt,
   buildCoachReviewUserPrompt,
@@ -229,7 +230,15 @@ export const judgeSpeechTool: ToolDefinition<JudgeSpeechArgs, JudgeCoachResult |
             stage: stage ?? undefined,
             side,
             topic,
-            resultJson: result as unknown as Record<string, unknown>
+            resultJson: result as unknown as Record<string, unknown>,
+            // provenance：注入 LLM 模型/版本 + 输入稿/辩题/评审模式 hash
+            provenance: buildJudgeProvenance({
+              config,
+              toolName: 'judge_speech',
+              topic,
+              inputs: [speech, side, stage ?? undefined],
+              extra: args.formatHint
+            })
           })
         } catch {
           // 忽略历史写入失败

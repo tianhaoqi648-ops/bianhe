@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { UndoStackEntry, UndoResult } from '../../../../shared/types'
-import { undoManager } from '../undo-manager'
+import { undoManager, UNDO_NOT_AVAILABLE_COPY } from '../undo-manager'
 
 const mockUndo = vi.fn()
 const mockRedo = vi.fn()
@@ -94,5 +94,54 @@ describe('undoManager redo 语义', () => {
 
     // 且 undo 栈中应只包含新操作（旧快照已不可达）
     expect(undoManager._debugGetPastStack().map((e) => e.logId)).toEqual(['log2'])
+  })
+})
+
+describe('不可撤销信号（Governance-8.1 best-effort）', () => {
+  beforeEach(() => {
+    undoManager.clearStack()
+  })
+
+  it('pushEntry 缺 logId 时置位 notUndoable，不进入 undo 栈', () => {
+    const entry: UndoStackEntry = {
+      storeName: 'topic',
+      action: 'update',
+      targetType: 'topic',
+      targetId: 't1',
+      label: '修改辩题'
+      // 无 logId：主进程未创建 undo_log
+    }
+    undoManager.pushEntry(entry)
+
+    expect(undoManager.canUndo()).toBe(false)
+    expect(undoManager.getLastNotUndoable()).toEqual(
+      expect.objectContaining({ label: '修改辩题' })
+    )
+  })
+
+  it('pushEntry 带 logId 时正常入栈，不置位 notUndoable', () => {
+    const entry: UndoStackEntry = {
+      storeName: 'topic',
+      action: 'update',
+      targetType: 'topic',
+      targetId: 't1',
+      label: '修改辩题',
+      logId: 'log1'
+    }
+    undoManager.pushEntry(entry)
+
+    expect(undoManager.canUndo()).toBe(true)
+    expect(undoManager.getLastNotUndoable()).toBeNull()
+  })
+
+  it('clearNotUndoable 消费信号，供 UI 提示后复位', () => {
+    undoManager.pushEntry({ storeName: 'topic', action: 'create', targetType: 'topic', targetId: 't1', label: '新增' })
+    expect(undoManager.getLastNotUndoable()).not.toBeNull()
+    undoManager.clearNotUndoable()
+    expect(undoManager.getLastNotUndoable()).toBeNull()
+  })
+
+  it('暴露统一的不可撤销文案常量', () => {
+    expect(UNDO_NOT_AVAILABLE_COPY).toBe('该操作无法撤销')
   })
 })

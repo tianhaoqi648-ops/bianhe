@@ -10,15 +10,40 @@
 // ============================================================
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import type { BoundRecording } from '../../../../shared/types'
 
 const h = vi.hoisted(() => {
   const runCalls: Array<{ sql: string; args: unknown[] }> = []
   let cannedRow: Record<string, unknown> | undefined
+  let listRows: Record<string, unknown>[] | undefined
+  let judgeRows: Record<string, unknown>[] = []
+  let voteRows: Record<string, unknown>[] = []
+  // N+1 监控：judge/vote 批量查询与名称解析查询的 prepare 次数
+  let judgeVotePrepares = 0
+  let namePrepares = 0
 
   const fakeStatement = (sql: string) => {
     const run = (...args: unknown[]) => {
       runCalls.push({ sql, args })
       return { changes: args[0] === '__not_found__' ? 0 : 1 }
+    }
+    // 统计 judge/vote 查询（列表应恒为 2 次批量 IN）
+    if (sql.includes('FROM match_judges')) {
+      judgeVotePrepares++
+      return { run, get: () => undefined, all: () => judgeRows }
+    }
+    if (sql.includes('FROM match_judge_votes')) {
+      judgeVotePrepares++
+      return { run, get: () => undefined, all: () => voteRows }
+    }
+    // 统计名称解析批量查询（列表走 JOIN，应恒为 0）
+    if (
+      sql.includes('SELECT id, name FROM teams') ||
+      sql.includes('SELECT id, title FROM topics') ||
+      sql.includes('SELECT id, name FROM events') ||
+      sql.includes('SELECT id, name FROM rounds')
+    ) {
+      namePrepares++
     }
     if (sql.includes('INSERT INTO matches')) {
       return { run, get: undefined, all: undefined }
@@ -35,10 +60,7 @@ const h = vi.hoisted(() => {
     if (sql.includes('SELECT name FROM')) {
       return { run, get: () => undefined, all: () => [{ name: 'match_id' }] }
     }
-    if (sql.includes('FROM match_judge_votes') || sql.includes('FROM match_judges')) {
-      return { run, get: () => undefined, all: () => [] }
-    }
-    return { run, get: () => undefined, all: () => (cannedRow ? [cannedRow] : []) }
+    return { run, get: () => undefined, all: () => (listRows ?? (cannedRow ? [cannedRow] : [])) }
   }
 
   return {
@@ -46,6 +68,22 @@ const h = vi.hoisted(() => {
     setRow: (r?: Record<string, unknown>) => {
       cannedRow = r
     },
+    setList: (rows: Record<string, unknown>[]) => {
+      listRows = rows
+    },
+    setJudgeVote: (judges: Record<string, unknown>[], votes: Record<string, unknown>[]) => {
+      judgeRows = judges
+      voteRows = votes
+    },
+    resetCounts: () => {
+      judgeVotePrepares = 0
+      namePrepares = 0
+      listRows = undefined
+      judgeRows = []
+      voteRows = []
+    },
+    judgeVoteQueryCount: () => judgeVotePrepares,
+    nameQueryCount: () => namePrepares,
     fakeStatement
   }
 })
@@ -93,6 +131,7 @@ function baseRow(over: Record<string, unknown> = {}): Record<string, unknown> {
 beforeEach(() => {
   h.runCalls.length = 0
   h.setRow(undefined)
+  h.resetCounts()
 })
 
 describe('matchRepo', () => {
@@ -116,6 +155,53 @@ describe('matchRepo', () => {
     h.setRow(baseRow())
     expect(matchRepo.listByEvent('evt1')).toHaveLength(1)
     expect(matchRepo.listByRound('r1')).toHaveLength(1)
+  })
+
+  // ---- N+1 消除（Task 7）：list N matches 时 judge/vote/name 查询次数不随 N 增长 ----
+
+  function judgeRow(matchId: string, i: number): Record<string, unknown> {
+    return { id: `j${matchId}-${i}`, match_id: matchId, name: `裁判${i}`, sort_order: i, is_ai: 0, created_at: '2026-08-19T00:00:00.000Z' }
+  }
+  function voteRow(matchId: string, i: number): Record<string, unknown> {
+    return { id: `v${matchId}-${i}`, match_id: matchId, judge_id: `j${matchId}-${i}`, judge_system: 'three_votes', impression_vote: 'aff', decision_vote: null, aff_total: 3, neg_total: 2, stage_scores: null, best_speaker: null, comment: null, created_at: '2026-08-19T00:00:00.000Z', updated_at: '2026-08-19T00:00:00.000Z' }
+  }
+
+  it('listByEvent：N 场列表 judge/vote 仅 2 次批量查询，不随 N 增长', () => {
+    const n = 5
+    const rows = Array.from({ length: n }, (_, i) =>
+      baseRow({ id: `m${i + 1}`, event_id: 'evt1', team_a_id: `ta${i + 1}`, team_b_id: `tb${i + 1}` })
+    )
+    const judges = rows.flatMap((r, i) => [judgeRow(r.id as string, i)])
+    const votes = rows.flatMap((r, i) => [voteRow(r.id as string, i)])
+    h.setList(rows)
+    h.setJudgeVote(judges, votes)
+
+    const list = matchRepo.listByEvent('evt1')
+
+    expect(list).toHaveLength(n)
+    // 恒为 1 次 judges 批量 IN + 1 次 votes 批量 IN
+    expect(h.judgeVoteQueryCount()).toBe(2)
+    // 名称走主查询 LEFT JOIN，无逐 name 查询
+    expect(h.nameQueryCount()).toBe(0)
+    // 结果按 match_id 正确回填
+    expect(list[0].judges).toHaveLength(1)
+    expect(list[0].votes).toHaveLength(1)
+    expect(list[0].judges![0].name).toBe('裁判0')
+    expect(list[0].votes![0].affTotal).toBe(3)
+    expect(list[4].judges).toHaveLength(1)
+    expect(list[4].votes).toHaveLength(1)
+  })
+
+  it('listByRound：N 场列表 judge/vote 批量查询次数恒定', () => {
+    const n = 3
+    const rows = Array.from({ length: n }, (_, i) => baseRow({ id: `m${i + 1}`, round_id: 'r1' }))
+    h.setList(rows)
+    h.setJudgeVote([], [])
+
+    matchRepo.listByRound('r1')
+
+    expect(h.judgeVoteQueryCount()).toBe(2)
+    expect(h.nameQueryCount()).toBe(0)
   })
 
   it('update：抽题后 status→ready 并写 topic/drawItem', () => {
@@ -224,6 +310,13 @@ describe('matchRepo', () => {
     expect(m?.recordings![0].kind).toBe('stage')
     expect(m?.recordingMeta?.segmentMode).toBe('split')
     expect(m?.recordingMeta?.markers[0].stageId).toBe('s1')
+  })
+
+  it('update（recordings）：非法录音（缺 id）→ 拒绝写入（governance 12）', () => {
+    h.setRow(baseRow())
+    // 缺 id 的非结构录音，经断言注入：模拟运行时到达但不应入库的数据
+    const bad = [{ kind: 'whole' as const, filePath: '/x/bad.webm' }] as unknown as BoundRecording[]
+    expect(() => matchRepo.update('m1', { recordings: bad })).toThrow(/recording_meta.*id/)
   })
 })
 

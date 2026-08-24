@@ -15,10 +15,11 @@
 //   5. 不依赖任何外部库
 // ============================================================
 
+import { createHash, randomUUID } from 'node:crypto'
 import type {
-  PermissionGrant,
   ToolDefinition,
   ToolExecutionContext,
+  ToolGrant,
   ToolMeta,
   ToolPermissionTier,
   ToolRiskLevel,
@@ -100,10 +101,10 @@ export function list(): ToolMeta[] {
 }
 
 // ============================================================
-// 执行（含默认只读权限门控，AI Agent v1.5.0）
+// 执行（含一次性 grant 权限门控，governance Task 9）
 // ============================================================
 
-/** 权限拒绝错误：write / dangerous 工具未获授权时抛出（execute 调用方应捕获处理） */
+/** 权限拒绝错误：write / dangerous 工具未获有效授权时抛出（execute 调用方应捕获处理） */
 export class ToolPermissionError extends Error {
   /** 错误码（供 IPC 层映射为 permission_denied） */
   readonly code = 'permission_denied' as const
@@ -111,51 +112,142 @@ export class ToolPermissionError extends Error {
   readonly toolName: string
   /** 该工具要求的权限等级 */
   readonly tier: ToolPermissionTier
+  /** 拒绝的具体原因（governance Task 9：缺失/过期/不匹配等） */
+  readonly reason?: string
   /** 授权方式说明（如何获得授权以放行） */
   readonly howToGrant = '请在工具确认弹窗中确认执行该工具以临时授权，或在设置页关闭其确认要求。'
 
-  constructor(toolName: string, tier: ToolPermissionTier) {
+  constructor(toolName: string, tier: ToolPermissionTier, reason?: string) {
+    const why = reason ? `（${reason}）` : ''
     super(
-      `工具「${toolName}」属于 ${tier} 级别，当前未授权执行。${'请在确认弹窗/设置页授予该权限后再试。'}`
+      `工具「${toolName}」属于 ${tier} 级别，当前未授权执行${why}。${'请在确认弹窗/设置页授予该权限后再试。'}`
     )
     this.name = 'ToolPermissionError'
     this.toolName = toolName
     this.tier = tier
+    this.reason = reason
   }
 }
 
+// ------------------------------------------------------------
+// 一次性 grant 登记处（governance Task 9）
+// ------------------------------------------------------------
+
 /**
- * 判断一次调用是否已获得某 write/dangerous 工具的授权。
- * @param grants 调用方声明的授权列表
- * @param toolName 目标工具名
- * @param tier 目标工具权限等级
+ * 一次性 grant 默认有效期（毫秒）。
+ * 用户确认后到工具真正执行只差一个 await，给予充足余量但仍是"一次性窗口"。
  */
-function isGranted(
-  grants: PermissionGrant[] | undefined,
-  toolName: string,
-  tier: ToolPermissionTier
-): boolean {
-  if (!grants || grants.length === 0) return false
-  return grants.some(
-    (g) => (g.toolName != null && g.toolName === toolName) || (g.tier != null && g.tier === tier)
-  )
+const DEFAULT_GRANT_TTL_MS = 60_000
+
+/** grantId → ToolGrant 的登记表（进程内单例，仅主进程持有） */
+const grantRegistry = new Map<string, ToolGrant>()
+
+/**
+ * 对工具入参计算稳定哈希（供 grant 绑定参数，防止调用时参数被偷换）。
+ * 使用 node:crypto SHA-256，取前 16 位十六进制作为短指纹。
+ */
+export function hashArgs(args: Record<string, unknown>): string {
+  // 稳定序列化：JSON.stringify 对同一对象键序确定；不同调用间若键序不同仍可绑死
+  // 本次实际执行所传入的 args（createGrant 与 execute 使用同一 effectiveArgs 对象）。
+  const repr = JSON.stringify(args ?? {})
+  return createHash('sha256').update(repr).digest('hex').slice(0, 16)
 }
 
 /**
- * 执行工具（含默认只读权限门控）。
+ * 创建并登记一个一次性授权 grant（由主进程在用户授权后调用）。
  *
- * 权限策略：
+ * grant 至少绑定：归属会话、目标工具、入参哈希、授权级别、过期时间。
+ * execute() 在 write / dangerous 工具执行前据此校验，校验通过即一次性消费（自动作废），
+ * 从而无法被调用方伪造或重放。
+ *
+ * @param input 授权来源信息
+ * @returns 登记后的 ToolGrant（含生成/产生的 grantId、argsHash、expiresAt）
+ */
+export function createGrant(input: {
+  sessionId?: string
+  toolName: string
+  args: Record<string, unknown>
+  tier: ToolPermissionTier
+  /** 有效期（毫秒），缺省取 DEFAULT_GRANT_TTL_MS；传负值可用作测试"已过期" */
+  ttlMs?: number
+}): ToolGrant {
+  const ttl = input.ttlMs ?? DEFAULT_GRANT_TTL_MS
+  const grant: ToolGrant = {
+    grantId: randomUUID(),
+    sessionId: input.sessionId,
+    toolName: input.toolName,
+    argsHash: hashArgs(input.args),
+    tier: input.tier,
+    expiresAt: Date.now() + ttl
+  }
+  grantRegistry.set(grant.grantId, grant)
+  return grant
+}
+
+/**
+ * 主动作废一个 grant（从登记处移除；已过期/已消费的 grant 也应在 lookup 时被过滤）。
+ */
+export function revokeGrant(grantId: string): void {
+  grantRegistry.delete(grantId)
+}
+
+/** 清空登记处（仅用于测试） */
+export function clearGrants(): void {
+  grantRegistry.clear()
+}
+
+/**
+ * 校验提供给某 write/dangerous 工具的一次性 grant 是否有效。
+ * 返回 undefined 表示校验通过；否则返回拒绝原因（供 ToolPermissionError.reason 使用）。
+ *
+ * 校验项（缺一不可）：
+ *   1. 提供了 grantId（不再信任调用方自行声明 tier/grants）
+ *   2. 登记处存在该 grant 且尚未被消费（一次性）
+ *   3. 未过期（expiresAt > now）
+ *   4. grant.toolName 与目标工具一致
+ *   5. grant.tier 与目标工具要求的 tier 一致
+ *   6. grant.argsHash 与本次实际入参哈希一致
+ *   7. 若提供了 ctx.sessionId，需与 grant.sessionId 一致
+ */
+function grantFailureReason(
+  toolName: string,
+  tier: ToolPermissionTier,
+  args: Record<string, unknown>,
+  ctx?: ToolExecutionContext
+): string | undefined {
+  const grantId = ctx?.grantId
+  if (!grantId) return '未提供授权凭证（grantId）'
+  const grant = grantRegistry.get(grantId)
+  if (!grant) return '授权凭证不存在或已使用（一次性 grant 已被消费/作废）'
+  if (Date.now() > grant.expiresAt) return '授权凭证已过期'
+  if (grant.toolName !== toolName) {
+    return `授权凭证绑定的工具「${grant.toolName}」与本次调用「${toolName}」不一致`
+  }
+  if (grant.tier !== tier) return `授权凭证级别(${grant.tier})不足以执行 ${tier} 级工具`
+  if (grant.argsHash !== hashArgs(args)) return '授权凭证绑定的参数与本次调用不一致'
+  if (ctx?.sessionId != null && grant.sessionId != null && ctx.sessionId !== grant.sessionId) {
+    return '授权凭证归属的会话与本次调用不一致'
+  }
+  return undefined
+}
+
+/**
+ * 执行工具（含一次性 grant 权限门控）。
+ *
+ * 权限策略（governance Task 9）：
  *   - read 工具：直接放行，无需授权
- *   - write / dangerous 工具：须在 ctx.grants 中声明已获授权，否则抛出 ToolPermissionError
- *     （不执行工具体，返回权限拒绝错误）
+ *   - write / dangerous 工具：须提供主进程登记的有效一次性 grant（ctx.grantId 指向
+ *     该工具、入参哈希匹配、未过期、会话归属一致的 ToolGrant），否则抛出 ToolPermissionError，
+ *     并说明拒绝原因；校验通过后该 grant 一次性消费（从登记处移除）。
+ *     不再信任调用方在 ctx.grants 中自行声明的 tier。
  *   - 工具不存在时抛 `Tool not found: ${name}`
  *   - 工具 execute 抛错时透传原始错误
  *
  * @param name 工具名
  * @param args 入参（来自 LLM 的 tool_call.arguments 解析后）
- * @param ctx 执行上下文（可选；含 LLM 配置 / 取消信号 / 授权声明 grants）
+ * @param ctx 执行上下文（可选；含 LLM 配置 / 取消信号 / 一次性授权 grantId / 归属会话）
  * @returns 工具执行结果
- * @throws ToolPermissionError 未授权时抛出；工具不存在或 execute 抛错时透传原始错误
+ * @throws ToolPermissionError 未授权或 grant 无效时抛出；工具不存在或 execute 抛错时透传原始错误
  */
 export async function execute(
   name: string,
@@ -166,10 +258,17 @@ export async function execute(
   if (!tool) {
     throw new Error(`Tool not found: ${name}`)
   }
-  // 默认只读门控：read 放行；write / dangerous 未授权即拒绝（不执行）
+  // 一次性 grant 门控：read 放行；write / dangerous 须提供有效 grant，校验含原因说明
   const tier = tool.tier ?? 'read'
-  if (tier !== 'read' && !isGranted(ctx?.grants, name, tier)) {
-    throw new ToolPermissionError(name, tier)
+  if (tier !== 'read') {
+    const reason = grantFailureReason(name, tier, args, ctx)
+    if (reason) {
+      throw new ToolPermissionError(name, tier, reason)
+    }
+    // 校验通过 → 一次性消费该 grant，防止重放
+    if (ctx?.grantId) {
+      grantRegistry.delete(ctx.grantId)
+    }
   }
   // 入参为空对象 {} 时正常传递（部分工具无入参）；
   // 工具内部抛错时透传原始错误，由 agent-loop 捕获处理
@@ -214,4 +313,5 @@ export function toOpenAITools(): Array<{
  */
 export function clear(): void {
   tools.clear()
+  clearGrants()
 }

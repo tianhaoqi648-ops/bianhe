@@ -19,7 +19,7 @@ import {
   SearchOutlined,
   SunOutlined
 } from '@ant-design/icons'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { MENU_GROUPS } from './AppSidebar'
@@ -27,10 +27,10 @@ import { useThemeMode } from '../../hooks/useThemeMode'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import type { ThemeMode } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useDbModeStore } from '../../stores/dbModeStore'
 import { useEventStore } from '../../stores/eventStore'
 import { spacing, gray, colorGold } from '../../styles/tokens'
 import AboutModal from '../AboutModal'
-import type { DbMode } from '../../../../shared/types'
 
 const { Header } = Layout
 const { useBreakpoint } = Grid
@@ -126,18 +126,9 @@ function AppHeader({ selectedKey }: AppHeaderProps) {
 
   const [aboutOpen, setAboutOpen] = useState(false)
 
-  // P3.4 Task 17：监听数据库模式（persistent / memory），
-  // memory 模式时在 Header 显示"临时模式"Badge 提示用户重启。
-  const [dbMode, setDbMode] = useState<DbMode>('persistent')
-  useEffect(() => {
-    const api = window.electron?.dbStatus
-    if (!api) return
-    // 拉取初始模式（IPC 在 ready-to-show 时已广播，但 mount 可能晚于广播）
-    void api.getMode().then((mode) => setDbMode(mode))
-    // 订阅后续变化
-    const unsubscribe = api.onChange((mode) => setDbMode(mode))
-    return unsubscribe
-  }, [])
+  // gov4.1：读取共享 dbModeStore（pv 由 App 根 initDbMode 初始化订阅），
+  // 供"临时模式"Badge 展示（常驻警告条见 MemoryModeBanner）。
+  const dbMode = useDbModeStore((s) => s.dbMode)
 
   // 从 eventStore 读取赛事列表 / 当前赛事 / 当前赛事轮次
   const events = useEventStore((s) => s.events)

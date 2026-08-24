@@ -8,11 +8,14 @@
 import { useEffect, useRef } from 'react'
 import { useUndoStore } from '../stores/undoStore'
 import { useToast } from '../hooks/useToast'
+import { UNDO_NOT_AVAILABLE_COPY } from '../utils/undo-manager'
 
 export default function UndoToast(): JSX.Element {
   const lastUndoResult = useUndoStore((s) => s.lastUndoResult)
   const error = useUndoStore((s) => s.error)
+  const notUndoableLabel = useUndoStore((s) => s.notUndoableLabel)
   const clearError = useUndoStore((s) => s.clearError)
+  const clearNotUndoable = useUndoStore((s) => s.clearNotUndoable)
   const toast = useToast()
 
   // 用 ref 记录上一次显示的 result 引用，避免重复弹 toast
@@ -26,6 +29,17 @@ export default function UndoToast(): JSX.Element {
       )
     }
   }, [lastUndoResult, toast])
+
+  // Governance-8.1：写操作成功但未能创建 undo_log（payload 超限 / 容量保护）时，
+  // 明确提示该次不可撤销，避免用户误以为可以撤销。用 ref 防重复弹。
+  const lastShownNotUndoableRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (notUndoableLabel && notUndoableLabel !== lastShownNotUndoableRef.current) {
+      lastShownNotUndoableRef.current = notUndoableLabel
+      toast.error(`${UNDO_NOT_AVAILABLE_COPY}：${notUndoableLabel}`)
+      clearNotUndoable()
+    }
+  }, [notUndoableLabel, toast, clearNotUndoable])
 
   useEffect(() => {
     if (error) {

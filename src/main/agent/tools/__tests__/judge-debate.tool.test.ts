@@ -347,6 +347,25 @@ describe('judge_debate：写评审历史', () => {
     expect(input.matchId).toBeUndefined()
   })
 
+  it('写入历史含 provenance 字段（provider/model/mode/inputHash）', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: VALID_JSON })
+    const res = await judgeDebateTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(res.success).toBe(true)
+    const input = mockJudgeHistoryCreate.mock.calls[0][0]
+    expect(input.provenance).toBeTruthy()
+    expect(input.provenance.provider).toBe('openai')
+    expect(input.provenance.model).toBe('gpt-4o-mini')
+    expect(input.provenance.mode).toBe('whole')
+    expect(input.provenance.promptVersion).toBeTruthy()
+    expect(input.provenance.judgeVersion).toBeTruthy()
+    expect(input.provenance.createdAt).toBeTruthy()
+    expect(input.provenance.inputHash).toMatch(/^[0-9a-f]{8}$/)
+    // 同输入 → 确定性 input hash
+    await judgeDebateTool.execute(VALID_ARGS, ctxWithConfig)
+    const input2 = mockJudgeHistoryCreate.mock.calls[1][0]
+    expect(input2.provenance.inputHash).toBe(input.provenance.inputHash)
+  })
+
   it('失败态不写历史', async () => {
     mockChat.mockResolvedValue({ role: 'assistant', content: '非 JSON' })
     const res = await judgeDebateTool.execute(VALID_ARGS, ctxWithConfig)

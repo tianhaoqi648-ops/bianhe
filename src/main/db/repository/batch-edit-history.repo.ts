@@ -11,12 +11,10 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
-import { topicRepo } from './topic.repo'
 import { bulkInsert } from './utils'
 import type {
   BatchEditHistory,
   BatchEditHistoryItem,
-  CustomFieldValue,
   BackupImportStrategy
 } from '../../../shared/types'
 
@@ -169,85 +167,14 @@ function listItemsByHistory(historyId: string): BatchEditHistoryItem[] {
 }
 
 /**
- * 撤销一次批量编辑：按 before 快照恢复字段值。
- * - 在事务内执行：先恢复 topics，再标记 history.reverted=true
- * - topic 已删除的项跳过（不计入 restoredCount）
- * - 已撤销的历史记录不可再次撤销
- *
- * @param historyId 历史 id
- * @returns restoredCount 实际恢复的 topic 数
+ * 标记一条批量编辑历史为已撤销（单库单动作，仅改 batch_edit_history 表）。
+ * topic 字段恢复逻辑已上移到 services/batch-edit-service.ts 编排（Governance Task 6），
+ * 业务方应在恢复 topics 后调用本方法；事务由 Service 负责。
  */
-function revertHistory(historyId: string): number {
-  const db = getDb()
-
-  const fn = db.transaction(() => {
-    const history = getHistoryById(historyId)
-    if (!history) {
-      throw new Error(`[batchEditHistoryRepo] history not found: ${historyId}`)
-    }
-    if (history.reverted) {
-      throw new Error(
-        `[batchEditHistoryRepo] history already reverted: ${historyId}`
-      )
-    }
-
-    const items = listItemsByHistory(historyId)
-    let restored = 0
-
-    for (const item of items) {
-      if (!item.before_values) continue
-      // 检查 topic 是否存在
-      const topic = topicRepo.getTopicById(item.topic_id)
-      if (!topic) continue // topic 已删除，跳过
-
-      // 按 before_values 恢复字段
-      // before_values key 约定：系统字段名 或 'custom_data.<fieldKey>'
-      const update: Record<string, unknown> = {}
-      const customDataPatch: Record<string, unknown> = {}
-
-      for (const [key, value] of Object.entries(item.before_values)) {
-        if (key.startsWith('custom_data.')) {
-          const fieldKey = key.slice('custom_data.'.length)
-          if (value === null) {
-            customDataPatch[fieldKey] = undefined // 标记删除
-          } else {
-            customDataPatch[fieldKey] = value
-          }
-        } else {
-          update[key] = value
-        }
-      }
-
-      // 合并 custom_data：保留当前 custom_data 中未在快照内的字段
-      if (Object.keys(customDataPatch).length > 0) {
-        const merged: Record<string, CustomFieldValue> = {
-          ...(topic.custom_data ?? {})
-        }
-        for (const [k, v] of Object.entries(customDataPatch)) {
-          if (v === undefined) {
-            delete merged[k]
-          } else {
-            merged[k] = v as CustomFieldValue
-          }
-        }
-        update.custom_data =
-          Object.keys(merged).length > 0 ? merged : null
-      }
-
-      // 直接调用 updateTopic（单条事务，但整体在外层事务内）
-      topicRepo.updateTopic(item.topic_id, update as never)
-      restored++
-    }
-
-    // 标记历史已撤销
-    db.prepare(
-      `UPDATE batch_edit_history SET reverted = 1, reverted_at = ? WHERE id = ?`
-    ).run(new Date().toISOString(), historyId)
-
-    return restored
-  })
-
-  return fn()
+function markReverted(historyId: string): void {
+  getDb()
+    .prepare('UPDATE batch_edit_history SET reverted = 1, reverted_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), historyId)
 }
 
 /**
@@ -299,7 +226,7 @@ export const batchEditHistoryRepo = {
   listHistory,
   getHistoryById,
   listItemsByHistory,
-  revertHistory,
+  markReverted,
   clearAll,
   // 备份与恢复
   findAllForBackup,

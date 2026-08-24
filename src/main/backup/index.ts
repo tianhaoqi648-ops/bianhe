@@ -232,6 +232,41 @@ async function getDbFileSchemaVersion(filePath: string): Promise<number> {
 }
 
 /**
+ * 对恢复后的 .db 文件执行 PRAGMA foreign_key_check，返回孤立引用清单。
+ *
+ * governance 1.2：文件级恢复（restoreBackup）完成后做完整性校验，
+ * 发现 orphan 时调用方返回「恢复失败」状态，避免静默成功。
+ * 容错：无法打开/读取（非 sqlite 或 ABI 不可用）视为无可判定违规（返回 []）。
+ * 与 getDbFileSchemaVersion 一致，动态 import better-sqlite3 以便单测加载本模块。
+ */
+async function getRestoredFkViolations(filePath: string): Promise<string[]> {
+  let d: Database.Database | null = null
+  try {
+    const mod = (await import('better-sqlite3')) as {
+      default?: new (path: string, opts?: Record<string, unknown>) => Database.Database
+    }
+    const DbCtor = mod.default
+    if (!DbCtor) return []
+    d = new DbCtor(filePath, { readonly: true, fileMustExist: true })
+    const rows = d.pragma('foreign_key_check') as unknown
+    if (!Array.isArray(rows)) return []
+    return (rows as Array<{ table: string; rowid: number; parent: string; fkid: number }>).map(
+      (r) => `table=${r.table}, rowid=${r.rowid}, 引用缺失父表 ${r.parent} (fkid=${r.fkid})`
+    )
+  } catch {
+    return []
+  } finally {
+    if (d) {
+      try {
+        d.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
  * 若距上次备份 >24h，则触发备份。
  *
  * - last-backup.txt 不存在或读取失败 → 触发备份
@@ -343,4 +378,15 @@ export async function restoreBackup(filename: string): Promise<void> {
     }
   }
   console.log('[backup] Backup restored:', filename, '->', dbPath)
+
+  // governance 1.2：恢复后执行 PRAGMA foreign_key_check，发现孤立引用 → 明确报失败，
+  // 不静默判定恢复成功（文件已覆盖，报错提示用户重建或使用本次备份的完整数据）。
+  const violations = await getRestoredFkViolations(dbPath)
+  if (violations.length > 0) {
+    const detail = violations.slice(0, 5).join('; ')
+    const more = violations.length > 5 ? ` ...等共 ${violations.length} 处` : ''
+    throw new Error(
+      `备份恢复完成，但外键校验失败：存在 ${violations.length} 处孤立引用（${detail}${more}）。数据可能不完整，请谨慎使用。`
+    )
+  }
 }

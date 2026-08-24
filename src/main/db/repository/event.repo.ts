@@ -6,7 +6,6 @@ import type {
   EventStats
 } from '../../../shared/types'
 import { bulkInsert } from './utils'
-import { topicGroupRepo } from './topic-group.repo'
 
 // ============================================================
 // 类型定义
@@ -131,11 +130,10 @@ export interface EventFilter {
 // ============================================================
 
 /**
- * 创建赛事。
+ * 创建赛事（单库单动作）。
  * - v4 生成 id
  * - 自动写入 created_at（ISO 8601）
- * - 事务内自动把新赛事绑定到「默认题库」（event_topic_groups 插入默认 group）
- *   保证「创建即绑定默认题库」的一致性，任一失败整体回滚。
+ * - 仅写入 events 表；「创建即绑定默认题库」的跨库编排见 services/event-service.ts
  */
 function createEvent(data: EventCreateInput): Event {
   const db = getDb()
@@ -145,25 +143,18 @@ function createEvent(data: EventCreateInput): Event {
   // allow_repeat：未传值时默认 0（不允许重复），传 boolean/number 时归一化为 0/1
   const allowRepeat = data.allow_repeat ? 1 : 0
 
-  const doCreate = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO events (id, name, start_date, end_date, status, created_at, allow_repeat)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      data.name,
-      data.start_date ?? null,
-      data.end_date ?? null,
-      data.status ?? null,
-      now,
-      allowRepeat
-    )
-
-    // 新建赛事自动关联默认题库（getDefault 幂等保证默认题库存在）
-    const defaultGroup = topicGroupRepo.getDefault()
-    topicGroupRepo.bindEventGroups(id, [defaultGroup.id])
-  })
-  doCreate()
+  db.prepare(`
+    INSERT INTO events (id, name, start_date, end_date, status, created_at, allow_repeat)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.name,
+    data.start_date ?? null,
+    data.end_date ?? null,
+    data.status ?? null,
+    now,
+    allowRepeat
+  )
 
   const created = getEventById(id)
   if (!created) {

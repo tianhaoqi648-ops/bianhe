@@ -32,9 +32,12 @@ vi.mock('@main/services/import-engine', () => ({
   parseFile: mockParseFile
 }))
 
+vi.mock('@main/services/event-service', () => ({
+  createEvent: mockCreateEvent
+}))
+
 vi.mock('@main/db/repository/event.repo', () => ({
   eventRepo: {
-    createEvent: mockCreateEvent,
     createTeam: mockCreateTeam
   }
 }))

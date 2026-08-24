@@ -16,6 +16,7 @@ import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
 import { matchRepo } from '../db/repository/match.repo'
 import { getDb } from '../db/index'
+import { createEvent as createEventWithDefaultGroup } from '../services/event-service'
 import type {
   EventFilter,
   EventCreateInput,
@@ -48,6 +49,16 @@ function assertNonEmptyString(value: unknown, name: string): asserts value is st
   assertParam(typeof value === 'string' && value.length > 0, `参数 ${name} 必须为非空字符串`)
 }
 
+/**
+ * Governance-8.3：为随机分组 fasten 组 undo 快照，
+ * 记录事件的每支队伍的 {id, group_id}，供 undo/redo 恢复分组归属。
+ */
+function snapshotTeamGroups(
+  teams: Array<{ id: string; group_id?: string | null }>
+): Array<{ id: string; group_id: string | null }> {
+  return teams.map((t) => ({ id: t.id, group_id: t.group_id ?? null }))
+}
+
 export function registerEventIpc(): void {
   // ---------- event ----------
   ipcMain.handle(IPC_CHANNELS.EVENT_LIST, (_e, filter?: EventFilter) =>
@@ -77,7 +88,7 @@ export function registerEventIpc(): void {
         targetId: null,
         label: `创建赛事`,
         getBefore: () => null,
-        execute: () => eventRepo.createEvent(data),
+        execute: () => createEventWithDefaultGroup(data),
         getAfter: (result) => result
       })
     })
@@ -298,41 +309,70 @@ export function registerEventIpc(): void {
     })
   })
   // 将队伍分配到分组（groupId=null 表示移出分组）
-  // 简单写操作，走 wrap 即可（与 addTeamHistory 一致）
-  // P2-17：跳过改用 wrapWithUndo。原因：undo-service 的 applyEventReverse 仅处理
-  //   event/round/team 三种 target_type 的 create/update/delete action，未实现
-  //   'assignGroup' action 的反向操作（需记录 team 旧 group_id 并恢复）。
-  //   改用 wrapWithUndo 后撤销会抛 "unsupported action"，需先扩展 undo-service，超出本 Bug 范围。
+  // Governance-8.3：接入 undo（action='assignGroup'），保证可撤销/重做。
   ipcMain.handle(
     IPC_CHANNELS.TEAM_ASSIGN_GROUP,
     (_e, teamId: string, groupId: string | null) => {
-      return wrap(() => {
-        assertNonEmptyString(teamId, 'teamId')
-        eventRepo.assignTeamToGroup(teamId, groupId)
-        return true
+      assertNonEmptyString(teamId, 'teamId')
+      const before = eventRepo.getTeamById(teamId)
+      return wrapWithUndo(() => {
+        return withUndoLog({
+          storeName: 'event',
+          action: 'assignGroup',
+          targetType: 'team',
+          targetId: teamId,
+          label: `移动队伍到分组`,
+          getBefore: () => ({ id: teamId, group_id: before?.group_id ?? null }),
+          execute: () => {
+            eventRepo.assignTeamToGroup(teamId, groupId)
+            return true
+          },
+          getAfter: () => ({ id: teamId, group_id: groupId })
+        })
       })
     }
   )
   // 随机分组：将赛事下的队伍随机分配到多个分组
+  // Governance-8.3：非 dry-run 接入 undo（action='randomAssignGroup'）；dry-run 纯预览不入 undo。
   ipcMain.handle(
     IPC_CHANNELS.TEAM_RANDOM_ASSIGN_GROUP,
     async (_event, params: RandomAssignGroupParams) => {
-      try {
-        assertParam(params && typeof params === 'object', '参数 params 必须为对象')
-        assertNonEmptyString(params.event_id, 'event_id')
-        assertParam(typeof params.count === 'number' && params.count > 0, '参数 count 必须为正整数')
-        const result = eventRepo.randomAssignGroups(
-          params.event_id,
-          params.strategy,
-          params.count,
-          params.group_names,
-          params.overwrite,
-          params.dry_run ?? false
-        )
-        return { success: true, data: result }
-      } catch (error) {
-        return { success: false, error: error instanceof Error ? error.message : String(error) }
+      assertParam(params && typeof params === 'object', '参数 params 必须为对象')
+      assertNonEmptyString(params.event_id, 'event_id')
+      assertParam(typeof params.count === 'number' && params.count > 0, '参数 count 必须为正整数')
+      const dryRun = params.dry_run ?? false
+      if (dryRun) {
+        return wrap(() => {
+          return eventRepo.randomAssignGroups(
+            params.event_id,
+            params.strategy,
+            params.count,
+            params.group_names,
+            params.overwrite,
+            true
+          )
+        })
       }
+      return wrapWithUndo(() => {
+        return withUndoLog({
+          storeName: 'event',
+          action: 'randomAssignGroup',
+          targetType: 'event',
+          targetId: params.event_id,
+          label: '随机分组',
+          getBefore: () => ({ teams: snapshotTeamGroups(eventRepo.listTeamsByEvent(params.event_id)) }),
+          execute: () =>
+            eventRepo.randomAssignGroups(
+              params.event_id,
+              params.strategy,
+              params.count,
+              params.group_names,
+              params.overwrite,
+              false
+            ),
+          getAfter: () => ({ teams: snapshotTeamGroups(eventRepo.listTeamsByEvent(params.event_id)) })
+        })
+      })
     }
   )
 

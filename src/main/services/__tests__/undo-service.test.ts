@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { UndoLogEntry, Topic, Event, Team, DebateFormat } from '../../../shared/types'
 
 // ---- vi.hoisted：在 vi.mock factory 之前定义共享的 mock 函数 ----
-const { getDbMock, undoLogRepoMock, topicRepoMock, eventRepoMock, formatRepoMock } =
+const { getDbMock, undoLogRepoMock, topicRepoMock, eventRepoMock, formatRepoMock, topicGroupRepoMock } =
   vi.hoisted(() => {
     return {
       getDbMock: { prepare: vi.fn(), transaction: vi.fn() },
@@ -39,13 +39,24 @@ const { getDbMock, undoLogRepoMock, topicRepoMock, eventRepoMock, formatRepoMock
         updateEvent: vi.fn(),
         updateTeam: vi.fn(),
         deleteEvent: vi.fn(),
-        deleteTeam: vi.fn()
+        deleteTeam: vi.fn(),
+        assignTeamToGroup: vi.fn()
       },
       formatRepoMock: {
         create: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
         getById: vi.fn()
+      },
+      topicGroupRepoMock: {
+        listGroupsByEvent: vi.fn(),
+        bindEventGroups: vi.fn(),
+        unbindEventGroup: vi.fn(),
+        listGroupsByRound: vi.fn(),
+        bindRoundGroups: vi.fn(),
+        unbindRoundGroup: vi.fn(),
+        getEventBankConfig: vi.fn(),
+        setEventBankConfig: vi.fn()
       }
     }
   })
@@ -77,6 +88,10 @@ vi.mock('../../db/repository/event.repo', () => ({
 
 vi.mock('../../db/repository/format.repo', () => ({
   formatRepo: formatRepoMock
+}))
+
+vi.mock('../../db/repository/topic-group.repo', () => ({
+  topicGroupRepo: topicGroupRepoMock
 }))
 
 vi.mock('../../db/repository/draw.repo', () => ({
@@ -137,7 +152,7 @@ function makeLog(overrides: Partial<UndoLogEntry>): UndoLogEntry {
 }
 
 beforeEach(() => {
-  for (const repo of [undoLogRepoMock, topicRepoMock, eventRepoMock, formatRepoMock]) {
+  for (const repo of [undoLogRepoMock, topicRepoMock, eventRepoMock, formatRepoMock, topicGroupRepoMock]) {
     for (const fn of Object.values(repo)) {
       ;(fn as ReturnType<typeof vi.fn>).mockReset()
     }
@@ -387,6 +402,108 @@ describe('新覆盖操作：赛制 / 赛事 / 队伍', () => {
     const res = executeUndo()
     expect(eventRepoMock.updateTeam).toHaveBeenCalledWith('tm1', { name: '旧队名' })
     expect(res.storeName).toBe('event')
+  })
+})
+
+describe('关系操作入 undo（Governance-8.3）', () => {
+  it('单队分配 assignGroup undo/redo 成对恢复分组归属', () => {
+    const log = makeLog({
+      store_name: 'event',
+      target_type: 'team',
+      action: 'assignGroup',
+      target_id: 'tm1',
+      before_data: { id: 'tm1', group_id: null },
+      after_data: { id: 'tm1', group_id: 'g1' }
+    })
+
+    undoLogRepoMock.getLatest.mockReturnValue(log)
+    const undoRes = executeUndo()
+    // before 为旧分组（null）→ 撤销恢复到未分组
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenCalledWith('tm1', null)
+    expect(undoRes.storeName).toBe('event')
+
+    undoLogRepoMock.getLatestRedoable.mockReturnValue({ ...log, undone_at: 'x' })
+    eventRepoMock.assignTeamToGroup.mockReset()
+    executeRedo()
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenCalledWith('tm1', 'g1')
+  })
+
+  it('随机分组 randomAssignGroup undo/redo 批量恢复队伍分组', () => {
+    const log = makeLog({
+      store_name: 'event',
+      target_type: 'event',
+      action: 'randomAssignGroup',
+      target_id: 'e1',
+      before_data: {
+        teams: [
+          { id: 'tm1', group_id: null },
+          { id: 'tm2', group_id: 'g1' }
+        ]
+      },
+      after_data: {
+        teams: [
+          { id: 'tm1', group_id: 'g2' },
+          { id: 'tm2', group_id: 'g2' }
+        ]
+      }
+    })
+
+    undoLogRepoMock.getLatest.mockReturnValue(log)
+    const undoRes = executeUndo()
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenNthCalledWith(1, 'tm1', null)
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenNthCalledWith(2, 'tm2', 'g1')
+    expect(undoRes.affectedCount).toBe(2)
+
+    undoLogRepoMock.getLatestRedoable.mockReturnValue({ ...log, undone_at: 'x' })
+    eventRepoMock.assignTeamToGroup.mockReset()
+    executeRedo()
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenNthCalledWith(1, 'tm1', 'g2')
+    expect(eventRepoMock.assignTeamToGroup).toHaveBeenNthCalledWith(2, 'tm2', 'g2')
+  })
+
+  it('赛事题库绑定 bindEvent undo 只解绑新增部分，redo 重新绑定', () => {
+    const log = makeLog({
+      store_name: 'topicGroup',
+      target_type: 'event',
+      action: 'bindEvent',
+      target_id: 'e1',
+      before_data: { id: 'e1', group_ids: ['g0'] },
+      after_data: { id: 'e1', group_ids: ['g0', 'g1'] }
+    })
+
+    undoLogRepoMock.getLatest.mockReturnValue(log)
+    executeUndo()
+    // g1 仅在 after → 撤销时解绑；g0 在 before/after 均存在 → 不重绑
+    expect(topicGroupRepoMock.unbindEventGroup).toHaveBeenCalledWith('e1', 'g1')
+    expect(topicGroupRepoMock.bindEventGroups).not.toHaveBeenCalled()
+
+    undoLogRepoMock.getLatestRedoable.mockReturnValue({ ...log, undone_at: 'x' })
+    topicGroupRepoMock.unbindEventGroup.mockReset()
+    topicGroupRepoMock.bindEventGroups.mockReset()
+    executeRedo()
+    // 重做：重新绑定 after 独有的 g1（当前为 before 状态），无 before 独有项无需解绑
+    expect(topicGroupRepoMock.bindEventGroups).toHaveBeenCalledWith('e1', ['g1'])
+    expect(topicGroupRepoMock.unbindEventGroup).not.toHaveBeenCalled()
+  })
+
+  it('bank 配置 setBankConfig undo/redo 恢复前后配置', () => {
+    const log = makeLog({
+      store_name: 'topicGroup',
+      target_type: 'event',
+      action: 'setBankConfig',
+      target_id: 'e1',
+      before_data: { id: 'e1', config: { mode: 'priority' } },
+      after_data: { id: 'e1', config: { mode: 'by_round' } }
+    })
+
+    undoLogRepoMock.getLatest.mockReturnValue(log)
+    executeUndo()
+    expect(topicGroupRepoMock.setEventBankConfig).toHaveBeenCalledWith('e1', { mode: 'priority' })
+
+    undoLogRepoMock.getLatestRedoable.mockReturnValue({ ...log, undone_at: 'x' })
+    topicGroupRepoMock.setEventBankConfig.mockReset()
+    executeRedo()
+    expect(topicGroupRepoMock.setEventBankConfig).toHaveBeenCalledWith('e1', { mode: 'by_round' })
   })
 })
 

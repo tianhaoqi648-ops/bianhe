@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDatabase, closeDatabase, currentDbMode } from './db'
+import { initDatabase, closeDatabase, dbModeStore } from './db'
 import { seedOfficialTopics } from './db/seed'
 import { auditRepo } from './db/repository/audit.repo'
 import { agentSessionRepo } from './db/repository/agent-session.repo'
@@ -40,7 +40,7 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
     // 窗口准备好之后再次广播当前 db 模式，确保渲染进程拿到初始状态
-    mainWindow.webContents.send('db:status', currentDbMode)
+    mainWindow.webContents.send('db:status', dbModeStore.mode)
   })
 
   // 放行麦克风（media）权限，用于计时/比赛可选录音
@@ -76,12 +76,18 @@ app.whenReady().then(async () => {
   // 注册 logs IPC（不依赖数据库，可独立工作）
   ipcMain.handle('logs:write', (_e, error) => writeErrorLog(error))
   // 注册 db:get-mode IPC（同步查询当前 db 模式，用于渲染进程初始 mount 时拉取）
-  ipcMain.handle('db:get-mode', () => currentDbMode)
+  ipcMain.handle('db:get-mode', () => dbModeStore.mode)
+
+  // 中继：preload 在 memory 模式写通道上的警示 → 转成渲染进程可收的事件。
+  // （只负责把消息回发给来源的 webContents，业务仍在 handler 中正常执行）
+  ipcMain.on('memory:write-warning', (event) => {
+    event.sender.send('memory:write-warning')
+  })
 
   // 初始化数据库（带降级）
   try {
     await initDatabase()
-    console.log('[main] Database initialized, mode =', currentDbMode)
+    console.log('[main] Database initialized, mode =', dbModeStore.mode)
 
     // 启动时清空 undo_log 表，避免跨重启一致性问题
     try {

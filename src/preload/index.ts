@@ -145,7 +145,54 @@ import type {
  * 通用 invoke 封装：自动展开参数。
  * 使用 unknown[] 而非 any[]，迫使调用方在必要时显式断言类型。
  */
+// ============================================================
+// Memory(临时)模式写保护 —— 放在本文件唯一的 IPC 出入口 invoke 上，
+// 而不是去改写 contextBridge 暴露后只读的 window.xxxAPI 方法。
+//   - 仅在一类「写/破坏性」通道上生效
+//   - 仅在 memory 模式下触发（初始值由主进程 db:status 广播同步）
+//   - 产品语义是「提示」而非「阻断」：仍继续执行原始 invoke
+// ============================================================
+const MEMORY_WRITE_CHANNELS: ReadonlySet<string> = new Set([
+  IPC_CHANNELS.TOPIC_DELETE,
+  IPC_CHANNELS.TOPIC_BATCH_DELETE,
+  IPC_CHANNELS.EVENT_DELETE,
+  IPC_CHANNELS.ROUND_DELETE,
+  IPC_CHANNELS.TEAM_DELETE,
+  IPC_CHANNELS.TEAM_GROUP_DELETE,
+  IPC_CHANNELS.TEAM_ASSIGN_GROUP,
+  IPC_CHANNELS.TEAM_RANDOM_ASSIGN_GROUP,
+  IPC_CHANNELS.DRAW_DELETE_SESSION,
+  IPC_CHANNELS.DRAW_CONFIRM_SESSION,
+  IPC_CHANNELS.AUDIT_CLEAR_LOGS,
+  IPC_CHANNELS.IMPORT_EXECUTE,
+  IPC_CHANNELS.IMPORT_REVOKE_BATCH,
+  IPC_CHANNELS.BATCH_EDIT_EXECUTE,
+  IPC_CHANNELS.BATCH_EDIT_REVERT,
+  IPC_CHANNELS.SYSTEM_RESET_DATA,
+  IPC_CHANNELS.MATCH_CREATE,
+  IPC_CHANNELS.MATCH_UPDATE,
+  IPC_CHANNELS.MATCH_SET_RESULT,
+  IPC_CHANNELS.MATCH_SET_AI_REVIEW,
+  IPC_CHANNELS.MATCH_DELETE,
+  IPC_CHANNELS.BACKUP_RESTORE,
+  IPC_CHANNELS.BACKUP_IMPORT,
+  IPC_CHANNELS.TIMER_ADD_RECORD,
+  IPC_CHANNELS.TIMER_FINISH_RECORD
+])
+
+/** 主进程 db:status 广播会同步到 preload，供内存写保护判定 */
+let __memoryMode = false
+ipcRenderer.on('db:status', (_event, mode: unknown) => {
+  __memoryMode = mode === 'memory'
+})
+
+/** 主进程收到该命名消息后，中继为向渲染进程广播的警示事件 */
+const MEMORY_WRITE_WARNING_EVENT = 'memory:write-warning'
+
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  if (__memoryMode && MEMORY_WRITE_CHANNELS.has(channel)) {
+    ipcRenderer.send(MEMORY_WRITE_WARNING_EVENT)
+  }
   return ipcRenderer.invoke(channel, ...args)
 }
 

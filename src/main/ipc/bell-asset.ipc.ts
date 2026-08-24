@@ -5,6 +5,8 @@
 import { ipcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/types'
 import { bellAssetRepo } from '../db/repository/bell-asset.repo'
+import { auditRepo } from '../db/repository/audit.repo'
+import { deleteBellFile } from '../services/bell-storage'
 // L3 修复：使用公共 wrap 函数，避免重复定义
 import { wrap } from './utils'
 
@@ -62,10 +64,35 @@ export function registerBellAssetIpc(): void {
   )
 
   // P2-19：同上，BELL_ASSET_DELETE 跳过改用 wrapWithUndo。
+  // Governance Task 6：repository 只删 DB 行；文件删除与失败审计在此编排
   ipcMain.handle(IPC_CHANNELS.BELL_ASSET_DELETE, (_e: IpcMainInvokeEvent, id: string) =>
     wrap(() => {
       assertNonEmptyString(id, 'id')
-      return bellAssetRepo.delete(id)
+      const asset = bellAssetRepo.getById(id)
+      if (!asset) return false
+      const deleted = bellAssetRepo.delete(id)
+      if (!deleted) return false
+      try {
+        deleteBellFile(asset.filePath)
+      } catch (e) {
+        console.error('[bell-asset.ipc] delete: 删除铃声文件失败', asset.filePath, e)
+        try {
+          auditRepo.addLog({
+            action: 'delete',
+            target_type: 'bell_asset',
+            target_id: id,
+            operator: 'system',
+            detail: {
+              action: 'bell_file_delete_failed',
+              file_path: asset.filePath,
+              error: e instanceof Error ? e.message : String(e)
+            }
+          })
+        } catch (logErr) {
+          console.error('[bell-asset.ipc] delete: 写入 audit_log 失败', logErr)
+        }
+      }
+      return true
     })
   )
 

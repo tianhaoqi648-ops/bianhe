@@ -19,6 +19,7 @@ import { topicRepo } from '../db/repository/topic.repo'
 import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
 import { formatRepo } from '../db/repository/format.repo'
+import { topicGroupRepo } from '../db/repository/topic-group.repo'
 import { customFieldService } from './custom-field-service'
 import type {
   UndoLogEntry,
@@ -30,7 +31,8 @@ import type {
   DrawResult,
   DrawSessionDetail,
   CustomField,
-  DebateFormat
+  DebateFormat,
+  EventBankConfig
 } from '../../shared/types'
 
 // ============================================================
@@ -237,6 +239,8 @@ function applyReverse(log: UndoLogEntry): number {
       return applyFormatReverse(log.action, before, after)
     case 'customField':
       return applyCustomFieldReverse(log.action, before, after)
+    case 'topicGroup':
+      return applyTopicGroupReverse(log.action, log.target_type, before, after)
     case 'settings':
       return applySettingsReverse(log.action, before)
     default:
@@ -266,6 +270,8 @@ function applyForward(log: UndoLogEntry): number {
       return applyFormatForward(log.action, before, after)
     case 'customField':
       return applyCustomFieldForward(log.action, before, after)
+    case 'topicGroup':
+      return applyTopicGroupForward(log.action, log.target_type, before, after)
     case 'settings':
       return applySettingsForward(log.action, after)
     default:
@@ -460,6 +466,12 @@ function applyEventReverse(
         eventRepo.deleteEvent(afterEvent!.id)
         return 1
       }
+      // Governance-8.3：随机分组（批量改分组）可撤销。before/after 记录被改队伍的 {id, group_id}
+      if (action === 'randomAssignGroup') {
+        const beforeData = before as { teams: Array<{ id: string; group_id: string | null }> }
+        for (const t of beforeData.teams) eventRepo.assignTeamToGroup(t.id, t.group_id)
+        return beforeData.teams.length
+      }
       if (action === 'update' && beforeEvent) {
         eventRepo.updateEvent(beforeEvent.id, {
           name: beforeEvent.name,
@@ -501,6 +513,13 @@ function applyEventReverse(
     case 'team': {
       const beforeTeam = before as Team | null
       const afterTeam = after as Team | null
+      // Governance-8.3：单队分配到分组可撤销。before/after 记录 {id, group_id}
+      if (action === 'assignGroup') {
+        const afterData = after as { id: string; group_id: string | null }
+        const beforeData = before as { group_id: string | null }
+        eventRepo.assignTeamToGroup(afterData.id, beforeData.group_id)
+        return 1
+      }
       if (action === 'create') {
         eventRepo.deleteTeam(afterTeam!.id)
         return 1
@@ -534,6 +553,12 @@ function applyEventForward(
       if (action === 'create' && afterEvent) {
         recreateEventWithId(afterEvent)
         return 1
+      }
+      // Governance-8.3：随机分组 redo。after.teams 记录重做后的 {id, group_id}
+      if (action === 'randomAssignGroup') {
+        const afterData = after as { teams: Array<{ id: string; group_id: string | null }> }
+        for (const t of afterData.teams) eventRepo.assignTeamToGroup(t.id, t.group_id)
+        return afterData.teams.length
       }
       if (action === 'update' && afterEvent) {
         eventRepo.updateEvent(afterEvent.id, {
@@ -575,6 +600,12 @@ function applyEventForward(
     case 'team': {
       const beforeTeam = before as Team | null
       const afterTeam = after as Team | null
+      // Governance-8.3：单队分组重做。after 记录 {id, group_id}
+      if (action === 'assignGroup') {
+        const afterData = after as { id: string; group_id: string | null }
+        eventRepo.assignTeamToGroup(afterData.id, afterData.group_id)
+        return 1
+      }
       if (action === 'create' && afterTeam) {
         recreateTeamWithId(afterTeam)
         return 1
@@ -868,6 +899,90 @@ function recreateCustomFieldWithId(field: CustomField): void {
     INSERT INTO topic_custom_fields (field_key, field_label, field_type, sort_order, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(field.field_key, field.field_label, field.field_type, field.sort_order, field.created_at)
+}
+
+// ---------- topicGroup 反向操作（Governance-8.3：赛事/轮次 题库绑定与 bank 配置） ----------
+
+/**
+ * topicGroup 存储：赛事绑定 / 轮次绑定 / bank 配置 三类关系操作的反向撤销。
+ *
+ * 快照约定（before/after 均携带 id 以便撤销时定位目标）：
+ *   - bindEvent / bindRound: { id, group_ids } —— id 为 event_id 或 round_id，group_ids 为绑定题组 id 列表
+ *   - setBankConfig: { id, config } —— id 为 event_id，config 为 EventBankConfig
+ *
+ * 反向策略：对绑定操作，按 before/after 的差集恢复（只对差异分组增删），
+ * 避免对未涉及的绑定做全量覆盖造成无关改动。
+ */
+function applyTopicGroupReverse(
+  action: string,
+  _targetType: string,
+  before: unknown,
+  after: unknown
+): number {
+  switch (action) {
+    case 'bindEvent': {
+      const b = before as { id: string; group_ids: string[] }
+      const a = after as { id: string; group_ids: string[] }
+      const aOnly = a.group_ids.filter((g) => !b.group_ids.includes(g))
+      for (const gid of aOnly) topicGroupRepo.unbindEventGroup(b.id, gid)
+      const withAdd = b.group_ids.filter((g) => !a.group_ids.includes(g))
+      if (withAdd.length) topicGroupRepo.bindEventGroups(b.id, withAdd)
+      return Math.max(aOnly.length, withAdd.length)
+    }
+    case 'bindRound': {
+      const b = before as { id: string; group_ids: string[] }
+      const a = after as { id: string; group_ids: string[] }
+      const aOnly = a.group_ids.filter((g) => !b.group_ids.includes(g))
+      for (const gid of aOnly) topicGroupRepo.unbindRoundGroup(b.id, gid)
+      const withAdd = b.group_ids.filter((g) => !a.group_ids.includes(g))
+      if (withAdd.length) topicGroupRepo.bindRoundGroups(b.id, withAdd)
+      return Math.max(aOnly.length, withAdd.length)
+    }
+    case 'setBankConfig': {
+      const b = before as { id: string; config: EventBankConfig }
+      topicGroupRepo.setEventBankConfig(b.id, b.config)
+      return 1
+    }
+    default:
+      throw new Error(`[undo] topicGroup: unsupported action ${action}`)
+  }
+}
+
+// ---------- topicGroup 正向操作（重做） ----------
+
+function applyTopicGroupForward(
+  action: string,
+  _targetType: string,
+  before: unknown,
+  after: unknown
+): number {
+  switch (action) {
+    case 'bindEvent': {
+      const b = before as { id: string; group_ids: string[] }
+      const a = after as { id: string; group_ids: string[] }
+      const bOnly = b.group_ids.filter((g) => !a.group_ids.includes(g))
+      for (const gid of bOnly) topicGroupRepo.unbindEventGroup(a.id, gid)
+      const withAdd = a.group_ids.filter((g) => !b.group_ids.includes(g))
+      if (withAdd.length) topicGroupRepo.bindEventGroups(a.id, withAdd)
+      return Math.max(bOnly.length, withAdd.length)
+    }
+    case 'bindRound': {
+      const b = before as { id: string; group_ids: string[] }
+      const a = after as { id: string; group_ids: string[] }
+      const bOnly = b.group_ids.filter((g) => !a.group_ids.includes(g))
+      for (const gid of bOnly) topicGroupRepo.unbindRoundGroup(a.id, gid)
+      const withAdd = a.group_ids.filter((g) => !b.group_ids.includes(g))
+      if (withAdd.length) topicGroupRepo.bindRoundGroups(a.id, withAdd)
+      return Math.max(bOnly.length, withAdd.length)
+    }
+    case 'setBankConfig': {
+      const a = after as { id: string; config: EventBankConfig }
+      topicGroupRepo.setEventBankConfig(a.id, a.config)
+      return 1
+    }
+    default:
+      throw new Error(`[undo] topicGroup: unsupported action ${action}`)
+  }
 }
 
 // ---------- settings 反向操作 ----------

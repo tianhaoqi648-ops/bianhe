@@ -23,6 +23,11 @@ import type {
 
 type StoreName = UndoLogEntry['store_name']
 
+// Governance-8.1：Undo 采用 best-effort（策略 B）的统一文案。
+// 业务成功但 undo_log 创建失败（payload 超限 / 容量异常）时，该次操作不可撤销，
+// 前端据此向用户明确提示。文案全局唯一，避免各处不一致。
+export const UNDO_NOT_AVAILABLE_COPY = '该操作无法撤销'
+
 const MAX_STACK_SIZE = 50
 
 // pastStack: 可撤销操作（栈顶为最近一次操作）
@@ -32,6 +37,9 @@ const futureStack: UndoStackEntry[] = []
 
 // store 刷新函数注册表（undo 成功后调用，确保渲染层数据与 DB 一致）
 const storeRefreshers = new Map<StoreName, () => void>()
+
+// Governance-8.1：最近一次「不可撤销」信号（best-effort）。仅当写操作成功但未创建 undo_log 时置位。
+let notUndoable: { label: string; at: number } | null = null
 
 // 订阅者列表（state 变化时通知）
 const listeners = new Set<() => void>()
@@ -68,6 +76,8 @@ export const undoManager = {
     }
     // logId 为空表示主进程未创建 undo_log，跳过入栈
     if (!entry.logId) {
+      // Governance-8.1：记录一次「不可撤销」信号（best-effort），供 UI 明确提示用户。
+      notUndoable = { label: entry.label, at: Date.now() }
       notifyListeners()
       return
     }
@@ -211,7 +221,22 @@ export const undoManager = {
   clearStack(): void {
     pastStack.length = 0
     futureStack.length = 0
+    notUndoable = null
     notifyListeners()
+  },
+
+  // ---------- 不可撤销信号（Governance-8.1） ----------
+  /**
+   * 返回最近一次「该操作无法撤销」的信号（best-effort）。
+   * label 为导致不可撤销的操作摘要；null 表示最近写操作均可撤销。
+   */
+  getLastNotUndoable(): { label: string; at: number } | null {
+    return notUndoable
+  },
+
+  /** 消费并清除不可撤销信号（UI 提示后调用） */
+  clearNotUndoable(): void {
+    notUndoable = null
   },
 
   // ---------- store refresher 注册 ----------

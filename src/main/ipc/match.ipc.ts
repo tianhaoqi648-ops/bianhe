@@ -11,6 +11,7 @@ import type {
   MatchUpdateInput
 } from '../../shared/types'
 import { matchRepo } from '../db/repository/match.repo'
+import { createMatch } from '../services/match-service'
 import { wrap } from './utils'
 
 /** 参数校验辅助（仿 format.ipc.ts） */
@@ -26,7 +27,8 @@ export function registerMatchIpc(): void {
     wrap(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.eventId, 'input.eventId')
-      return matchRepo.create(input)
+      // 以「一次用户动作」为事务边界：经 match-service 包显式事务（matchRepo 内不开事务）。
+      return createMatch(input)
     })
   )
 

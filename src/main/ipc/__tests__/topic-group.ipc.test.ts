@@ -42,8 +42,20 @@ const mocks = vi.hoisted(() => {
     mockBatchAddToGroups: vi.fn(),
     mockBatchRemoveFromGroup: vi.fn(),
     mockCopyGroupToGroup: vi.fn(),
-    mockMoveGroupToGroup: vi.fn()
+    mockMoveGroupToGroup: vi.fn(),
+    // Governance-8.3：bind/unbind 已改走 withUndoLog，mock 主进程 getDb + undoLogRepo
+    mockCreateLog: vi.fn(() => 'log-1'),
+    mockDb: {
+      prepare: vi.fn(() => ({ run: () => ({ changes: 1 }), get: () => undefined, all: () => [] })),
+      transaction: vi.fn()
+    }
   }
+})
+
+// withUndoLog 事务桩：同步执行回调
+mocks.mockDb.transaction.mockImplementation((fn: () => unknown) => {
+  const out = fn()
+  return () => out
 })
 
 // ============================================================
@@ -72,6 +84,15 @@ vi.mock('../../db/repository/topic-group.repo', () => ({
     copyGroupToGroup: mocks.mockCopyGroupToGroup,
     moveGroupToGroup: mocks.mockMoveGroupToGroup
   }
+}))
+
+// Governance-8.3：withUndoLog 依赖 getDb + undoLogRepo.createLog
+vi.mock('../../db', () => ({
+  getDb: () => mocks.mockDb
+}))
+
+vi.mock('../../db/repository/undo-log.repo', () => ({
+  undoLogRepo: { createLog: mocks.mockCreateLog }
 }))
 
 import { IPC_CHANNELS } from '../../../shared/types'
@@ -232,25 +253,29 @@ describe('赛事绑定：listGroupsByEvent / bind / unbind', () => {
   })
 
   it('bindEventGroups 可多选 → 透传 repo，返回新增数', () => {
+    mocks.mockListGroupsByEvent.mockReturnValue([])
     mocks.mockBindEventGroups.mockReturnValue(2)
     const res = call(IPC_CHANNELS.GROUP_TOPIC_BIND_EVENT, { eventId: 'e1', groupIds: ['g1', 'g2'] })
-    expect(res).toEqual({ success: true, data: 2 })
+    expect(res.success).toBe(true)
+    expect(res.data).toBe(2)
     expect(mocks.mockBindEventGroups).toHaveBeenCalledWith('e1', ['g1', 'g2'])
   })
 
   it('bindEventGroups 空 groupIds → no-op，调用 repo 返回 0', () => {
+    mocks.mockListGroupsByEvent.mockReturnValue([])
     mocks.mockBindEventGroups.mockReturnValue(0)
     const res = call(IPC_CHANNELS.GROUP_TOPIC_BIND_EVENT, { eventId: 'e1', groupIds: [] })
-    expect(res).toEqual({ success: true, data: 0 })
+    expect(res.success).toBe(true)
+    expect(res.data).toBe(0)
     expect(mocks.mockBindEventGroups).toHaveBeenCalledWith('e1', [])
   })
 
   it('unbindEventGroup 透传 repo，返回 boolean', () => {
+    mocks.mockListGroupsByEvent.mockReturnValue([])
     mocks.mockUnbindEventGroup.mockReturnValue(true)
-    expect(call(IPC_CHANNELS.GROUP_TOPIC_UNBIND_EVENT, { eventId: 'e1', groupId: 'g1' })).toEqual({
-      success: true,
-      data: true
-    })
+    const res = call(IPC_CHANNELS.GROUP_TOPIC_UNBIND_EVENT, { eventId: 'e1', groupId: 'g1' })
+    expect(res.success).toBe(true)
+    expect(res.data).toBe(true)
     expect(mocks.mockUnbindEventGroup).toHaveBeenCalledWith('e1', 'g1')
   })
 })

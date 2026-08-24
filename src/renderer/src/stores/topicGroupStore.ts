@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { TopicGroup, GroupTopic, ApiResponse } from '../../../shared/types';
 import { buildGroupMemberMaps } from './topicGroupFileOps';
+import { registerStoreRefresher } from '../utils/undo-manager';
 
 /**
  * 题组（题库）管理 store（赛事题库 T3）。
@@ -149,3 +150,11 @@ function sortGroups(groups: TopicGroup[]): TopicGroup[] {
     Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name)
   );
 }
+
+/**
+ * Governance-8.3：事件/轮次题库绑定与 bank 配置接入 undo 后，撤销/重做该 topicGroup
+ * store 的日志，需重载题组成员映射（含赛事绑定关系），保证跨组件一致性。
+ */
+registerStoreRefresher('topicGroup', () => {
+  void useTopicGroupStore.getState().loadMemberMapping();
+});

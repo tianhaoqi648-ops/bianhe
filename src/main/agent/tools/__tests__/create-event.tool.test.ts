@@ -8,7 +8,7 @@
 //   - 正常创建 → createEvent 透传 name + null（format/teamCount 不传给 repo）
 //   - repo 抛错 → 工具抛错
 //
-// Mock 策略：mock eventRepo.createEvent，隔离工具层校验逻辑。
+// Mock 策略：mock event-service.createEvent，隔离工具层校验逻辑。
 // ============================================================
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -26,10 +26,8 @@ const { mockCreateEvent } = vi.hoisted(() => ({
 // Mock 依赖
 // ============================================================
 
-vi.mock('@main/db/repository/event.repo', () => ({
-  eventRepo: {
-    createEvent: mockCreateEvent
-  }
+vi.mock('@main/services/event-service', () => ({
+  createEvent: mockCreateEvent
 }))
 
 // 导入被测模块（在 mock 之后）

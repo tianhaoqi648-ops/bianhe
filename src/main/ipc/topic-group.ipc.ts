@@ -33,7 +33,9 @@ import type {
   RoundUnbindGroupInput
 } from '../../shared/types'
 import { topicGroupRepo } from '../db/repository/topic-group.repo'
-import { wrap } from './utils'
+import { validateBankConfig } from '../../shared/config-validator'
+import { wrap, wrapWithUndo } from './utils'
+import { withUndoLog } from '../services/undo-service'
 
 /** 参数校验（仿 judge.ipc.ts / import.ipc.ts） */
 function assertParam(condition: unknown, message: string): asserts condition {
@@ -168,20 +170,56 @@ export function registerTopicGroupIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.GROUP_TOPIC_BIND_EVENT, (_e, input: EventBindGroupsInput) =>
-    wrap<number>(() => {
+    wrapWithUndo(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.eventId, 'input.eventId')
       assertIdList(input.groupIds, 'input.groupIds')
-      return topicGroupRepo.bindEventGroups(input.eventId, input.groupIds)
+      // Governance-8.3：bind/unbind 统一走 'bindEvent' 全量快照 undo（before/after 为绑定 id 集合）
+      return withUndoLog({
+        storeName: 'topicGroup',
+        action: 'bindEvent',
+        targetType: 'event',
+        targetId: input.eventId,
+        label: '绑定赛事题库',
+        getBefore: () => ({
+          id: input.eventId,
+          group_ids: topicGroupRepo.listGroupsByEvent(input.eventId).map((g) => g.id)
+        }),
+        execute: () => {
+          return topicGroupRepo.bindEventGroups(input.eventId, input.groupIds)
+        },
+        getAfter: () => ({
+          id: input.eventId,
+          group_ids: topicGroupRepo.listGroupsByEvent(input.eventId).map((g) => g.id)
+        })
+      })
     })
   )
 
   ipcMain.handle(IPC_CHANNELS.GROUP_TOPIC_UNBIND_EVENT, (_e, input: EventUnbindGroupInput) =>
-    wrap<boolean>(() => {
+    wrapWithUndo(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.eventId, 'input.eventId')
       assertNonEmptyString(input.groupId, 'input.groupId')
-      return topicGroupRepo.unbindEventGroup(input.eventId, input.groupId)
+      return withUndoLog({
+        storeName: 'topicGroup',
+        action: 'bindEvent',
+        targetType: 'event',
+        targetId: input.eventId,
+        label: `解绑赛事题库 ${input.groupId.slice(0, 8)}`,
+        getBefore: () => ({
+          id: input.eventId,
+          group_ids: topicGroupRepo.listGroupsByEvent(input.eventId).map((g) => g.id)
+        }),
+        execute: () => {
+          topicGroupRepo.unbindEventGroup(input.eventId, input.groupId)
+          return true
+        },
+        getAfter: () => ({
+          id: input.eventId,
+          group_ids: topicGroupRepo.listGroupsByEvent(input.eventId).map((g) => g.id)
+        })
+      })
     })
   )
 
@@ -194,12 +232,29 @@ export function registerTopicGroupIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.GROUP_TOPIC_SET_EVENT_BANK_CONFIG, (_e, input: EventSetBankConfigInput) =>
-    wrap<EventBankConfig | undefined>(() => {
+    wrapWithUndo(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.eventId, 'input.eventId')
       const config = input.config
-      assertParam(config && typeof config === 'object' && !!config.mode, 'input.config 必须含合法 mode')
-      return topicGroupRepo.setEventBankConfig(input.eventId, config)
+      const vc = validateBankConfig(config)
+      if (!vc.ok) throw new Error(vc.error)
+      // Governance-8.3：bank 配置接入 undo（action='setBankConfig'）
+      return withUndoLog({
+        storeName: 'topicGroup',
+        action: 'setBankConfig',
+        targetType: 'event',
+        targetId: input.eventId,
+        label: '更新选题模式',
+        getBefore: () => ({
+          id: input.eventId,
+          config: topicGroupRepo.getEventBankConfig(input.eventId)
+        }),
+        execute: () => topicGroupRepo.setEventBankConfig(input.eventId, config),
+        getAfter: () => ({
+          id: input.eventId,
+          config: topicGroupRepo.getEventBankConfig(input.eventId)
+        })
+      })
     })
   )
 
@@ -212,20 +267,56 @@ export function registerTopicGroupIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.GROUP_TOPIC_BIND_ROUND_GROUPS, (_e, input: RoundBindGroupsInput) =>
-    wrap<number>(() => {
+    wrapWithUndo(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.roundId, 'input.roundId')
       assertIdList(input.groupIds, 'input.groupIds')
-      return topicGroupRepo.bindRoundGroups(input.roundId, input.groupIds)
+      // Governance-8.3：bind/unbind 统一走 'bindRound' 全量快照 undo
+      return withUndoLog({
+        storeName: 'topicGroup',
+        action: 'bindRound',
+        targetType: 'round',
+        targetId: input.roundId,
+        label: '绑定轮次题库',
+        getBefore: () => ({
+          id: input.roundId,
+          group_ids: topicGroupRepo.listGroupsByRound(input.roundId).map((g) => g.id)
+        }),
+        execute: () => {
+          return topicGroupRepo.bindRoundGroups(input.roundId, input.groupIds)
+        },
+        getAfter: () => ({
+          id: input.roundId,
+          group_ids: topicGroupRepo.listGroupsByRound(input.roundId).map((g) => g.id)
+        })
+      })
     })
   )
 
   ipcMain.handle(IPC_CHANNELS.GROUP_TOPIC_UNBIND_ROUND_GROUP, (_e, input: RoundUnbindGroupInput) =>
-    wrap<boolean>(() => {
+    wrapWithUndo(() => {
       assertParam(input && typeof input === 'object', '参数 input 必须为对象')
       assertNonEmptyString(input.roundId, 'input.roundId')
       assertNonEmptyString(input.groupId, 'input.groupId')
-      return topicGroupRepo.unbindRoundGroup(input.roundId, input.groupId)
+      return withUndoLog({
+        storeName: 'topicGroup',
+        action: 'bindRound',
+        targetType: 'round',
+        targetId: input.roundId,
+        label: `解绑轮次题库 ${input.groupId.slice(0, 8)}`,
+        getBefore: () => ({
+          id: input.roundId,
+          group_ids: topicGroupRepo.listGroupsByRound(input.roundId).map((g) => g.id)
+        }),
+        execute: () => {
+          topicGroupRepo.unbindRoundGroup(input.roundId, input.groupId)
+          return true
+        },
+        getAfter: () => ({
+          id: input.roundId,
+          group_ids: topicGroupRepo.listGroupsByRound(input.roundId).map((g) => g.id)
+        })
+      })
     })
   )
 }

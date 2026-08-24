@@ -20,6 +20,8 @@ const h = vi.hoisted(() => {
   const topics = new Map<string, Record<string, unknown>>()
   const bankConfigs = new Map<string, string>()
   const eventIds = new Set<string>()
+  // 故障注入：对这些 topic_id 的 topic_group_items 写入抛错，用于验证批量写事务回滚
+  let failIds = new Set<string>()
 
   function handle(sql: string, mode: 'run' | 'get' | 'all', args: unknown[]): unknown {
     const s = sql.trim()
@@ -48,6 +50,10 @@ const h = vi.hoisted(() => {
     }
     if (/^INSERT\s+(OR\s+IGNORE\s+)?INTO\s+topic_group_items/i.test(s)) {
       const [gid, tid] = args as [string, string]
+      // 故障注入：命中列表的 topic_id 抛错，使事务回滚
+      if (failIds.has(String(tid))) {
+        throw new Error('intentional failure injection: topic_group_items insert failed')
+      }
       const key = `${gid}\u0000${tid}`
       const existed = items.has(key)
       if (!existed) items.set(key, { group_id: gid, topic_id: tid })
@@ -84,6 +90,10 @@ const h = vi.hoisted(() => {
     }
     if (/^DELETE\s+FROM\s+topic_group_items\s+WHERE\s+group_id\s*=\s*\?\s+AND\s+topic_id\s*=\s*\?/i.test(s)) {
       const [gid, tid] = args as [string, string]
+      // 故障注入：命中列表的 topic_id 删除抛错，使事务回滚
+      if (failIds.has(String(tid))) {
+        throw new Error('intentional failure injection: topic_group_items delete failed')
+      }
       const key = `${gid}\u0000${tid}`
       const existed = items.has(key)
       items.delete(key)
@@ -217,9 +227,29 @@ const h = vi.hoisted(() => {
 
   return {
     prepare,
-    /** better-sqlite3 事务桩：直接执行传入的同步 fn */
+    /** better-sqlite3 事务桩：近似模拟回滚语义 —— 执行前快照内存数据，
+     *   fn 抛错则恢复快照（等价于 rollback 丢弃前 N-1），成功则保留变更。 */
     transaction<T = void>(fn: () => T): () => T {
-      return fn
+      return () => {
+        const snapGroups = new Map(groups)
+        const snapItems = new Map(items)
+        const snapBindings = new Map(bindings)
+        const snapRound = new Map(roundGroups)
+        const snapCfg = new Map(bankConfigs)
+        const snapEvents = new Set(eventIds)
+        try {
+          return fn()
+        } catch (e) {
+          restoreMap(groups, snapGroups)
+          restoreMap(items, snapItems)
+          restoreMap(bindings, snapBindings)
+          restoreMap(roundGroups, snapRound)
+          restoreMap(bankConfigs, snapCfg)
+          eventIds.clear()
+          for (const v of snapEvents) eventIds.add(v)
+          throw e
+        }
+      }
     },
     reset() {
       groups.clear()
@@ -229,6 +259,11 @@ const h = vi.hoisted(() => {
       topics.clear()
       bankConfigs.clear()
       eventIds.clear()
+      failIds = new Set<string>()
+    },
+    /** 注入写入故障：之后对这些 topic_id 的 topic_group_items 写入会抛错 */
+    failOn(ids: string[]) {
+      failIds = new Set(ids)
     },
     seedTopic(row: Record<string, unknown>) {
       topics.set(String(row.id), { ...row })
@@ -238,6 +273,12 @@ const h = vi.hoisted(() => {
     }
   }
 })
+
+// 把快照 map 的键值回写进目标 map（先清空再填充，避免残留）
+function restoreMap<K, V>(target: Map<K, V>, snap: Map<K, V>): void {
+  target.clear()
+  for (const [k, v] of snap) target.set(k, v)
+}
 
 vi.mock('../../index', () => ({
   getDb: () => ({
@@ -621,6 +662,56 @@ describe('赛事选题模式读写（events.bank_config）', () => {
 
   it('事件不存在时 set 返回 undefined', () => {
     expect(topicGroupRepo.setEventBankConfig('not-exist', { mode: 'union' })).toBeUndefined()
+  })
+})
+
+describe('批量写事务化（gov Task3：任一条失败整批回滚）', () => {
+  it('addTopicsToGroup 插入：第 2 条失败 → 前 1 条一并回滚（不留 t1）', () => {
+    const g = topicGroupRepo.createGroup('组A')
+    seedTopic('t1')
+    seedTopic('t2')
+    h.failOn(['t2'])
+    expect(() => topicGroupRepo.addTopicsToGroup(g.id, ['t1', 't2'])).toThrow(
+      'failure injection'
+    )
+    expect(topicGroupRepo.listTopicIdsByGroup(g.id)).toHaveLength(0)
+  })
+
+  it('removeTopicsFromGroup 删除：第 2 条失败 → 前 1 条删除回滚（t1/t2 都在）', () => {
+    const g = topicGroupRepo.createGroup('组A')
+    seedTopic('t1')
+    seedTopic('t2')
+    // 先正常插入（故障注入未开启）
+    expect(topicGroupRepo.addTopicsToGroup(g.id, ['t1', 't2'])).toBe(2)
+    // 开启故障注入：t2 的删除会抛错
+    h.failOn(['t2'])
+    expect(() => topicGroupRepo.removeTopicsFromGroup(g.id, ['t1', 't2'])).toThrow(
+      'failure injection'
+    )
+    // t1 的删除被回滚，两条都保留
+    expect(topicGroupRepo.listTopicIdsByGroup(g.id)).toEqual(
+      expect.arrayContaining(['t1', 't2'])
+    )
+  })
+
+  it('addTopicsToGroup 正常批量成功', () => {
+    const g = topicGroupRepo.createGroup('组A')
+    seedTopic('t1')
+    seedTopic('t2')
+    expect(topicGroupRepo.addTopicsToGroup(g.id, ['t1', 't2'])).toBe(2)
+    expect(topicGroupRepo.listTopicIdsByGroup(g.id)).toEqual(
+      expect.arrayContaining(['t1', 't2'])
+    )
+  })
+
+  it('bindEventGroups 正常批量成功 / 空数组 no-op', () => {
+    topicGroupRepo.getDefault()
+    const ga = topicGroupRepo.createGroup('组A')
+    const gb = topicGroupRepo.createGroup('组B')
+    const added = topicGroupRepo.bindEventGroups('e1', [ga.id, gb.id])
+    expect(added).toBe(2)
+    expect(topicGroupRepo.listGroupsByEvent('e1')).toHaveLength(2)
+    expect(topicGroupRepo.bindEventGroups('e1', [])).toBe(0)
   })
 })
 

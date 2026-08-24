@@ -32,6 +32,10 @@ vi.mock('../../db/repository/audit.repo', () => ({
     addLog: vi.fn()
   }
 }))
+vi.mock('../../db/repository/bell-asset.repo', () => ({
+  bellAssetRepo: { listAll: vi.fn(), clearAll: vi.fn() }
+}))
+vi.mock('../bell-storage', () => ({ deleteBellFile: vi.fn() }))
 // Fix 8: resetData 现在用 db.transaction() 包裹整体操作，需 mock getDb
 vi.mock('../../db', () => {
   const transaction = (fn: () => unknown) => () => fn()
@@ -46,6 +50,8 @@ import { eventRepo } from '../../db/repository/event.repo'
 import { drawRepo } from '../../db/repository/draw.repo'
 import { importBatchRepo } from '../../db/repository/import-batch.repo'
 import { auditRepo } from '../../db/repository/audit.repo'
+import { bellAssetRepo } from '../../db/repository/bell-asset.repo'
+import { deleteBellFile } from '../bell-storage'
 import type { ResetDataRequest } from '../../../shared/types'
 
 describe('reset-service resetData', () => {
@@ -155,5 +161,35 @@ describe('reset-service resetData', () => {
     expect(res.auditLogsDeleted).toBe(0)
     expect(res.officialKept).toBe(true)
     expect(auditRepo.addLog).toHaveBeenCalledTimes(1)
+  })
+
+  it('重置自定义铃声：清空 bell_assets 并删除文件，文件删除失败时写审计（Governance Task 6）', () => {
+    // Repository 只删 DB 行；文件删除 + 失败审计由 reset-service 编排
+    vi.mocked(bellAssetRepo.listAll).mockReturnValue([
+      { id: 'b1', name: '铃', filePath: 'a.mp3', fileSize: 1, mimeType: 'audio/mp3', createdAt: '' }
+    ] as never)
+    vi.mocked(bellAssetRepo.clearAll).mockReturnValue(1)
+    vi.mocked(deleteBellFile).mockImplementation(() => {
+      throw new Error('disk-fail')
+    })
+
+    const req: ResetDataRequest = {
+      configKeys: [],
+      dataOptions: { customBells: true }
+    }
+    const res = resetData(req)
+
+    expect(res.customBellsDeleted).toBe(1)
+    expect(bellAssetRepo.listAll).toHaveBeenCalled()
+    expect(bellAssetRepo.clearAll).toHaveBeenCalled()
+    expect(deleteBellFile).toHaveBeenCalledWith('a.mp3')
+    // 文件删除失败 → 写一条 best-effort 审计（不阻断主流程）
+    expect(auditRepo.addLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'delete',
+        target_type: 'bell_asset',
+        target_id: 'b1'
+      })
+    )
   })
 })

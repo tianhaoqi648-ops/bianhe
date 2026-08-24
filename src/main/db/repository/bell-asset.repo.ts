@@ -7,12 +7,11 @@
 import { v4 as uuidv4 } from 'uuid'
 import * as path from 'node:path'
 import { getDb } from '../index'
-import { deleteBellFile, readBellFile, getBellFullPath } from '../../services/bell-storage'
+import { readBellFile, getBellFullPath } from '../../services/bell-storage'
 import { existsSync, writeFileSync } from 'fs'
 import type { BellAsset } from '../../../shared/debate-formats/types'
 import type { BackupImportStrategy } from '../../../shared/types'
 import { bulkInsert } from './utils'
-import { auditRepo } from './audit.repo'
 
 interface BellAssetRow {
   id: string
@@ -87,10 +86,8 @@ export const bellAssetRepo = {
   },
 
   delete(id: string): boolean {
-    const existing = bellAssetRepo.getById(id)
-    if (!existing) return false
-    // Bug P1-2: 先在事务内删除 DB 记录，事务成功后再删除文件
-    // 文件删除失败时不阻塞主流程，仅记录到 audit_log
+    // 单库单动作：仅删除 bell_assets 行。
+    // 文件（userData/bells/）删除与失败审计由调用方编排（Governance Task 6）。
     const db = getDb()
     let deletedRows = 0
     const tx = db.transaction(() => {
@@ -98,28 +95,7 @@ export const bellAssetRepo = {
       deletedRows = result.changes
     })
     tx()
-    if (deletedRows === 0) return false
-    try {
-      deleteBellFile(existing.filePath)
-    } catch (e) {
-      console.error('[bellAssetRepo] delete: 删除铃声文件失败', existing.filePath, e)
-      try {
-        auditRepo.addLog({
-          action: 'delete',
-          target_type: 'bell_asset',
-          target_id: id,
-          operator: 'system',
-          detail: {
-            action: 'bell_file_delete_failed',
-            file_path: existing.filePath,
-            error: e instanceof Error ? e.message : String(e)
-          }
-        })
-      } catch (logErr) {
-        console.error('[bellAssetRepo] delete: 写入 audit_log 失败', logErr)
-      }
-    }
-    return true
+    return deletedRows > 0
   },
 
   getDataUrl(id: string): string | null {
@@ -131,39 +107,14 @@ export const bellAssetRepo = {
   },
 
   clearAll(): number {
-    const assets = bellAssetRepo.listAll()
-    if (assets.length === 0) return 0
-    // Bug P1-2: 先在事务内清空 DB 记录，事务成功后再删除文件
-    // 文件删除失败时不阻塞主流程，仅记录到 audit_log
+    // 单库单动作：仅清空 bell_assets 表。
+    // 文件（userData/bells/）清理与失败审计由调用方编排（Governance Task 6）。
     const db = getDb()
     let deletedRows = 0
     const tx = db.transaction(() => {
-      const result = db.prepare('DELETE FROM bell_assets').run()
-      deletedRows = result.changes
+      deletedRows = db.prepare('DELETE FROM bell_assets').run().changes
     })
     tx()
-    for (const a of assets) {
-      try {
-        deleteBellFile(a.filePath)
-      } catch (e) {
-        console.error('[bellAssetRepo] clearAll: 删除铃声文件失败', a.filePath, e)
-        try {
-          auditRepo.addLog({
-            action: 'delete',
-            target_type: 'bell_asset',
-            target_id: a.id,
-            operator: 'system',
-            detail: {
-              action: 'bell_file_delete_failed',
-              file_path: a.filePath,
-              error: e instanceof Error ? e.message : String(e)
-            }
-          })
-        } catch (logErr) {
-          console.error('[bellAssetRepo] clearAll: 写入 audit_log 失败', logErr)
-        }
-      }
-    }
     return deletedRows
   },
 

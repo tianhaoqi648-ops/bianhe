@@ -33,6 +33,7 @@ import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { auditRepo } from '../db/repository/audit.repo'
 import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
+import { createEvent as createEventWithDefaultGroup } from '../services/event-service'
 import { getDb } from '../db/index'
 import { addCandidateValue } from '../services/candidate-service'
 import type { CandidateField } from '../../shared/constants'
@@ -559,7 +560,7 @@ export function registerImportIpc(): void {
           )
 
           // 3.2 创建赛事
-          const newEvent = eventRepo.createEvent({
+          const newEvent = createEventWithDefaultGroup({
             name: finalName,
             start_date: pkg.event.start_date ?? null,
             end_date: pkg.event.end_date ?? null,

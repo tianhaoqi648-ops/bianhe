@@ -710,6 +710,155 @@ export function assignMultiTeamStances(
 }
 
 // ============================================================
+// 步骤 6a：题池充足性校验（gate）
+// ============================================================
+
+/**
+ * 校验候选题池是否满足需要抽取的数量。
+ *
+ * - allow_repeat=true（允许辩题重复）：跳过检查（有放回可凑够）
+ * - 否则：candidates.length < count 时抛 InsufficientTopicsError
+ *
+ * @throws InsufficientTopicsError 候选不足且不允许重复
+ */
+export function assertSufficientTopics(
+  candidates: Topic[],
+  count: number,
+  allowRepeat?: boolean
+): void {
+  if (!allowRepeat && candidates.length < count) {
+    throw new InsufficientTopicsError(candidates.length, count)
+  }
+}
+
+// ============================================================
+// 步骤 6b：Selection Stage — 加权随机抽取 / 去重
+// ============================================================
+
+/**
+ * 从候选池中抽取 count 道辩题（纯函数，无 repo 依赖）。
+ *
+ * 由 options 决定抽样策略：
+ *   - `sourceMixConsumed=true`：来源比例 stage 已完成抽取，直接截取前 count 道
+ *     （保持与既有 drawTopics 分支一致）；allow_repeat 该项下不再二次抽样。
+ *   - `allowRepeat=true && !sourceMixConsumed`：有放回加权抽取（允许重复凑够）。
+ *   - 其余（普通无放回）：无放回加权抽取，结果天然去重。
+ *
+ * 注意：当 sourceMixConsumed=false 且候选为空时，weightedRandomSelect 会抛错，
+ * 调用方应先用 assertSufficientTopics 保证题池充足。
+ */
+export function selectTopics(
+  candidates: Topic[],
+  count: number,
+  options: { allowRepeat?: boolean; sourceMixConsumed?: boolean } = {}
+): Topic[] {
+  const { allowRepeat = false, sourceMixConsumed = false } = options
+
+  if (allowRepeat && !sourceMixConsumed) {
+    return weightedRandomSelectWithReplacement(candidates, count)
+  }
+  if (sourceMixConsumed) {
+    return candidates.slice(0, count)
+  }
+  return weightedRandomSelect(candidates, count)
+}
+
+// ============================================================
+// 步骤 9a：Persistence — session.settings 数据准备（纯函数）
+// ============================================================
+
+/** buildSessionSettings 的输入（来源：抽题过程中的中间状态）。 */
+export interface BuildSessionSettingsInput {
+  event_id: string
+  round_id?: string | null
+  operator?: string
+  /** 实际生效题数 */
+  topic_count: number
+  include_stance: boolean
+  filters?: TopicFilter | null
+  source_mix_ratio?: SourceMixRatio | null
+  actual_ratio?: { official: number; custom: number } | null
+  round_difficulty_override?: string | null
+  solo_team_id?: string | null
+  draw_mode: 'versus' | 'group' | 'multi_team'
+  group_ids?: string[] | null
+  /** 多队模式下每题队伍数（其他模式传 null/0） */
+  teams_per_topic: number | null
+  is_test: boolean
+  allow_repeat: boolean
+}
+
+/**
+ * 构建会话 settings 快照（供 createSession 落库）。纯函数。
+ */
+export function buildSessionSettings(input: BuildSessionSettingsInput) {
+  return {
+    topic_count: input.topic_count,
+    include_stance: input.include_stance,
+    filters: input.filters ?? null,
+    source_mix_ratio: input.source_mix_ratio ?? null,
+    actual_ratio: input.actual_ratio ?? null,
+    round_difficulty_override: input.round_difficulty_override ?? null,
+    solo_team_id: input.solo_team_id ?? null,
+    draw_mode: input.draw_mode,
+    group_ids: input.draw_mode === 'group' ? input.group_ids ?? null : null,
+    teams_per_topic: input.draw_mode === 'multi_team' ? input.teams_per_topic || null : null,
+    is_test: input.is_test,
+    allow_repeat: input.allow_repeat
+  }
+}
+
+// ============================================================
+// 步骤 10a：Persistence — 审计 detail 数据准备（纯函数）
+// ============================================================
+
+/** buildAuditDetail 的输入（来源：抽题过程中的中间状态）。 */
+export interface BuildAuditDetailInput {
+  event_id: string
+  round_id?: string | null
+  /** 实际生效题数 */
+  topic_count: number
+  include_stance: boolean
+  team_count: number
+  solo_team_id?: string | null
+  filters?: TopicFilter | null
+  source_mix_ratio?: SourceMixRatio | null
+  actual_ratio?: { official: number; custom: number } | null
+  picked_topic_ids: string[]
+  session_id: string
+  draw_mode: 'versus' | 'group' | 'multi_team'
+  group_ids?: string[] | null
+  /** 多队模式下每题队伍数（其他模式传 null/0） */
+  teams_per_topic: number | null
+  is_test: boolean
+  allow_repeat: boolean
+}
+
+/**
+ * 构建审计日志 detail 快照（供 auditRepo.addLog 使用）。纯函数。
+ */
+export function buildAuditDetail(input: BuildAuditDetailInput) {
+  return {
+    event_id: input.event_id,
+    round_id: input.round_id ?? null,
+    topic_count: input.topic_count,
+    include_stance: input.include_stance,
+    team_count: input.team_count,
+    solo_team_id: input.solo_team_id ?? null,
+    filters: input.filters ?? null,
+    source_mix_ratio: input.source_mix_ratio ?? null,
+    actual_ratio: input.actual_ratio ?? null,
+    picked_topic_ids: input.picked_topic_ids,
+    session_id: input.session_id,
+    draw_mode: input.draw_mode,
+    group_ids: input.draw_mode === 'group' ? input.group_ids ?? null : null,
+    teams_per_topic: input.draw_mode === 'multi_team' ? input.teams_per_topic || null : null,
+    is_test: input.is_test,
+    allow_repeat: input.allow_repeat
+  }
+}
+
+// ============================================================
 // 主函数：drawTopics
 // ============================================================
 
@@ -903,22 +1052,14 @@ export function drawTopics(params: DrawParams): DrawResult {
   }
 
   // 6. 题池不足检查（allow_repeat 跳过，因为可重复抽取）
-  if (!params.allow_repeat && candidates.length < effectiveTopicCount) {
-    throw new InsufficientTopicsError(candidates.length, effectiveTopicCount)
-  }
+  assertSufficientTopics(candidates, effectiveTopicCount, params.allow_repeat)
 
-  // 7. 加权随机抽取
-  let pickedTopics: Topic[]
-  if (params.allow_repeat && !params.source_mix_ratio) {
-    // 仅 allow_repeat，无 source_mix_ratio：单次有放回加权抽取
-    pickedTopics = weightedRandomSelectWithReplacement(candidates, effectiveTopicCount)
-  } else if (params.source_mix_ratio) {
+  // 7. 加权随机抽取（Selection Stage）
+  const pickedTopics: Topic[] = selectTopics(candidates, effectiveTopicCount, {
+    allowRepeat: params.allow_repeat,
     // source_mix_ratio 已完成抽取（含 allow_repeat 情形），直接截取
-    pickedTopics = candidates.slice(0, effectiveTopicCount)
-  } else {
-    // 普通模式：无放回加权抽取
-    pickedTopics = weightedRandomSelect(candidates, effectiveTopicCount)
-  }
+    sourceMixConsumed: !!params.source_mix_ratio
+  })
 
   // 8. 持方分配（按模式分支）
   let items: Array<Omit<DrawSessionItem, 'id' | 'session_id'>>
@@ -954,12 +1095,15 @@ export function drawTopics(params: DrawParams): DrawResult {
     }))
   }
 
-  // 9. 落库
+  // 9. 落库（Persistence：settings + items 交给 createSession）
   const session = drawRepo.createSession({
     event_id: params.event_id,
     round_id: params.round_id ?? null,
     operator: params.operator,
-    settings: {
+    settings: buildSessionSettings({
+      event_id: params.event_id,
+      round_id: params.round_id,
+      operator: params.operator,
       topic_count: effectiveTopicCount,
       include_stance: params.include_stance,
       filters: params.filters ?? null,
@@ -968,14 +1112,11 @@ export function drawTopics(params: DrawParams): DrawResult {
       round_difficulty_override: round?.difficulty_override ?? null,
       solo_team_id: params.solo_team_id ?? null,
       draw_mode: drawMode,
-      group_ids: drawMode === 'group' ? params.group_ids ?? null : null,
+      group_ids: params.group_ids ?? null,
       teams_per_topic: drawMode === 'multi_team' ? teamsPerTopicForMode || null : null,
-      // 测试模式标记：用于结果列表/历史列表显示"测试"徽章，以及确认结果时跳过 addTeamHistory
       is_test: params.test_mode === true,
-      // P3-24: 持久化 allow_repeat 到 session.settings，与审计日志保持一致，
-      // 便于历史列表/结果详情回显该次抽取是否允许辩题重复
       allow_repeat: params.allow_repeat === true
-    },
+    }),
     items
   })
 
@@ -989,9 +1130,9 @@ export function drawTopics(params: DrawParams): DrawResult {
     target_type: 'session',
     target_id: session.id,
     operator: params.operator ?? 'unknown',
-    detail: {
+    detail: buildAuditDetail({
       event_id: params.event_id,
-      round_id: params.round_id ?? null,
+      round_id: params.round_id,
       topic_count: effectiveTopicCount,
       include_stance: params.include_stance,
       team_count: params.teams?.length ?? 0,
@@ -1002,12 +1143,11 @@ export function drawTopics(params: DrawParams): DrawResult {
       picked_topic_ids: pickedTopics.map((t) => t.id),
       session_id: session.id,
       draw_mode: drawMode,
-      group_ids: drawMode === 'group' ? params.group_ids ?? null : null,
+      group_ids: params.group_ids ?? null,
       teams_per_topic: drawMode === 'multi_team' ? teamsPerTopicForMode || null : null,
-      // 审计日志同步标记 is_test，便于按测试模式过滤审计记录
       is_test: params.test_mode === true,
       allow_repeat: params.allow_repeat === true
-    }
+    })
   })
 
   return {

@@ -22,6 +22,7 @@ import { getStageDefinition, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
 import { buildJudgeSystemPrompt, parseJsonResult } from './judge-common'
+import { buildJudgeProvenance } from '../provenance'
 
 /** judge_debate 工具入参（与 parameters schema 对齐） */
 export interface JudgeDebateArgs {
@@ -455,7 +456,15 @@ export const judgeDebateTool: ToolDefinition<JudgeDebateArgs, JudgeDebateResult 
             judgeId: judge.id,
             toolName: 'judge_debate',
             topic,
-            resultJson: result as unknown as Record<string, unknown>
+            resultJson: result as unknown as Record<string, unknown>,
+            // provenance：从当前 LLM 配置 + 常量注入，可溯源「什么模型/版本/基于什么输入」
+            provenance: buildJudgeProvenance({
+              config,
+              toolName: 'judge_debate',
+              topic,
+              inputs: [affSpeech, negSpeech],
+              extra: args.formatHint
+            })
           })
         } catch {
           // 忽略历史写入失败

@@ -187,6 +187,55 @@ describe('judgeHistoryRepo', () => {
     expect(judgeHistoryRepo.delete('nonexistent')).toBe(false)
   })
 
+  it('create：携带 provenance 时持久化并返回独立 provenance 字段，resultJson 保持纯净', () => {
+    const provenance = {
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      promptVersion: '2026-08',
+      judgeVersion: '1.0.0',
+      mode: 'whole',
+      inputHash: '0a1b2c3d',
+      createdAt: '2026-08-24T00:00:00.000Z'
+    }
+    const rec = judgeHistoryRepo.create({
+      judgeId: 'j1',
+      toolName: 'judge_match',
+      topic: 'AI 是否应拥有著作权',
+      resultJson: { winner: 'aff', score: 88 },
+      provenance
+    })
+    expect(rec.provenance).toEqual(provenance)
+    // resultJson 不含保留键 __provenance
+    expect(rec.resultJson).toEqual({ winner: 'aff', score: 88 })
+    expect((rec.resultJson as Record<string, unknown>).__provenance).toBeUndefined()
+  })
+
+  it('get：provenance 随 DB 行往返保留（读取拆回独立字段）', () => {
+    const provenance = {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      promptVersion: '2026-08',
+      judgeVersion: '1.0.0',
+      mode: 'stage',
+      inputHash: 'feedcafe',
+      createdAt: '2026-08-24T01:00:00.000Z'
+    }
+    const created = judgeHistoryRepo.create({
+      judgeId: 'j2',
+      toolName: 'judge_speech',
+      resultJson: { summary: 's' },
+      provenance
+    })
+    const got = judgeHistoryRepo.get(created.id)
+    expect(got!.provenance).toEqual(provenance)
+    expect(got!.resultJson).toEqual({ summary: 's' })
+  })
+
+  it('无 provenance 的记录读回时 provenance 为 null', () => {
+    const rec = judgeHistoryRepo.create({ judgeId: 'j3', toolName: 'detect_stage' })
+    expect(rec.provenance).toBeNull()
+  })
+
   it('findAllForBackup：返回 DB 原始行，result_json 不反序列化', () => {
     judgeHistoryRepo.create({
       judgeId: 'j1',

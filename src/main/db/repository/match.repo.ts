@@ -15,6 +15,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
 import { computeMatchResult, type MatchResultSummary } from '../../../shared/match-result'
+import { AppError } from '../../../shared/app-error'
+import { validateRecordingMeta } from '../../../shared/config-validator'
 import type {
   Match,
   MatchAiReview,
@@ -220,26 +222,126 @@ function hydrate(match: Match): Match {
   }
 }
 
-function resolveNames(row: {
+/**
+ * 批量组装完整比赛（含裁判 + 评决）——消除列表 N+1。
+ * 对全部 match_ids 各发起一次批量 IN 查询取 judges / votes，
+ * 再在内存按 match_id 分组回填。查询次数与 N 无关（恒定 2 次）。
+ * 各 match 内保持原有排序（judges: sort_order, created_at；votes: created_at）。
+ */
+function hydrateMany(matches: Match[]): Match[] {
+  if (matches.length === 0) return []
+  const db = getDb()
+  const ids = matches.map((m) => m.id)
+  const placeholders = ids.map(() => '?').join(',')
+
+  const judgesByMatch = new Map<string, MatchJudge[]>()
+  const judgeRows = db
+    .prepare(`SELECT * FROM match_judges WHERE match_id IN (${placeholders}) ORDER BY sort_order ASC, created_at ASC`)
+    .all(...ids) as JudgeRow[]
+  for (const row of judgeRows) {
+    const judge = rowToJudge(row)
+    const list = judgesByMatch.get(judge.matchId)
+    if (list) list.push(judge)
+    else judgesByMatch.set(judge.matchId, [judge])
+  }
+
+  const votesByMatch = new Map<string, MatchJudgeVote[]>()
+  const voteRows = db
+    .prepare(`SELECT * FROM match_judge_votes WHERE match_id IN (${placeholders}) ORDER BY created_at ASC`)
+    .all(...ids) as VoteRow[]
+  for (const row of voteRows) {
+    const vote = rowToVote(row)
+    const list = votesByMatch.get(vote.matchId)
+    if (list) list.push(vote)
+    else votesByMatch.set(vote.matchId, [vote])
+  }
+
+  return matches.map((m) => ({
+    ...m,
+    judges: judgesByMatch.get(m.id) ?? [],
+    votes: votesByMatch.get(m.id) ?? []
+  }))
+}
+
+interface NameRowInput {
   team_a_id: string | null
   team_b_id: string | null
   topic_id: string | null
   event_id: string
   round_id: string | null
-}): { team_a_name: string | null; team_b_name: string | null; topic_title: string | null; event_name: string; round_name: string | null } {
-  const db = getDb()
-  const teamA = row.team_a_id ? (db.prepare('SELECT name FROM teams WHERE id = ?').get(row.team_a_id) as { name: string } | undefined) : undefined
-  const teamB = row.team_b_id ? (db.prepare('SELECT name FROM teams WHERE id = ?').get(row.team_b_id) as { name: string } | undefined) : undefined
-  const topic = row.topic_id ? (db.prepare('SELECT title FROM topics WHERE id = ?').get(row.topic_id) as { title: string } | undefined) : undefined
-  const event = db.prepare('SELECT name FROM events WHERE id = ?').get(row.event_id) as { name: string } | undefined
-  const round = row.round_id ? (db.prepare('SELECT name FROM rounds WHERE id = ?').get(row.round_id) as { name: string } | undefined) : undefined
-  return {
-    team_a_name: teamA?.name ?? null,
-    team_b_name: teamB?.name ?? null,
-    topic_title: topic?.title ?? null,
-    event_name: event?.name ?? row.event_id,
-    round_name: round?.name ?? null
+}
+
+type ResolvedNames = {
+  team_a_name: string | null
+  team_b_name: string | null
+  topic_title: string | null
+  event_name: string
+  round_name: string | null
+}
+
+/** 去重收集非空 id 并构造 IN 子句与参数 */
+function collectIds(rows: NameRowInput[], pick: (r: NameRowInput) => string | null): string[] {
+  const set = new Set<string>()
+  for (const r of rows) {
+    const id = pick(r)
+    if (id) set.add(id)
   }
+  return [...set]
+}
+
+/**
+ * 批量解析名称快照——消除逐 id SELECT。
+ * 对 teams/topics/events/rounds 各发起一次批量 IN 查询取回映射，
+ * 在内存按 id 回填。createMatch/updateMatch 通常只传单行，因此此处面向
+ * 并发/批处理路径保持一致实现，避免将来多行时退化为 N 次查询。
+ */
+function resolveNamesBatch(rows: NameRowInput[]): ResolvedNames[] {
+  const db = getDb()
+  const teamIds = collectIds(rows, (r) => r.team_a_id ?? r.team_b_id)
+  const topicIds = collectIds(rows, (r) => r.topic_id)
+  const eventIds = collectIds(rows, (r) => r.event_id)
+  const roundIds = collectIds(rows, (r) => r.round_id)
+
+  const teamNames = new Map<string, string>()
+  if (teamIds.length) {
+    const placeholders = teamIds.map(() => '?').join(',')
+    for (const r of db.prepare(`SELECT id, name FROM teams WHERE id IN (${placeholders})`).all(...teamIds) as Array<{ id: string; name: string }>) {
+      teamNames.set(r.id, r.name)
+    }
+  }
+  const topicTitles = new Map<string, string>()
+  if (topicIds.length) {
+    const placeholders = topicIds.map(() => '?').join(',')
+    for (const r of db.prepare(`SELECT id, title FROM topics WHERE id IN (${placeholders})`).all(...topicIds) as Array<{ id: string; title: string }>) {
+      topicTitles.set(r.id, r.title)
+    }
+  }
+  const eventNames = new Map<string, string>()
+  if (eventIds.length) {
+    const placeholders = eventIds.map(() => '?').join(',')
+    for (const r of db.prepare(`SELECT id, name FROM events WHERE id IN (${placeholders})`).all(...eventIds) as Array<{ id: string; name: string }>) {
+      eventNames.set(r.id, r.name)
+    }
+  }
+  const roundNames = new Map<string, string>()
+  if (roundIds.length) {
+    const placeholders = roundIds.map(() => '?').join(',')
+    for (const r of db.prepare(`SELECT id, name FROM rounds WHERE id IN (${placeholders})`).all(...roundIds) as Array<{ id: string; name: string }>) {
+      roundNames.set(r.id, r.name)
+    }
+  }
+
+  return rows.map((row) => ({
+    team_a_name: row.team_a_id ? teamNames.get(row.team_a_id) ?? null : null,
+    team_b_name: row.team_b_id ? teamNames.get(row.team_b_id) ?? null : null,
+    topic_title: row.topic_id ? topicTitles.get(row.topic_id) ?? null : null,
+    event_name: row.event_id ? eventNames.get(row.event_id) ?? row.event_id : row.event_id,
+    round_name: row.round_id ? roundNames.get(row.round_id) ?? null : null
+  }))
+}
+
+function resolveNames(row: NameRowInput): ResolvedNames {
+  return resolveNamesBatch([row])[0]
 }
 
 // ============================================================
@@ -302,6 +404,10 @@ function updateMatch(id: string, data: MatchUpdateInput): Match | null {
     const rec = data.recordings !== undefined
       ? data.recordings
       : boundRecordingsFromMeta(data.recordingMeta)
+    // governance 12：写前校验 recording_meta（兼容新 BoundRecording[] / 旧 MatchRecordingMeta / null
+    // 三种形态的宽容降级），非法结构拒绝写入，避免非法 JSON 入库。
+    const v = validateRecordingMeta(rec)
+    if (!v.ok) throw new AppError('VALIDATION', v.error, v.error)
     sets.push('recording_meta = ?')
     vals.push(rec === null || (Array.isArray(rec) && rec.length === 0)
       ? null
@@ -408,12 +514,12 @@ function getMatchById(id: string): Match | null {
 
 function listMatchesByEvent(eventId: string): Match[] {
   const rows = getDb().prepare(`${SELECT_SQL} WHERE m.event_id = ? ORDER BY m.match_number ASC, m.created_at ASC`).all(eventId) as MatchRow[]
-  return rows.map((r) => hydrate(rowToMatch(r)))
+  return hydrateMany(rows.map(rowToMatch))
 }
 
 function listMatchesByRound(roundId: string): Match[] {
   const rows = getDb().prepare(`${SELECT_SQL} WHERE m.round_id = ? ORDER BY m.match_number ASC, m.created_at ASC`).all(roundId) as MatchRow[]
-  return rows.map((r) => hydrate(rowToMatch(r)))
+  return hydrateMany(rows.map(rowToMatch))
 }
 
 // ============================================================
@@ -554,6 +660,28 @@ function saveAiReview(matchId: string, review: MatchAiReview): Match | null {
 }
 
 // ============================================================
+// 备份与恢复（全量数据导入导出）
+// ============================================================
+
+/**
+ * 备份用：一次性返回 matches / match_judges / match_judge_votes 三张表的全部行。
+ * 返回 DB 原始格式（recording_meta / ai_review / stage_scores 等为 JSON 字符串）。
+ * 导入路径由 backup-service 按 TABLE_COLUMNS 白名单 + bulkInsert 通用处理。
+ */
+function findAllForBackup(): {
+  matches: Record<string, unknown>[]
+  match_judges: Record<string, unknown>[]
+  match_judge_votes: Record<string, unknown>[]
+} {
+  const db = getDb()
+  return {
+    matches: db.prepare('SELECT * FROM matches').all() as Record<string, unknown>[],
+    match_judges: db.prepare('SELECT * FROM match_judges').all() as Record<string, unknown>[],
+    match_judge_votes: db.prepare('SELECT * FROM match_judge_votes').all() as Record<string, unknown>[]
+  }
+}
+
+// ============================================================
 // 导出
 // ============================================================
 
@@ -569,5 +697,6 @@ export const matchRepo = {
   computeResult,
   setAiReview: saveAiReview,
   linkSession,
-  upsertFromDraw
+  upsertFromDraw,
+  findAllForBackup
 }

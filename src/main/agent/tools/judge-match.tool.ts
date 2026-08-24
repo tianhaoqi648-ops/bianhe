@@ -25,6 +25,7 @@ import { FIVE_DIMENSIONS, getJudgeAnonLabel, getJudgeById, type DimensionKey } f
 import { getStageDefinition, type DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { buildJudgeProvenance } from '../provenance'
 import {
   buildMatchUserPrompt,
   buildJudgeSystemPrompt,
@@ -438,7 +439,15 @@ export const judgeMatchTool: ToolDefinition<JudgeMatchArgs, JudgeMatchResult | J
             judgeId: judge.id,
             toolName: 'judge_match',
             topic,
-            resultJson: result as unknown as Record<string, unknown>
+            resultJson: result as unknown as Record<string, unknown>,
+            // provenance：注入 LLM 模型/版本 + 输入材料 hash（含整场时间线/转录）
+            provenance: buildJudgeProvenance({
+              config,
+              toolName: 'judge_match',
+              topic,
+              inputs: [args.transcript, JSON.stringify(args.timeline ?? [])],
+              extra: args.formatHint
+            })
           })
         } catch {
           // 忽略历史写入失败

@@ -36,7 +36,7 @@ import type {
   AgentMessageRecord
 } from '@shared/agent-types'
 import { chatStream, LLMError } from './llm-client'
-import { list, execute, getRiskLevel, getTier, get } from './tool-registry'
+import { list, execute, getRiskLevel, getTier, get, createGrant } from './tool-registry'
 import {
   addMessage,
   buildLLMMessages,
@@ -604,12 +604,20 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
       }
 
       // 执行工具（AI 裁判 2026-08-18：透传 config/signal 供需调用 LLM 的工具使用；
-      // AI Agent v1.5.0：非 read 工具按权限等级传递 grants，作为默认只读策略的门控兑现。
-      // read 工具直接放行；write / dangerous 工具须在此前经用户确认（见上）或设置页自动放行）
+      // governance Task 9：非 read 工具在用户确认后，由主进程创建并登记一次性 grant，
+      // 将 grantId 交给 execute 自校验（存在/未过期/session/tool/argsHash/tier 均匹配），
+      // 而非仅向 execute 声明 grants。read 工具直接放行，不登记 grant。
       const tier = getTier(toolName)
-      const grants = tier !== 'read' ? [{ tier }] : []
+      // 一次性 grant：绑定归属会话 / 工具 / 实际执行参数 / 授权级别 / 有效期。
+      // 用 effectiveArgs（可能被用户在确认框中修改）作为绑定入参，与 execute 实际入参一致。
+      const grant = tier !== 'read' ? createGrant({ sessionId, toolName, args: effectiveArgs, tier }) : undefined
       try {
-        const result = await execute(toolName, effectiveArgs, { config, signal, grants })
+        const result = await execute(toolName, effectiveArgs, {
+          config,
+          signal,
+          sessionId,
+          grantId: grant?.grantId
+        })
         if (isToolResultFailure(result)) {
           // 工具正常返回但显式声明业务失败（success:false）：视为失败，反馈失败信息给 LLM。
           // 不标成功、不中断循环、不污染会话（与「抛错」路径同语义）。

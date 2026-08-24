@@ -76,13 +76,33 @@ vi.mock('../../db/repository/judge-history.repo', () => ({
     findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
   }
 }))
+vi.mock('../../db/repository/agent-session.repo', () => ({
+  agentSessionRepo: {
+    findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
+  }
+}))
+vi.mock('../../db/repository/agent-message.repo', () => ({
+  agentMessageRepo: {
+    findAllForBackup: vi.fn<() => Array<Record<string, unknown>>>()
+  }
+}))
 vi.mock('../../db/repository/topic-group.repo', () => ({
   topicGroupRepo: {
     findAllForBackup: vi.fn<() => {
       topic_groups: Array<Record<string, unknown>>
       topic_group_items: Array<Record<string, unknown>>
       event_topic_groups: Array<Record<string, unknown>>
-    }>(() => ({ topic_groups: [], topic_group_items: [], event_topic_groups: [] }))
+      round_topic_groups: Array<Record<string, unknown>>
+    }>(() => ({ topic_groups: [], topic_group_items: [], event_topic_groups: [], round_topic_groups: [] }))
+  }
+}))
+vi.mock('../../db/repository/match.repo', () => ({
+  matchRepo: {
+    findAllForBackup: vi.fn<() => {
+      matches: Array<Record<string, unknown>>
+      match_judges: Array<Record<string, unknown>>
+      match_judge_votes: Array<Record<string, unknown>>
+    }>(() => ({ matches: [], match_judges: [], match_judge_votes: [] }))
   }
 }))
 vi.mock('../../services/badge-storage', () => ({
@@ -126,7 +146,12 @@ vi.mock('../../db/repository/utils', () => ({
     topic_groups: ['id'],
     topic_group_items: ['group_id', 'topic_id'],
     event_topic_groups: ['event_id', 'group_id'],
-    round_topic_groups: ['round_id', 'group_id']
+    round_topic_groups: ['round_id', 'group_id'],
+    matches: ['id'],
+    match_judges: ['id', 'match_id', 'name'],
+    match_judge_votes: ['id', 'match_id', 'judge_id'],
+    agent_sessions: ['id', 'title', 'createdAt', 'updatedAt', 'lastMessageText', 'lastMessageAt', 'contextJson'],
+    agent_messages: ['id', 'session_id', 'role', 'content', 'tool_calls_json', 'tool_results_json', 'created_at', 'seq']
   } as Record<string, string[]>
 }))
 
@@ -157,7 +182,8 @@ import {
   previewImport,
   importBackup,
   writeBackupFile,
-  getBackupStats
+  getBackupStats,
+  runForeignKeyCheck
 } from '../backup-service'
 import { topicRepo } from '../../db/repository/topic.repo'
 import { eventRepo } from '../../db/repository/event.repo'
@@ -170,7 +196,10 @@ import { importBatchRepo } from '../../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../../db/repository/undo-log.repo'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { agentSessionRepo } from '../../db/repository/agent-session.repo'
+import { agentMessageRepo } from '../../db/repository/agent-message.repo'
 import { topicGroupRepo } from '../../db/repository/topic-group.repo'
+import { matchRepo } from '../../db/repository/match.repo'
 import {
   findForBackup as badgeFindForBackup,
   encodeBadgeFiles as badgeEncodeBadgeFiles,
@@ -307,6 +336,12 @@ describe('backup-service', () => {
       vi.mocked(judgeHistoryRepo.findAllForBackup).mockReturnValue([
         { id: 'jh1', judge_id: 'j1', result_json: '{"winner":"aff"}' }
       ])
+      vi.mocked(agentSessionRepo.findAllForBackup).mockReturnValue([
+        { id: 'ag1', title: '会话1', createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastMessageText: '你好', lastMessageAt: '2026-08-01T00:00:00.000Z', contextJson: null }
+      ])
+      vi.mocked(agentMessageRepo.findAllForBackup).mockReturnValue([
+        { id: 'msg1', session_id: 'ag1', role: 'user', content: '辩题是什么', tool_calls_json: null, tool_results_json: null, created_at: '2026-08-01T00:00:00.000Z', seq: 1 }
+      ])
       vi.mocked(topicGroupRepo.findAllForBackup).mockReturnValue({
         topic_groups: [{ id: 'tg1', name: '默认题库', is_default: 1 }],
         topic_group_items: [{ group_id: 'tg1', topic_id: 't1' }],
@@ -319,6 +354,11 @@ describe('backup-service', () => {
         fileNames: ['a.png']
       })
       vi.mocked(badgeEncodeBadgeFiles).mockReturnValue({ 'a.png': 'base64badge' })
+      vi.mocked(matchRepo.findAllForBackup).mockReturnValue({
+        matches: [{ id: 'm1', event_id: 'e1', status: 'resulted', winner: 'aff' }],
+        match_judges: [{ id: 'mj1', match_id: 'm1', name: '评委A' }],
+        match_judge_votes: [{ id: 'mv1', match_id: 'm1', judge_id: 'mj1', judge_system: 'three_votes' }]
+      })
     })
 
     it('全类别导出包含所有表', () => {
@@ -427,6 +467,39 @@ describe('backup-service', () => {
       vi.mocked(bellAssetRepo.encodeBellFiles).mockClear()
       exportBackup({ categories: ['topics'] })
       expect(bellAssetRepo.encodeBellFiles).not.toHaveBeenCalled()
+    })
+
+    it('match_records 类别导出 matches/match_judges/match_judge_votes 三表', () => {
+      const pkg = exportBackup({ categories: ['match_records'] })
+
+      expect(pkg.tables.matches).toEqual([
+        { id: 'm1', event_id: 'e1', status: 'resulted', winner: 'aff' }
+      ])
+      expect(pkg.tables.match_judges).toEqual([{ id: 'mj1', match_id: 'm1', name: '评委A' }])
+      expect(pkg.tables.match_judge_votes).toEqual([
+        { id: 'mv1', match_id: 'm1', judge_id: 'mj1', judge_system: 'three_votes' }
+      ])
+      // 未勾选其他类别时不调用其 repo
+      expect(eventRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(drawRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(timerSessionRepo.findAllForBackup).not.toHaveBeenCalled()
+    })
+
+    it('agent_sessions 类别导出 agent_sessions + agent_messages 两表', () => {
+      const pkg = exportBackup({ categories: ['agent_sessions'] })
+
+      // 会话元数据
+      expect(pkg.tables.agent_sessions).toEqual([
+        { id: 'ag1', title: '会话1', createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastMessageText: '你好', lastMessageAt: '2026-08-01T00:00:00.000Z', contextJson: null }
+      ])
+      // 消息正文（含用户输入的辩题等对话内容）
+      expect(pkg.tables.agent_messages).toEqual([
+        { id: 'msg1', session_id: 'ag1', role: 'user', content: '辩题是什么', tool_calls_json: null, tool_results_json: null, created_at: '2026-08-01T00:00:00.000Z', seq: 1 }
+      ])
+      // 未勾选其他类别时不调用其 repo
+      expect(judgeHistoryRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(topicGroupRepo.findAllForBackup).not.toHaveBeenCalled()
+      expect(badgeFindForBackup).not.toHaveBeenCalled()
     })
   })
 
@@ -737,6 +810,124 @@ describe('backup-service', () => {
         )
         expect(result.inserted).toBe(2)
         expect(result.badgeFilesRestored).toBe(0)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('agent_sessions 类别清空 agent_messages(先) + agent_sessions(后)，再顺序还原', () => {
+      const pkg = makePkg({
+        categories: ['agent_sessions'],
+        tables: {
+          agent_sessions: [
+            { id: 'ag1', title: '会话1', createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', lastMessageText: '', lastMessageAt: null, contextJson: null }
+          ],
+          agent_messages: [
+            { id: 'msg1', session_id: 'ag1', role: 'user', content: '辩题是什么', tool_calls_json: null, tool_results_json: null, created_at: '2026-08-01T00:00:00.000Z', seq: 1 }
+          ]
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(1)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['agent_sessions']
+        }
+        const result = importBackup(params)
+
+        // clear_rebuild 下反向清空：先子表 agent_messages，再父表 agent_sessions
+        const clearedTables = vi.mocked(clearTable).mock.calls.map((c) => c[0])
+        expect(clearedTables).toContain('agent_messages')
+        expect(clearedTables).toContain('agent_sessions')
+        expect(clearedTables.indexOf('agent_messages')).toBeLessThan(clearedTables.indexOf('agent_sessions'))
+        // 顺序还原：先 agent_sessions，再 agent_messages
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'agent_sessions',
+          expect.arrayContaining([expect.objectContaining({ id: 'ag1', title: '会话1' })]),
+          'clear_rebuild'
+        )
+        expect(bulkInsert).toHaveBeenCalledWith(
+          'agent_messages',
+          expect.arrayContaining([expect.objectContaining({ id: 'msg1', session_id: 'ag1', content: '辩题是什么' })]),
+          'clear_rebuild'
+        )
+        expect(result.inserted).toBe(2)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('match_records 类别三表通过 clear_rebuild 清空 + bulkInsert 还原', () => {
+      const pkg = makePkg({
+        categories: ['match_records'],
+        tables: {
+          matches: [{ id: 'm1', event_id: 'e1', status: 'resulted', winner: 'aff' }],
+          match_judges: [{ id: 'mj1', match_id: 'm1', name: '评委A' }],
+          match_judge_votes: [{ id: 'mv1', match_id: 'm1', judge_id: 'mj1', judge_system: 'three_votes' }]
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(1)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'clear_rebuild',
+          categories: ['match_records']
+        }
+        const result = importBackup(params)
+
+        // 清空：按反向「先子表后父表」——votes → judges → matches
+        const clearedTables = vi.mocked(clearTable).mock.calls.map((c) => c[0])
+        expect(clearedTables).toEqual(['match_judge_votes', 'match_judges', 'matches'])
+        // 写入：matches → match_judges → match_judge_votes
+        expect(bulkInsert).toHaveBeenCalledWith('matches', expect.any(Array), 'clear_rebuild')
+        expect(bulkInsert).toHaveBeenCalledWith('match_judges', expect.any(Array), 'clear_rebuild')
+        expect(bulkInsert).toHaveBeenCalledWith('match_judge_votes', expect.any(Array), 'clear_rebuild')
+        expect(result.inserted).toBe(3)
+        // 无孤立引用 → fkInvalid 为 false
+        expect(result.fkInvalid).toBe(false)
+        expect(result.fkViolationCount).toBe(0)
+      } finally {
+        cleanup(filePath)
+      }
+    })
+
+    it('恢复后 foreign_key_check 有 orphan → 不静默成功，明确返回部分恢复（fkInvalid=true）', () => {
+      const pkg = makePkg({
+        categories: ['match_records'],
+        tables: {
+          matches: [
+            // event_id 指向不存在的赛事 → 恢复后成为孤立引用
+            { id: 'm-orphan', event_id: 'no-such-event', status: 'resulted' }
+          ],
+          match_judges: [],
+          match_judge_votes: []
+        }
+      })
+      const filePath = writeTempJson(pkg)
+      try {
+        vi.mocked(bulkInsert).mockReturnValue(1)
+        // 模拟 foreign_key_check 返回一条孤立引用（skip_existing 不切外键，仅调 foreign_key_check）
+        mockPragma.mockReturnValueOnce([
+          { table: 'matches', rowid: 1, parent: 'events', fkid: 0 }
+        ] as never)
+
+        const params: BackupImportParams = {
+          filePath,
+          strategy: 'skip_existing',
+          categories: ['match_records']
+        }
+        const result = importBackup(params)
+
+        // 明确标记失败/部分恢复，而非静默成功
+        expect(result.fkInvalid).toBe(true)
+        expect(result.fkViolationCount).toBe(1)
+        expect(result.fkViolations[0]).toContain('matches')
+        expect(result.fkViolations[0]).toContain('events')
       } finally {
         cleanup(filePath)
       }
@@ -1165,6 +1356,30 @@ describe('backup-service', () => {
       expect(stats.topics).toBe(0)
       expect(stats.events).toBe(0)
       expect(stats.settings).toBe(0)
+    })
+  })
+
+  // ============================================================
+  // runForeignKeyCheck
+  // ============================================================
+  describe('runForeignKeyCheck（恢复后完整性校验）', () => {
+    it('无孤立引用 → invalid=false', () => {
+      // 默认 mockPragma 返回 []（无违规）
+      const res = runForeignKeyCheck()
+      expect(res.invalid).toBe(false)
+      expect(res.count).toBe(0)
+      expect(res.violations).toEqual([])
+    })
+
+    it('有孤立引用 → 返回违规描述', () => {
+      mockPragma.mockReturnValueOnce([
+        { table: 'match_judges', rowid: 3, parent: 'matches', fkid: 0 }
+      ] as never)
+      const res = runForeignKeyCheck()
+      expect(res.invalid).toBe(true)
+      expect(res.count).toBe(1)
+      expect(res.violations[0]).toContain('match_judges')
+      expect(res.violations[0]).toContain('matches')
     })
   })
 })

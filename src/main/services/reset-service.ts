@@ -18,6 +18,7 @@ import { undoLogRepo } from '../db/repository/undo-log.repo'
 import { formatRepo } from '../db/repository/format.repo'
 import { timerSessionRepo } from '../db/repository/timer-session.repo'
 import { bellAssetRepo } from '../db/repository/bell-asset.repo'
+import { deleteBellFile } from './bell-storage'
 import { getDb } from '../db'
 import { OFFICIAL_TOPIC_SETTINGS_KEYS } from '../../shared/settings-defaults'
 import type { ResetDataRequest, ResetDataResponse } from '../../shared/types'
@@ -104,8 +105,32 @@ export function resetData(req: ResetDataRequest): ResetDataResponse {
   }
 
   // 12. 自定义铃声（bell_assets 表 + userData/bells/ 文件）
+  //     Governance Task 6：repository 只删 DB 行；文件删除与失败审计在此编排
   if (req.dataOptions.customBells) {
+    const assetsToDelete = bellAssetRepo.listAll()
     res.customBellsDeleted = bellAssetRepo.clearAll()
+    for (const a of assetsToDelete) {
+      try {
+        deleteBellFile(a.filePath)
+      } catch (e) {
+        console.error('[reset-service] clearAll: 删除铃声文件失败', a.filePath, e)
+        try {
+          auditRepo.addLog({
+            action: 'delete',
+            target_type: 'bell_asset',
+            target_id: a.id,
+            operator: 'system',
+            detail: {
+              action: 'bell_file_delete_failed',
+              file_path: a.filePath,
+              error: e instanceof Error ? e.message : String(e)
+            }
+          })
+        } catch (logErr) {
+          console.error('[reset-service] clearAll: 写入 audit_log 失败', logErr)
+        }
+      }
+    }
   }
 
   // 13. 写一条审计日志记录本次重置操作（在清空 audit_logs 之后再写）

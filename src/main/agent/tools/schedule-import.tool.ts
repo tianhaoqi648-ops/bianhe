@@ -23,6 +23,7 @@ import type {
 import { eventRepo } from '@main/db/repository/event.repo'
 import { matchRepo } from '@main/db/repository/match.repo'
 import { topicRepo } from '@main/db/repository/topic.repo'
+import { getDb } from '@main/db'
 import {
   applyScheduleDiff,
   buildScheduleRows,
@@ -160,6 +161,9 @@ export const scheduleImportTool: ToolDefinition<
         eventId,
         ctx,
         matchIdsByKey: idsByKey,
+        // governance 原子边界：整个「应用赛程差异」在单个 db.transaction 内执行，
+        // 成功全部提交，任一比赛写入失败整批回滚零残留。
+        transaction: (run) => getDb().transaction(run)(),
         ops: {
           create: (d) => {
             matchRepo.create({

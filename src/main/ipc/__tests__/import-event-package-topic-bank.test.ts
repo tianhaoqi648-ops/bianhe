@@ -70,7 +70,8 @@ vi.mock('../../db/repository/topic-group.repo', () => ({
     ensureTopicsInDefaultGroup: vi.fn(),
     ensureGroupById: mocks.mockEnsureGroupById,
     bindEventGroups: mocks.mockBindEventGroups,
-    bindRoundGroups: mocks.mockBindRoundGroups
+    bindRoundGroups: mocks.mockBindRoundGroups,
+    getDefault: vi.fn(() => ({ id: 'default-group', name: '默认题库', isDefault: true, created_at: '2026-01-01T00:00:00.000Z' }))
   }
 }))
 
@@ -204,7 +205,9 @@ describe('赛事包导入恢复题库（T7）', () => {
     const { data } = await importPackage('rename')
 
     expect(mocks.mockEnsureGroupById).not.toHaveBeenCalled()
-    expect(mocks.mockBindEventGroups).not.toHaveBeenCalled()
+    // createEvent 仍会为默认题库做一次绑定（Governance-6：创建即绑定默认题库）；
+    // 但包的题库恢复逻辑被跳过，故以下包驱动绑定不应发生
+    expect(mocks.mockBindEventGroups).toHaveBeenCalledTimes(1)
     expect(mocks.mockBindRoundGroups).not.toHaveBeenCalled()
     expect(mocks.mockAddTopicsToGroup).not.toHaveBeenCalled()
     expect(data.eventId).toBe('new-event-id')

@@ -317,12 +317,32 @@ export const useEventStore = create<EventState>((set) => ({
   assignTeamToGroup: async (teamId, groupId) => {
     const res = await window.eventAPI.assignTeamToGroup(teamId, groupId);
     extractError(res);
+    // Governance-8.3：单队分配接入 undo
+    undoManager.pushEntry({
+      storeName: 'event',
+      action: 'assignGroup',
+      targetType: 'team',
+      targetId: teamId,
+      label: '移动队伍到分组',
+      logId: res._undoLogId ?? undefined
+    });
     return true;
   },
 
   randomAssignGroups: async (params) => {
     const res = await window.eventAPI.randomAssignGroups(params);
     const result = extractError<RandomAssignGroupResult>(res);
+    // Governance-8.3：非 dry-run 的随机分组接入 undo；dry-run 为纯预览且主进程不入 undo_log，跳过入栈
+    if (!params.dry_run) {
+      undoManager.pushEntry({
+        storeName: 'event',
+        action: 'randomAssignGroup',
+        targetType: 'event',
+        targetId: params.event_id,
+        label: '随机分组',
+        logId: res._undoLogId ?? undefined
+      });
+    }
     // 成功后刷新 groups 和 teams 状态
     const state = useEventStore.getState();
     await Promise.all([

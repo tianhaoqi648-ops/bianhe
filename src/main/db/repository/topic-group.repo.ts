@@ -18,6 +18,7 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
+import { validateBankConfig } from '../../../shared/config-validator'
 
 /** 默认题库固定 id（与 migration 20260913 种子共用，保证幂等）。 */
 export const DEFAULT_TOPIC_GROUP_ID = 'default-group'
@@ -218,6 +219,7 @@ function getDefault(): TopicGroup {
 
 /**
  * 把若干辩题加入题组（INSERT OR IGNORE，重复自动跳过）。
+ * 在同一事务内逐条写入，任一条失败整批回滚（不留前 N-1）。
  * @returns 实际新增的成员数
  */
 function addTopicsToGroup(groupId: string, topicIds: string[]): number {
@@ -227,14 +229,18 @@ function addTopicsToGroup(groupId: string, topicIds: string[]): number {
     'INSERT OR IGNORE INTO topic_group_items (group_id, topic_id) VALUES (?, ?)'
   )
   let added = 0
-  for (const tid of topicIds) {
-    added += stmt.run(groupId, tid).changes
-  }
+  const run = db.transaction(() => {
+    for (const tid of topicIds) {
+      added += stmt.run(groupId, tid).changes
+    }
+  })
+  run()
   return added
 }
 
 /**
  * 从题组移除若干辩题。
+ * 在同一事务内逐条写入，任一条失败整批回滚（不留前 N-1）。
  * @returns 实际移除的成员数
  */
 function removeTopicsFromGroup(groupId: string, topicIds: string[]): number {
@@ -242,9 +248,12 @@ function removeTopicsFromGroup(groupId: string, topicIds: string[]): number {
   const db = getDb()
   const stmt = db.prepare('DELETE FROM topic_group_items WHERE group_id = ? AND topic_id = ?')
   let removed = 0
-  for (const tid of topicIds) {
-    removed += stmt.run(groupId, tid).changes
-  }
+  const run = db.transaction(() => {
+    for (const tid of topicIds) {
+      removed += stmt.run(groupId, tid).changes
+    }
+  })
+  run()
   return removed
 }
 
@@ -286,6 +295,7 @@ function listTopicsByGroup(groupId: string): GroupTopic[] {
 
 /**
  * 给赛事绑定若干题组（INSERT OR IGNORE，重复自动跳过）。
+ * 在同一事务内逐条写入，任一条失败整批回滚（不留前 N-1）。
  * @returns 实际新增的绑定数
  */
 function bindEventGroups(eventId: string, groupIds: string[]): number {
@@ -295,9 +305,12 @@ function bindEventGroups(eventId: string, groupIds: string[]): number {
     'INSERT OR IGNORE INTO event_topic_groups (event_id, group_id) VALUES (?, ?)'
   )
   let added = 0
-  for (const gid of groupIds) {
-    added += stmt.run(eventId, gid).changes
-  }
+  const run = db.transaction(() => {
+    for (const gid of groupIds) {
+      added += stmt.run(eventId, gid).changes
+    }
+  })
+  run()
   return added
 }
 
@@ -337,6 +350,7 @@ function listEventIdsByGroup(groupId: string): string[] {
 
 /**
  * 给轮次绑定若干题组（INSERT OR IGNORE，重复自动跳过）。
+ * 在同一事务内逐条写入，任一条失败整批回滚（不留前 N-1）。
  * @returns 实际新增的绑定数
  */
 function bindRoundGroups(roundId: string, groupIds: string[]): number {
@@ -346,9 +360,12 @@ function bindRoundGroups(roundId: string, groupIds: string[]): number {
     'INSERT OR IGNORE INTO round_topic_groups (round_id, group_id) VALUES (?, ?)'
   )
   let added = 0
-  for (const gid of groupIds) {
-    added += stmt.run(roundId, gid).changes
-  }
+  const run = db.transaction(() => {
+    for (const gid of groupIds) {
+      added += stmt.run(roundId, gid).changes
+    }
+  })
+  run()
   return added
 }
 
@@ -388,42 +405,34 @@ function listRoundsByGroup(groupId: string): string[] {
 
 /**
  * 读某赛事的选题模式配置。
- * bank_config 缺失/非法时回退到默认 single 模式（既有单一库行为）。
+ * bank_config 缺失/非法时回退到默认 single 模式（既有单一库行为；governance 12 降级兼容）。
  */
 function getEventBankConfig(eventId: string): EventBankConfig {
   const row = getDb()
     .prepare('SELECT bank_config FROM events WHERE id = ?')
     .get(eventId) as { bank_config?: string | null } | undefined
-  const parsed = safeJsonParse<EventBankConfig | null>(row?.bank_config ?? null, null)
-  if (!parsed || typeof parsed !== 'object' || !parsed.mode) {
-    return { mode: DEFAULT_DRAW_BANK_MODE }
-  }
-  const config: EventBankConfig = { mode: parsed.mode }
-  if (Array.isArray(parsed.priorityOrder)) config.priorityOrder = parsed.priorityOrder
-  if (parsed.roundBanks && typeof parsed.roundBanks === 'object') {
-    config.roundBanks = parsed.roundBanks
-  }
-  return config
+  const parsed = safeJsonParse<unknown>(row?.bank_config ?? null, null)
+  const result = validateBankConfig(parsed)
+  // 缺失→默认 single；存在但非法→降级默认 single（读路径不做静默放行，仍给出语义化默认）
+  return result.ok ? result.value : { mode: DEFAULT_DRAW_BANK_MODE }
 }
 
 /**
  * 写某赛事的选题模式配置（序列化到 events.bank_config）。
- * 事件不存在返回 undefined；成功返回写入后的配置。
+ * 写路径经 validateBankConfig 校验：非法结构抛出明确错误（governance 12 拒绝），
+ * 缺失 mode → 合理默认 single。事件不存在返回 undefined；成功返回写入后的配置。
  */
 function setEventBankConfig(
   eventId: string,
   config: EventBankConfig
 ): EventBankConfig | undefined {
-  const mode = config?.mode ?? DEFAULT_DRAW_BANK_MODE
-  const payload: EventBankConfig = { mode }
-  if (Array.isArray(config?.priorityOrder)) payload.priorityOrder = config.priorityOrder
-  if (config?.roundBanks && typeof config.roundBanks === 'object') {
-    payload.roundBanks = config.roundBanks
-  }
-  const result = getDb()
+  const result = validateBankConfig(config)
+  if (!result.ok) throw new Error(result.error)
+  const payload = result.value
+  const dbResult = getDb()
     .prepare('UPDATE events SET bank_config = ? WHERE id = ?')
     .run(JSON.stringify(payload), eventId)
-  if (result.changes === 0) return undefined
+  if (dbResult.changes === 0) return undefined
   return payload
 }
 

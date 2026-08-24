@@ -75,7 +75,25 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   topic_groups: ['id', 'name', 'is_default', 'created_at'],
   topic_group_items: ['group_id', 'topic_id'],
   event_topic_groups: ['event_id', 'group_id'],
-  round_topic_groups: ['round_id', 'group_id']
+  round_topic_groups: ['round_id', 'group_id'],
+  matches: [
+    'id', 'event_id', 'round_id', 'match_number', 'team_a_id', 'team_b_id', 'topic_id',
+    'stance_a', 'stance_b', 'draw_item_id', 'session_id', 'recording_ref', 'recording_meta',
+    'status', 'winner', 'aff_score', 'neg_score', 'best_speaker', 'notes', 'ai_review',
+    'format_id', 'judge_system', 'created_at', 'updated_at',
+    'team_a_name', 'team_b_name', 'topic_title', 'event_name', 'round_name'
+  ],
+  match_judges: ['id', 'match_id', 'name', 'sort_order', 'is_ai', 'created_at'],
+  match_judge_votes: [
+    'id', 'match_id', 'judge_id', 'judge_system', 'impression_vote', 'decision_vote',
+    'aff_total', 'neg_total', 'stage_scores', 'best_speaker', 'comment', 'created_at', 'updated_at'
+  ],
+  agent_sessions: [
+    'id', 'title', 'createdAt', 'updatedAt', 'lastMessageText', 'lastMessageAt', 'contextJson'
+  ],
+  agent_messages: [
+    'id', 'session_id', 'role', 'content', 'tool_calls_json', 'tool_results_json', 'created_at', 'seq'
+  ]
 }
 
 /**

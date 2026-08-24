@@ -16,6 +16,8 @@ interface UndoStoreState {
   canUndo: boolean
   canRedo: boolean
   lastActionLabel: string | null
+  // Governance-8.1：最近一次「该操作无法撤销」的操作摘要（best-effort）
+  notUndoableLabel: string | null
   // 执行态
   executing: boolean
   error: string | null
@@ -28,12 +30,14 @@ interface UndoStoreState {
   redo: () => Promise<void>
   syncFromManager: () => void
   clearError: () => void
+  clearNotUndoable: () => void
 }
 
 export const useUndoStore = create<UndoStoreState>((set, get) => ({
   canUndo: false,
   canRedo: false,
   lastActionLabel: null,
+  notUndoableLabel: null,
   executing: false,
   error: null,
   lastUndoResult: null,
@@ -89,15 +93,22 @@ export const useUndoStore = create<UndoStoreState>((set, get) => ({
   },
 
   syncFromManager: () => {
+    const last = undoManager.getLastNotUndoable()
     set({
       canUndo: undoManager.canUndo(),
       canRedo: undoManager.canRedo(),
       lastActionLabel: undoManager.getLastActionLabel(),
+      notUndoableLabel: last ? last.label : null,
       tick: get().tick + 1
     })
   },
 
-  clearError: () => set({ error: null })
+  clearError: () => set({ error: null }),
+
+  clearNotUndoable: () => {
+    undoManager.clearNotUndoable()
+    set({ notUndoableLabel: null })
+  }
 }))
 
 // 订阅 undoManager 状态变化，自动同步到 store

@@ -8,14 +8,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { RunToolRequest, LLMConfig } from '@shared/agent-types'
 
-const { mockGetDefinition, mockExecute } = vi.hoisted(() => ({
+const { mockGetDefinition, mockExecute, mockCreateGrant } = vi.hoisted(() => ({
   mockGetDefinition: vi.fn(),
-  mockExecute: vi.fn()
+  mockExecute: vi.fn(),
+  mockCreateGrant: vi.fn()
 }))
 
 vi.mock('../../agent/tool-registry', () => ({
   getDefinition: mockGetDefinition,
   execute: mockExecute,
+  createGrant: mockCreateGrant,
   ToolPermissionError: class ToolPermissionError extends Error {
     code = 'permission_denied'
     constructor(toolName: string, tier: string) {
@@ -53,7 +55,9 @@ function makeReq(overrides: Partial<RunToolRequest> = {}): RunToolRequest {
 beforeEach(() => {
   mockGetDefinition.mockReset()
   mockExecute.mockReset()
+  mockCreateGrant.mockReset()
   mockGetDefinition.mockImplementation((name: string) => ({ name } as never))
+  mockCreateGrant.mockImplementation(() => ({ grantId: 'gr-test' }))
 })
 
 describe('白名单校验', () => {

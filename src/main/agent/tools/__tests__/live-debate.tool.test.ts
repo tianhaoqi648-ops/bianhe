@@ -237,4 +237,22 @@ describe('judge_live：异常与历史写入', () => {
     expect(fail.success).toBe(false)
     expect(mockJudgeHistoryCreate).toHaveBeenCalledTimes(1)
   })
+
+  it('judge_live 历史含 provenance（provider/model/mode=live/inputHash 确定性）', async () => {
+    mockChat.mockResolvedValue({ role: 'assistant', content: '某段发言' })
+    const ok = await liveDebateTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(ok.success).toBe(true)
+    const input = mockJudgeHistoryCreate.mock.calls[0][0]
+    expect(input.provenance).toBeTruthy()
+    expect(input.provenance.provider).toBe('openai')
+    expect(input.provenance.model).toBe('gpt-4o-mini')
+    expect(input.provenance.mode).toBe('live')
+    expect(input.provenance.inputHash).toMatch(/^[0-9a-f]{8}$/)
+
+    mockChat.mockResolvedValue({ role: 'assistant', content: '某段发言' })
+    await liveDebateTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(mockJudgeHistoryCreate.mock.calls[1][0].provenance.inputHash).toBe(
+      input.provenance.inputHash
+    )
+  })
 })

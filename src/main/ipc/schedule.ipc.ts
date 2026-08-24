@@ -19,6 +19,7 @@ import type {
   ScheduleDiffPreview,
   ScheduleRow
 } from '../../shared/types'
+import { getDb } from '../db'
 import { eventRepo } from '../db/repository/event.repo'
 import { matchRepo } from '../db/repository/match.repo'
 import { topicRepo } from '../db/repository/topic.repo'
@@ -140,6 +141,9 @@ export function registerScheduleIpc(): void {
           eventId: req.eventId,
           ctx,
           matchIdsByKey: idsByKey,
+          // governance 原子边界：整个「应用赛程差异」在单个 db.transaction 内执行，
+          // 成功全部提交，任一比赛写入失败整批回滚零残留。
+          transaction: (run) => getDb().transaction(run)(),
           ops: {
             create: (d) => {
               matchRepo.create({

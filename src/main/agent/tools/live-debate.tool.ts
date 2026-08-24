@@ -21,6 +21,7 @@ import type { LLMConfig } from '@shared/agent-types'
 import { JUDGE_IDS, getJudgeAnonLabel, getJudgeById, type JudgeProfile, type SparringDifficulty } from '@shared/ai-judges'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { buildJudgeProvenance } from '../provenance'
 import {
   LIVE_PHASE_NAMES,
   LIVE_PHASE_ORDER,
@@ -282,19 +283,31 @@ function parseLiveFinalize(raw: string): Pick<LiveDebateFinalizeResult, 'summary
 }
 
 /** 成功结果写评审历史（失败静默忽略，不打断工具返回）；role=sparring 由前端 toolName 推导 */
-function writeHistory(
-  judgeId: string,
-  side: 'aff' | 'neg',
-  topic: string,
+function writeHistory(p: {
+  judgeId: string
+  side: 'aff' | 'neg'
+  topic: string
   result: LiveDebateSuccess
-): void {
+  /** 当前 LLM 配置（注入 provenance 的 provider/model） */
+  config?: LLMConfig
+  /** 参与输入 hash 的实时对辩材料（稿/上下文/轮次轨迹/环节） */
+  material?: { speech?: string; context?: string; trace?: string; phase?: string }
+}): void {
   try {
     judgeHistoryRepo.create({
-      judgeId,
+      judgeId: p.judgeId,
       toolName: 'judge_live',
-      side,
-      topic,
-      resultJson: result as unknown as Record<string, unknown>
+      side: p.side,
+      topic: p.topic,
+      resultJson: p.result as unknown as Record<string, unknown>,
+      // provenance：注入 LLM 模型/版本 + 实时对辩输入（稿/上下文/轮次/环节）hash
+      provenance: buildJudgeProvenance({
+        config: p.config,
+        toolName: 'judge_live',
+        topic: p.topic,
+        inputs: [p.material?.speech, p.material?.context, p.material?.trace, p.material?.phase, p.side],
+        extra: p.result.difficulty
+      })
     })
   } catch {
     // 忽略历史写入失败
@@ -494,7 +507,19 @@ async function runLiveTurn(
     difficulty: p.difficulty,
     roundIndex: p.rounds.length + 1
   }
-  writeHistory(p.judge.id, p.side, p.topic, result)
+  writeHistory({
+    judgeId: p.judge.id,
+    side: p.side,
+    topic: p.topic,
+    result,
+    config,
+    material: {
+      speech: p.speech,
+      context: p.context,
+      trace: JSON.stringify(p.rounds),
+      phase: p.phase
+    }
+  })
   return result
 }
 
@@ -570,7 +595,19 @@ async function runLiveFinalize(
       roundsPlayed: p.rounds.length,
       ...parsed
     }
-    writeHistory(p.judge.id, p.side, p.topic, result)
+    writeHistory({
+      judgeId: p.judge.id,
+      side: p.side,
+      topic: p.topic,
+      result,
+      config,
+      material: {
+        speech: p.speech,
+        context: p.context,
+        trace: JSON.stringify(p.rounds),
+        phase: 'summary'
+      }
+    })
     return result
   } catch (e) {
     return {

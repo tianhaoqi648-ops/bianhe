@@ -14,6 +14,7 @@ import { ipcMain } from 'electron'
 import { topicRepo } from '../db/repository/topic.repo'
 import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
 import { auditRepo } from '../db/repository/audit.repo'
+import { revertBatchEditHistory } from '../services/batch-edit-service'
 import { withUndoLog } from '../services/undo-service'
 import { wrapWithUndo } from './utils'
 import {
@@ -142,7 +143,7 @@ export function registerBatchEditIpc(): void {
           return { success: false, error: '该记录已撤销' }
         }
 
-        const restoredCount = batchEditHistoryRepo.revertHistory(historyId)
+        const restoredCount = revertBatchEditHistory(historyId)
 
         // 审计日志
         try {

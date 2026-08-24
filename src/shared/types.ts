@@ -587,11 +587,13 @@ export type BackupCategory =
   | 'topics'
   | 'events'
   | 'draw_records'
+  | 'match_records'
   | 'timer'
   | 'formats_bells'
   | 'settings'
   | 'audit_history'
   | 'judge_history'
+  | 'agent_sessions'
   | 'badges'
   | 'topic_groups'
 
@@ -637,6 +639,15 @@ export interface BackupImportResult {
   bellFilesRestored: number
   /** 备份恢复时还原的队徽文件数（badges 类别） */
   badgeFilesRestored: number
+  /**
+   * 恢复后 PRAGMA foreign_key_check 是否发现孤立引用（true = 部分恢复/数据不完整）。
+   * 明确标记而非静默成功，供调用方判断恢复是否完整。
+   */
+  fkInvalid: boolean
+  /** 孤立引用条数（foreign_key_check 返回行数） */
+  fkViolationCount: number
+  /** 孤立引用详情（每项描述：table=..., rowid=..., 引用缺失父表=...） */
+  fkViolations: string[]
 }
 
 // ---------- 标签显示配置 ----------
@@ -1199,6 +1210,33 @@ export interface ExportScheduleRequest {
 // ---------- AI 裁判历史（judge_history，T1/T2） ----------
 
 /**
+ * 一条 AI 评审的 provenance（可溯源元数据，governance Task 10）。
+ * 记录「什么模型/版本/基于什么输入」产生该评审结果，便于复核与审计。
+ * 承载方式：judgeHistoryRepo 以保留键 __provenance 写入现有 result_json，
+ *   读取时拆出为独立字段（不新增 DB 列、不改已发布 migration）。
+ */
+export interface JudgeProvenance {
+  /** LLM 服务商（openai/qwen/kimi/zhipu/deepseek/custom/live，未知为 unknown） */
+  provider: string
+  /** 模型名（如 gpt-4o-mini） */
+  model: string
+  /** 评审 prompt 模板版本 */
+  promptVersion: string
+  /** 评审器/引擎版本 */
+  judgeVersion: string
+  /** 评审模式：whole / stage / live / coach / other */
+  mode: string
+  /** 输入 hash（确定性：对评审模式 + 辩题 + 输入材料计算） */
+  inputHash: string
+  /** 创建时间（ISO） */
+  createdAt: string
+  /** 评审温度（如有） */
+  temperature?: number
+  /** 输入材料版本（由辩题+模式确定性导出，可空） */
+  materialVersion?: string
+}
+
+/**
  * 一条 AI 裁判结果历史记录。
  * 对应 judge_history 表，工具执行成功自动落库，跨页/重启保留。
  */
@@ -1223,6 +1261,8 @@ export interface JudgeHistoryRecord {
   resultJson: Record<string, unknown> | null
   /** 失败信息（按 spec 仅存成功结果，备用） */
   error: string | null
+  /** 评审 provenance（可溯源元数据；历史记录缺失时为 null） */
+  provenance?: JudgeProvenance | null
 }
 
 /** 创建裁判历史的入参（id / createdAt 可省略，主进程自动补）。 */
@@ -1239,6 +1279,8 @@ export interface JudgeHistoryCreateInput {
   topic?: string | null
   resultJson?: Record<string, unknown> | null
   error?: string | null
+  /** 评审 provenance（工具执行时注入；缺省不写） */
+  provenance?: JudgeProvenance | null
 }
 
 /** 历史列表筛选（仅当字段非空时作为查询条件）。 */
@@ -1942,7 +1984,7 @@ export interface BatchEditRevertResult {
 export interface UndoLogEntry {
   id: string
   created_at: string
-  store_name: 'topic' | 'event' | 'draw' | 'format' | 'customField' | 'settings'
+  store_name: 'topic' | 'event' | 'draw' | 'format' | 'customField' | 'settings' | 'topicGroup'
   action: string
   target_type: string
   target_id: string | null

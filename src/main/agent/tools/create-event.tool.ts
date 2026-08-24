@@ -1,7 +1,7 @@
 // ============================================================
 // create-event.tool.ts — Agent 工具：创建赛事（Task 11.2）
 //
-// 调用 eventRepo.createEvent 写入赛事主体。
+// 调用 services/event-service.createEvent 写入赛事主体（含默认题库绑定）。
 //
 // 入参说明：
 //   - name      赛事名称（必填），直接传给 EventCreateInput.name
@@ -12,7 +12,7 @@
 // ============================================================
 
 import type { ToolDefinition } from '@shared/agent-types'
-import { eventRepo } from '@main/db/repository/event.repo'
+import { createEvent } from '@main/services/event-service'
 
 export const createEventTool: ToolDefinition = {
   name: 'create_event',
@@ -55,7 +55,7 @@ export const createEventTool: ToolDefinition = {
     // 3. 构造 EventCreateInput（仅包含 repo 支持的字段）
     //    format / teamCount 为 Agent 语义化输入，不传给 repo
     //    显式传 null 以满足 repo 的严格类型（start_date/end_date/status 非可选）
-    return eventRepo.createEvent({
+    return createEvent({
       name,
       start_date: null,
       end_date: null,

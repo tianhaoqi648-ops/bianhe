@@ -33,6 +33,7 @@ import { useEventStore } from '../stores/eventStore';
 import { useToast } from '../hooks/useToast';
 import { useTopicGroupStore } from '../stores/topicGroupStore';
 import { useTopicGroupFileOps } from '../hooks/useTopicGroupFileOps';
+import { undoManager } from '../utils/undo-manager';
 import TopicGroupTargetPicker from './TopicGroupTargetPicker';
 import EventBankConfigModal from './EventBankConfigModal';
 import type { Event, TopicGroup } from '../../../shared/types';
@@ -264,6 +265,15 @@ export default function EventTopicBankModal({
         groupIds: bindSelected
       });
       if (!res.success) throw new Error(res.error || '添加题库失败');
+      // Governance-8.3：赛事题库绑定接入 undo
+      undoManager.pushEntry({
+        storeName: 'topicGroup',
+        action: 'bindEvent',
+        targetType: 'event',
+        targetId: event.id,
+        label: '绑定赛事题库',
+        logId: res._undoLogId ?? undefined
+      });
       toast.success(`已绑定 ${bindSelected.length} 个题库`);
       setBindOpen(false);
       setConflictModalOpen(report.hasConflict);
@@ -285,6 +295,17 @@ export default function EventTopicBankModal({
       eventId: event.id,
       groupId: group.id
     });
+    // Governance-8.3：赛事题库解绑接入 undo
+    if (res.success) {
+      undoManager.pushEntry({
+        storeName: 'topicGroup',
+        action: 'bindEvent',
+        targetType: 'event',
+        targetId: event.id,
+        label: `解绑赛事题库「${group.name}」`,
+        logId: res._undoLogId ?? undefined
+      });
+    }
     if (res.success) {
       toast.success(`已解绑「${group.name}」`);
       await refresh();

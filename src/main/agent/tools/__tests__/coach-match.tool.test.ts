@@ -190,6 +190,24 @@ describe('coach_match：写评审历史', () => {
     expect(mockJudgeHistoryCreate).toHaveBeenCalledTimes(1)
   })
 
+  it('写入历史含 provenance 字段（provider/model/mode=coach/inputHash）', async () => {
+    mockAllStageReviews()
+    const ok = await coachMatchTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(ok.success).toBe(true)
+    const input = mockJudgeHistoryCreate.mock.calls[0][0]
+    expect(input.provenance).toBeTruthy()
+    expect(input.provenance.provider).toBe('openai')
+    expect(input.provenance.model).toBe('gpt-4o-mini')
+    expect(input.provenance.mode).toBe('coach')
+    expect(input.provenance.inputHash).toMatch(/^[0-9a-f]{8}$/)
+    // 同输入 → 确定性 input hash
+    mockAllStageReviews()
+    await coachMatchTool.execute(VALID_ARGS, ctxWithConfig)
+    expect(mockJudgeHistoryCreate.mock.calls[1][0].provenance.inputHash).toBe(
+      input.provenance.inputHash
+    )
+  })
+
   it('历史写入失败静默忽略，不打断工具返回', async () => {
     mockAllStageReviews()
     mockJudgeHistoryCreate.mockImplementation(() => {

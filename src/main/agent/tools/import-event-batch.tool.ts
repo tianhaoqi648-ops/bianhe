@@ -1,7 +1,7 @@
 // ============================================================
 // import-event-batch.tool.ts — Agent 工具：批量导入赛事与队伍（Task 35）
 //
-// 包装 import-engine.parseFile + eventRepo.createEvent + eventRepo.createTeam，
+// 包装 import-engine.parseFile + event-service.createEvent + eventRepo.createTeam，
 // 让 Agent 能从 Excel/CSV/DOCX 文件批量导入赛事与队伍。
 //
 // 设计要点：
@@ -16,6 +16,7 @@ import path from 'path'
 import type { ToolDefinition } from '@shared/agent-types'
 import { parseFile } from '@main/services/import-engine'
 import { eventRepo } from '@main/db/repository/event.repo'
+import { createEvent as createEventWithDefaultGroup } from '@main/services/event-service'
 
 /** import_event_batch 工具入参（与 parameters schema 对齐） */
 interface ImportEventBatchArgs {
@@ -170,7 +171,7 @@ export const importEventBatchTool: ToolDefinition<
       (typeof fieldMapping.eventName === 'string' && fieldMapping.eventName.trim()) ||
       path.basename(filePath, path.extname(filePath))
 
-    const event = eventRepo.createEvent({
+    const event = createEventWithDefaultGroup({
       name: eventName,
       start_date: null,
       end_date: null,

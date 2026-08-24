@@ -265,3 +265,95 @@ describe('resolveRow / applyScheduleDiff', () => {
     expect(result.warnings.join()).toContain('跳过新增')
   })
 })
+
+describe('applyScheduleDiff 事务原子性（governance 原子边界）', () => {
+  const ctx = {
+    teams: [
+      { id: 't1', name: '甲队' },
+      { id: 't2', name: '乙队' }
+    ],
+    topics: [{ id: 'tp1', title: '辩题A' }],
+    roundNameToId: () => 'r1'
+  }
+
+  // 模拟 better-sqlite3 db.transaction 语义：整个 run 包裹在事务内，
+  // run 抛错则整批回滚（把“已写入”的 committed 恢复为进入事务前的快照）。
+  // 对应注入方 `run => getDb().transaction(run)()` 的提交/回滚行为。
+  function rollbackTransaction<T>(committed: unknown[], run: () => T): T {
+    const snapshot = [...committed]
+    try {
+      return run()
+    } catch (e) {
+      committed.length = 0
+      committed.push(...snapshot)
+      throw e
+    }
+  }
+
+  function makePreview(count: number): ScheduleDiffPreview {
+    return {
+      added: Array.from({ length: count }, (_, i) => ({
+        kind: 'add',
+        key: `第${i + 1}#1`,
+        row: row({ roundName: `第${i + 1}`, matchNumber: i + 1, teamAff: '甲队', teamNeg: '乙队', topic: '辩题A' })
+      })),
+      updated: [],
+      deleted: [],
+      unchanged: 0,
+      warnings: []
+    }
+  }
+
+  it('正常成功提交：整批写入、无回滚残留', () => {
+    const committed: unknown[] = []
+    const create = vi.fn((d: { matchNumber: number | null }) => {
+      committed.push(d.matchNumber) // 模拟写入入库
+    })
+    const result = applyScheduleDiff(makePreview(3), {
+      eventId: 'ev1',
+      ctx,
+      matchIdsByKey: new Map(),
+      transaction: (run) => rollbackTransaction(committed, run),
+      ops: { create, update: vi.fn(), remove: vi.fn() }
+    })
+    expect(result.appliedAdd).toBe(3)
+    expect(create).toHaveBeenCalledTimes(3)
+    expect(committed).toEqual([1, 2, 3]) // 全部提交（未触发回滚）
+  })
+
+  it('第 N 场创建失败 → 整批回滚零残留：前 N-1 不存在、第 N 不存在、N+1 及之后不存在', () => {
+    const failAt = 3
+    const committed: unknown[] = []
+    const create = vi.fn((d: { matchNumber: number | null }) => {
+      committed.push(d.matchNumber) // 模拟写入入库
+      if (committed.length === failAt) {
+        throw new Error(`注入：第 ${failAt} 场写入失败`)
+      }
+    })
+    expect(() =>
+      applyScheduleDiff(makePreview(5), {
+        eventId: 'ev1',
+        ctx,
+        matchIdsByKey: new Map(),
+        transaction: (run) => rollbackTransaction(committed, run),
+        ops: { create, update: vi.fn(), remove: vi.fn() }
+      })
+    ).toThrow('注入：第 3 场写入失败')
+    // 第 N 场抛错即中断，N+1 及之后不再执行
+    expect(create).toHaveBeenCalledTimes(failAt)
+    // 整批回滚：即便前 N-1 场的“写入”已发生，也一并撤销 → DB 零残留
+    expect(committed).toEqual([])
+  })
+
+  it('未注入事务执行器时仍直跑原逻辑（兼容纯逻辑单测，不破坏既有 apply 用例）', () => {
+    const create = vi.fn()
+    const result = applyScheduleDiff(makePreview(1), {
+      eventId: 'ev1',
+      ctx,
+      matchIdsByKey: new Map(),
+      ops: { create, update: vi.fn(), remove: vi.fn() }
+    })
+    expect(result.appliedAdd).toBe(1)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+})

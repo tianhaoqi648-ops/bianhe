@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import { useEventStore } from '../stores/eventStore';
 import { useToast } from '../hooks/useToast';
+import { undoManager } from '../utils/undo-manager';
 import {
   buildEventBankConfig,
   planRoundBankSync,
@@ -168,6 +169,15 @@ export default function EventBankConfigModal({
         config
       });
       if (!res.success) throw new Error(res.error || '保存选题模式失败');
+      // Governance-8.3：bank 配置接入 undo
+      undoManager.pushEntry({
+        storeName: 'topicGroup',
+        action: 'setBankConfig',
+        targetType: 'event',
+        targetId: event.id,
+        label: '更新选题模式',
+        logId: res._undoLogId ?? undefined
+      });
 
       // by_round：同步 round_topic_groups 表（engine 的 by_round 按它解析），保证增删生效
       if (mode === 'by_round') {
@@ -179,10 +189,32 @@ export default function EventBankConfigModal({
         const ops = planRoundBankSync(sanitizedRoundBanks, currentByRound);
         for (const op of ops) {
           for (const gid of op.unbind) {
-            await window.groupAPI.unbindRoundGroup({ roundId: op.roundId, groupId: gid });
+            const unbindRes = await window.groupAPI.unbindRoundGroup({ roundId: op.roundId, groupId: gid });
+            // Governance-8.3：轮次题库解绑接入 undo
+            if (unbindRes.success) {
+              undoManager.pushEntry({
+                storeName: 'topicGroup',
+                action: 'bindRound',
+                targetType: 'round',
+                targetId: op.roundId,
+                label: `解绑轮次题库`,
+                logId: unbindRes._undoLogId ?? undefined
+              });
+            }
           }
           if (op.bind.length > 0) {
-            await window.groupAPI.bindRoundGroups({ roundId: op.roundId, groupIds: op.bind });
+            const bindRes = await window.groupAPI.bindRoundGroups({ roundId: op.roundId, groupIds: op.bind });
+            // Governance-8.3：轮次题库绑定接入 undo
+            if (bindRes.success) {
+              undoManager.pushEntry({
+                storeName: 'topicGroup',
+                action: 'bindRound',
+                targetType: 'round',
+                targetId: op.roundId,
+                label: '绑定轮次题库',
+                logId: bindRes._undoLogId ?? undefined
+              });
+            }
           }
         }
       }

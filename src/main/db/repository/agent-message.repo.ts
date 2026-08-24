@@ -204,6 +204,15 @@ export const agentMessageRepo = {
   },
 
   /**
+   * 备份用：一次性返回 agent_messages 表的全部行（DB 原始格式）。
+   * 与 timer-session.repo 的 findAllForBackup 一致，供 backup-service 导出。
+   */
+  findAllForBackup(): Array<Record<string, unknown>> {
+    const db = getDb()
+    return db.prepare('SELECT * FROM agent_messages').all() as Array<Record<string, unknown>>
+  },
+
+  /**
    * 跨所有会话搜索消息内容（SubTask 29.3）。
    *
    * - 使用 LIKE 模糊匹配 agent_messages.content 字段

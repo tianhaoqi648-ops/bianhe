@@ -16,6 +16,28 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
 import { bulkInsert } from './utils'
 import type { UndoLogEntry, BackupImportStrategy } from '../../../shared/types'
+import { validateUndoPayload } from '../../../shared/config-validator'
+
+// ============================================================
+// Governance-8.2：Undo 容量/生命周期保护（保留前先读 createLog 顶部注释）
+//
+// Undo 采用 best-effort（策略 B）：业务成功优先，undo_log 容量受限时自动清理，
+// 绝不因日志产生或清理而阻塞业务，也不允许长期无限膨胀。
+// 相关配置用于：
+//   - 约束批量快照：单条 payload 超过 1MB 不入 undo（createLog 抛错，调用方跳过入栈并提示）
+//   - 总条数上限 / 总字节上限：超限删最旧
+//   - retention（按时间保留策略）：超过保留窗口的日志被清理
+// ============================================================
+export const UNDO_CONFIG = {
+  /** 单条 payload 上限（字节）。超过则该次不可撤销（best-effort：业务仍成功）。 */
+  MAX_PAYLOAD_BYTES: 1048576, // 1MB
+  /** undo_log 总条数上限：超过则删除最旧日志 */
+  MAX_LOGS: 200,
+  /** undo_log 总 payload 字节上限：超过则删除最旧日志直至达标 */
+  MAX_TOTAL_BYTES: 50 * 1024 * 1024, // 50MB
+  /** 日志保留时长（毫秒）：超过保留窗口的最旧日志被清理 */
+  RETENTION_MS: 30 * 24 * 60 * 60 * 1000 // 30 天
+} as const
 
 interface UndoLogRow {
   id: string
@@ -82,13 +104,24 @@ interface CreateLogInput {
 
 /**
  * 创建一条 undo log。在调用方事务内执行。
- * 自动计算 payload_size；超过 1MB 时不写入并抛错（调用方捕获后跳过入栈）。
+ * 自动计算 payload_size；超过单条上限时不写入并抛错（调用方捕获后跳过入栈）。
+ * 写入成功后执行容量/生命周期保护（Governance-8.2）：超期、超条数、超总字节时删最旧。
  *
  * @returns log id
- * @throws Error 当 payload_size > 1MB 时
+ * @throws Error 当 payload_size > UNDO_CONFIG.MAX_PAYLOAD_BYTES 时
  */
 function createLog(input: CreateLogInput): string {
   const db = getDb()
+  // governance 12：undo 快照属「只读历史快照 / 恢复用」字段——不在此强校验具体业务字段
+  //（避免破坏老版本写入的旧结构/合法旧格式），仅做轻量结构守卫：原始类型快照或
+  // topicGroup setBankConfig 内嵌 config 非法时视为「不可撤销」。
+  // 抛错后由 withUndoLog 捕获并降级（logId=null，业务已提交不阻断），非法日志不入库。
+  const v = validateUndoPayload({
+    storeName: input.store_name,
+    before: input.before_data,
+    after: input.after_data
+  })
+  if (!v.ok) throw new Error(`[undoLog] invalid undo payload: ${v.error}`)
   const beforeJson = input.before_data === null ? null : JSON.stringify(input.before_data)
   const afterJson = input.after_data === null ? null : JSON.stringify(input.after_data)
   // P4: payload_size 使用字节长度而非字符长度，避免多字节字符导致 size 低估
@@ -96,9 +129,11 @@ function createLog(input: CreateLogInput): string {
     (beforeJson ? Buffer.byteLength(beforeJson, 'utf8') : 0) +
     (afterJson ? Buffer.byteLength(afterJson, 'utf8') : 0)
 
-  // 1MB = 1048576 字节
-  if (payloadSize > 1048576) {
-    throw new Error(`[undoLog] payload too large: ${payloadSize} bytes (limit 1048576)`)
+  // 超限批量快照不入 undo（best-effort：业务已成功，仅该次不可撤销）
+  if (payloadSize > UNDO_CONFIG.MAX_PAYLOAD_BYTES) {
+    throw new Error(
+      `[undoLog] payload too large: ${payloadSize} bytes (limit ${UNDO_CONFIG.MAX_PAYLOAD_BYTES})`
+    )
   }
 
   const id = uuidv4()
@@ -121,6 +156,10 @@ function createLog(input: CreateLogInput): string {
     payloadSize,
     input.label
   )
+
+  // 容量/生命周期保护：太过频繁的新日志会被最旧日志淘汰，保证不无限膨胀。
+  // 与写操作同事务（createLog 在调用方事务内执行）。
+  enforceCapacity()
 
   return id
 }
@@ -211,6 +250,79 @@ function countAll(): number {
   return row ? Number(row.total) : 0
 }
 
+/** 统计 undo_log 总 payload 字节数 */
+function sumPayload(): number {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT COALESCE(SUM(payload_size), 0) AS total FROM undo_log')
+    .get() as { total: number } | undefined
+  return row ? Number(row.total) : 0
+}
+
+/** undo_log 容量/生命周期统计（测试与诊断用） */
+function getStats(): { count: number; totalBytes: number } {
+  return { count: countAll(), totalBytes: sumPayload() }
+}
+
+/**
+ * 容量/生命周期保护（Governance-8.2）：删除超期、超条数、超总字节的最旧日志。
+ *
+ * 顺序：
+ *   1. retention：删除超过保留窗口的最旧日志（无论是否已撤销）
+ *   2. 总条数上限：超限则按 created_at 删最旧直至达标
+ *   3. 总字节上限：超限则按 created_at 删最旧直至达标
+ *
+ * 调用时机：createLog 写入后（与写操作同事务）；也可在数据重置时显式调用。
+ * best-effort：清理失败不影响业务结果（调用方事务内异常会被 withUndoLog 捕获为不可撤销）。
+ *
+ * @param configOverride 覆盖容量配置（测试用，可传较小阈值）
+ * @returns 删除的日志行数
+ */
+function enforceCapacity(
+  configOverride: Partial<Record<keyof typeof UNDO_CONFIG, number>> = {}
+): number {
+  const cfg = { ...UNDO_CONFIG, ...configOverride }
+  const db = getDb()
+  let deleted = 0
+
+  // 1) retention：删除超过保留窗口的最旧日志
+  const cutoff = new Date(Date.now() - cfg.RETENTION_MS).toISOString()
+  const expired = db.prepare('DELETE FROM undo_log WHERE created_at < ?').run(cutoff)
+  deleted += Number(expired.changes ?? 0)
+
+  // 读取当前条数 / 总字节（于 retention 清理后读取）
+  let count = 0
+  let totalBytes = 0
+  const countRow = db.prepare('SELECT COUNT(*) AS total FROM undo_log').get() as
+    | { total: number }
+    | undefined
+  const sumRow = db
+    .prepare('SELECT COALESCE(SUM(payload_size), 0) AS total FROM undo_log')
+    .get() as { total: number } | undefined
+  if (countRow) count = Number(countRow.total) || 0
+  if (sumRow) totalBytes = Number(sumRow.total) || 0
+
+  const oldestStmt = db.prepare(
+    'SELECT id, payload_size FROM undo_log ORDER BY created_at ASC, id ASC LIMIT 1'
+  )
+  const delStmt = db.prepare('DELETE FROM undo_log WHERE id = ?')
+
+  let guard = 0
+  while (
+    (count > cfg.MAX_LOGS || totalBytes > cfg.MAX_TOTAL_BYTES) &&
+    (guard += 1) <= 100000
+  ) {
+    const oldest = oldestStmt.get() as { id: string; payload_size: number } | undefined
+    if (!oldest) break
+    delStmt.run(oldest.id)
+    deleted++
+    count--
+    totalBytes -= Number(oldest.payload_size) || 0
+  }
+
+  return deleted
+}
+
 // ============================================================
 // 备份与恢复（全量数据导入导出）
 // ============================================================
@@ -240,6 +352,9 @@ export const undoLogRepo = {
   deleteByIds,
   clearAll,
   countAll,
+  sumPayload,
+  getStats,
+  enforceCapacity,
   // 备份与恢复
   findAllForBackup,
   bulkRestore

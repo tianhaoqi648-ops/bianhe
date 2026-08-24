@@ -20,6 +20,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 /** 捕获 prepare 调用，便于断言 SQL 与参数 */
 let prepareCalls: Array<{ sql: string; params: any[] }> = []
 
+// ---- 状态化 topics（仅 batchUpdateTopics 事务化测试使用，其余测试走 behavior 兜底） ----
+let topicsStore = new Map<string, Record<string, unknown>>()
+let topicUpdateCall = 0
+/** 故障注入：非 null 时第 N 次对 topics 的 UPDATE 抛错，验证批量更新事务回滚 */
+let failAfterTopicUpdate: number | null = null
+
 /** 通用 stub：返回 run/all/get 三方法，并捕获参数 */
 function makeStub(behavior: {
   all?: (...params: any[]) => any[]
@@ -30,6 +36,26 @@ function makeStub(behavior: {
     return {
       run: (...params: any[]) => {
         prepareCalls.push({ sql, params })
+        if (/UPDATE\s+topics\s+SET/i.test(sql)) {
+          topicUpdateCall++
+          if (failAfterTopicUpdate !== null && topicUpdateCall >= failAfterTopicUpdate) {
+            throw new Error('intentional failure: topic update failed')
+          }
+          const id = params[params.length - 1]
+          if (topicsStore.has(id)) {
+            const row = { ...topicsStore.get(id)! }
+            row.type = params[0] ?? null
+            row.domain = params[1] ?? null
+            row.difficulty = params[2] ?? null
+            row.source = params[3] ?? null
+            row.source_type = params[4] ?? null
+            row.status = params[5] ?? null
+            row.weight = params[6]
+            row.tags = params[7] ?? null
+            row.custom_data = params[8] ?? null
+            topicsStore.set(id, row)
+          }
+        }
         behavior.run?.(...params)
       },
       all: (...params: any[]) => {
@@ -38,6 +64,10 @@ function makeStub(behavior: {
       },
       get: (...params: any[]) => {
         prepareCalls.push({ sql, params })
+        if (/SELECT\s+\*\s+FROM\s+topics\s+WHERE\s+id\s*=\s*\?/i.test(sql)) {
+          const id = params[0]
+          if (topicsStore.has(id)) return topicsStore.get(id)
+        }
         return behavior.get ? behavior.get(...params) : undefined
       }
     }
@@ -53,7 +83,16 @@ vi.mock('../../db', () => ({
       all: (...p: any[]) => mockAllBehavior(...p),
       get: (...p: any[]) => mockGetBehavior(...p)
     }),
-    transaction: (fn: (x: any) => any) => (x: any) => fn(x)
+    // 事务桩：近似模拟回滚 —— 执行前快照 topicsStore，fn 抛错则恢复（丢弃前 N-1）
+    transaction: (fn: (x: any) => any) => (x: any) => {
+      const snap = new Map(topicsStore)
+      try {
+        return fn(x)
+      } catch (e) {
+        topicsStore = new Map(snap)
+        throw e
+      }
+    }
   })
 }))
 
@@ -62,6 +101,7 @@ import {
   buildWhereClause,
   isValidIdentifier
 } from '../../db/repository/topic.repo'
+import type { TopicCreateInput } from '../../db/repository/topic.repo'
 
 describe('isValidIdentifier', () => {
   it('英文/数字/下划线合法', () => {
@@ -412,5 +452,102 @@ describe('rowToTopic custom_data 反序列化（通过 getTopicById 间接验证
     })
     const topic = topicRepo.getTopicById('t1')
     expect(topic!.custom_data).toBeNull()
+  })
+})
+
+// ============================================================
+// batchUpdateTopics 批量编辑（更新）事务化
+// 验证：批量更新在单事务内执行，第 N 条失败时前 N-1 条一并回滚。
+// ============================================================
+describe('batchUpdateTopics 批量编辑（更新）事务化', () => {
+  beforeEach(() => {
+    prepareCalls = []
+    topicsStore = new Map()
+    topicUpdateCall = 0
+    failAfterTopicUpdate = null
+  })
+
+  const seedRow = (id: string, type: string | null): Record<string, unknown> => ({
+    id,
+    title: `题-${id}`,
+    type,
+    domain: null,
+    difficulty: null,
+    source: null,
+    source_type: null,
+    tags: '["a"]',
+    weight: 1,
+    status: 'active',
+    batch_id: null,
+    created_at: '2026-01-01',
+    updated_at: '2026-01-01',
+    custom_data: null
+  })
+
+  it('正常批量成功：两条题均被更新', () => {
+    topicsStore.set('t1', seedRow('t1', '价值辩'))
+    topicsStore.set('t2', seedRow('t2', '事实辩'))
+
+    const res = topicRepo.batchUpdateTopics(['t1', 't2'], [
+      { field: 'status', mode: 'replace', value: 'archived' }
+    ])
+    expect(res.affectedCount).toBe(2)
+    expect(topicsStore.get('t1')!.status).toBe('archived')
+    expect(topicsStore.get('t2')!.status).toBe('archived')
+  })
+
+  it('第 2 条失败 → 前 1 条更新一并回滚（不留前 N-1）', () => {
+    topicsStore.set('t1', seedRow('t1', '价值辩'))
+    topicsStore.set('t2', seedRow('t2', '事实辩'))
+    // 第 2 次 UPDATE 抛错
+    failAfterTopicUpdate = 2
+
+    expect(() =>
+      topicRepo.batchUpdateTopics(['t1', 't2'], [
+        { field: 'status', mode: 'replace', value: 'archived' }
+      ])
+    ).toThrow('intentional failure')
+
+    // t1 的更新被回滚，两条 status 均保持原始值
+    expect(topicsStore.get('t1')!.status).toBe('active')
+    expect(topicsStore.get('t2')!.status).toBe('active')
+  })
+})
+
+// ============================================================
+// governance Task 12：topic.custom_data 写路径校验（非法不入库）
+// ============================================================
+describe('topic.custom_data 写路径校验（governance 12）', () => {
+  beforeEach(() => {
+    topicsStore = new Map()
+    prepareCalls = []
+  })
+
+  it('createMany：custom_data 含非法值（number）→ 整批拒绝（不入库）', () => {
+    expect(() =>
+      topicRepo.createMany(
+        // 非法值（number）经类型断言注入：模拟运行时到达但不应入库的数据
+        [
+          { title: '合法题', custom_data: { 赛事: '初赛' } },
+          { title: '非法题', custom_data: { 分数: 42 } }
+        ] as unknown as TopicCreateInput[]
+      )
+    ).toThrow(/custom_data.*必须为 string 或 string\[\]/)
+
+    // 事务已回滚，topicsStore 无任何行写入
+    expect(topicsStore.size).toBe(0)
+  })
+
+  it('createMany：缺省/空 custom_data（旧格式）→ 兼容，不抛错且不篡改', () => {
+    const created = topicRepo.createMany(
+      [
+        { title: '无自定义字段' },
+        { title: '空对象', custom_data: {} }
+      ] as unknown as TopicCreateInput[]
+    )
+    expect(created).toHaveLength(2)
+    // 未传 → null（写 NULL）；空对象 → 原样 {}（兼容，不被拒绝）
+    expect(created[0].custom_data).toBeNull()
+    expect(created[1].custom_data).toEqual({})
   })
 })

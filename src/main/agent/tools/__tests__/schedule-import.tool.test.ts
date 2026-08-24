@@ -25,7 +25,8 @@ const {
   mockApplyDiff,
   mockMatchCreate,
   mockMatchUpdate,
-  mockMatchDelete
+  mockMatchDelete,
+  mockGetDb
 } = vi.hoisted(() => ({
   mockGetEventById: vi.fn(),
   mockListMatches: vi.fn(),
@@ -39,7 +40,8 @@ const {
   mockApplyDiff: vi.fn(),
   mockMatchCreate: vi.fn(),
   mockMatchUpdate: vi.fn(),
-  mockMatchDelete: vi.fn()
+  mockMatchDelete: vi.fn(),
+  mockGetDb: vi.fn()
 }))
 
 const PREVIEW = {
@@ -72,6 +74,11 @@ vi.mock('@main/db/repository/match.repo', () => ({
 }))
 vi.mock('@main/db/repository/topic.repo', () => ({
   topicRepo: { listTopics: mockListTopics }
+}))
+// @main/db 依赖 better-sqlite3（Electron ABI，vitest(Node ABI) 无法加载），
+// 此处仅 mock getDb，事务接线由 schedule-io 原子边界承担，不在此断言。
+vi.mock('@main/db', () => ({
+  getDb: mockGetDb
 }))
 vi.mock('../../../services/schedule-io', () => ({
   parseScheduleXlsx: mockParseXlsx,

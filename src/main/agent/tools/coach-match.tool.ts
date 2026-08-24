@@ -22,6 +22,7 @@ import { JUDGE_IDS, getJudgeAnonLabel, getJudgeById } from '@shared/ai-judges'
 import type { DebateStageType } from '@shared/debate-stages'
 import { chat, LLMError } from '../llm-client'
 import { judgeHistoryRepo } from '../../db/repository/judge-history.repo'
+import { buildJudgeProvenance } from '../provenance'
 import {
   buildCoachPrompt,
   buildCoachReviewUserPrompt,
@@ -354,7 +355,15 @@ export const coachMatchTool: ToolDefinition<CoachMatchArgs, CoachMatchResult | C
           toolName: 'coach_match',
           side,
           topic,
-          resultJson: result as unknown as Record<string, unknown>
+          resultJson: result as unknown as Record<string, unknown>,
+          // provenance：注入 LLM 模型/版本 + 整场输入材料（时间线/转录）hash
+          provenance: buildJudgeProvenance({
+            config,
+            toolName: 'coach_match',
+            topic,
+            inputs: [transcript, JSON.stringify(args.timeline ?? []), side],
+            extra: args.formatHint
+          })
         })
       } catch {
         // 忽略历史写入失败

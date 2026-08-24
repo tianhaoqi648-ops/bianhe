@@ -30,6 +30,7 @@ const {
   confirmHandlerRef,
   mockChatStream,
   mockExecute,
+  mockCreateGrant,
   mockGetRiskLevel,
   mockGetTier,
   mockGet,
@@ -54,6 +55,7 @@ const {
 
   const mockChatStream = vi.fn()
   const mockExecute = vi.fn()
+  const mockCreateGrant = vi.fn()
   const mockGetRiskLevel = vi.fn()
   const mockGetTier = vi.fn()
   const mockGet = vi.fn()
@@ -78,6 +80,7 @@ const {
     confirmHandlerRef,
     mockChatStream,
     mockExecute,
+    mockCreateGrant,
     mockGetRiskLevel,
     mockGetTier,
     mockGet,
@@ -131,6 +134,7 @@ vi.mock('../llm-client', () => ({
 vi.mock('../tool-registry', () => ({
   list: mockList,
   execute: mockExecute,
+  createGrant: mockCreateGrant,
   getRiskLevel: mockGetRiskLevel,
   getTier: mockGetTier,
   get: mockGet
@@ -259,6 +263,14 @@ beforeEach(() => {
   mockList.mockReturnValue([])
   // 默认权限等级为 'read'（缺省只读）。各用例可按需覆写（如 write/dangerous 触发授权确认）。
   mockGetTier.mockReturnValue('read')
+  // createGrant 默认返回登记过的一次性 grant（grantId 固定便于断言）
+  mockCreateGrant.mockImplementation((input: { toolName: string; tier: string }) => ({
+    grantId: `gr-${input.toolName}`,
+    toolName: input.toolName,
+    tier: input.tier,
+    argsHash: 'mock',
+    expiresAt: Date.now() + 60_000
+  }))
   mockBuildLLMMessages.mockReturnValue([])
   mockAddMessage.mockImplementation(() => {})
   mockSetContext.mockImplementation(() => {})
@@ -848,11 +860,11 @@ describe('runAgentLoop：权限等级授权确认（AI Agent v1.5.0）', () => {
     await simulateConfirmResult({ toolCallId, confirmed: true })
     await loopPromise
 
-    // 确认后执行，且 ctx 携带危险级授权 grants
+    // 确认后执行，且 ctx 携带登记过的一次性 grant grantId（而非仅声明 tier）
     expect(mockExecute).toHaveBeenCalledWith(
       toolName,
       args,
-      expect.objectContaining({ grants: [{ tier: 'dangerous' }] })
+      expect.objectContaining({ grantId: 'gr-judge_debate' })
     )
   })
 
@@ -881,9 +893,15 @@ describe('runAgentLoop：权限等级授权确认（AI Agent v1.5.0）', () => {
       onEvent
     })
 
-    // read 直接放行：无 confirm，无 grants
+    // read 直接放行：无 confirm，不产生 grantId（不登记一次性授权）
     expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(false)
-    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.objectContaining({ grants: [] }))
+    expect(mockExecute).toHaveBeenCalledWith(
+      toolName,
+      args,
+      expect.not.objectContaining({ grantId: expect.anything() })
+    )
+    // read 不调用 createGrant
+    expect(mockCreateGrant).not.toHaveBeenCalled()
   })
 })
 
@@ -1312,11 +1330,11 @@ describe('Task6.6：权限分级在 agent-loop 中按授权放行', () => {
     await simulateConfirmResult({ toolCallId, confirmed: true })
     await loopPromise
 
-    // 确认后执行，且 ctx 携带 write 级授权
+    // 确认后执行，且 ctx 携带登记过的一次性 grant grantId（tier=write）
     expect(mockExecute).toHaveBeenCalledWith(
       toolName,
       args,
-      expect.objectContaining({ grants: [{ tier: 'write' }] })
+      expect.objectContaining({ grantId: 'gr-create_event' })
     )
   })
 

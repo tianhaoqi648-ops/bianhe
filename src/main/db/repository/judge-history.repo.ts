@@ -16,12 +16,17 @@ import { getDb } from '../index'
 import type {
   JudgeHistoryCreateInput,
   JudgeHistoryFilter,
-  JudgeHistoryRecord
+  JudgeHistoryRecord,
+  JudgeProvenance
 } from '../../../shared/types'
 
 // ============================================================
 // 行类型 & 映射
 // ============================================================
+
+/** result_json 中承载 provenance 的保留键（governance Task 10）。
+ *  不新增 DB 列；写入时把 provenance 挂到该键，读取时拆出为独立字段。 */
+const PROVENANCE_RESERVED_KEY = '__provenance'
 
 interface JudgeHistoryRow {
   id: string
@@ -47,7 +52,32 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
+/**
+ * 从 result_json 拆出 provenance（若有），并返回去除了保留键后的纯净结果。
+ * 记录无 provenance 时返回 { resultJson, provenance: null }。
+ */
+function splitProvenance(
+  parsed: Record<string, unknown> | null | undefined
+): { resultJson: Record<string, unknown> | null; provenance: JudgeProvenance | null } {
+  if (!parsed || typeof parsed !== 'object') {
+    return { resultJson: parsed ?? null, provenance: null }
+  }
+  const value = parsed[PROVENANCE_RESERVED_KEY]
+  const provenance =
+    value && typeof value === 'object'
+      ? (value as JudgeProvenance)
+      : null
+  if (provenance === null) {
+    return { resultJson: parsed, provenance: null }
+  }
+  const clean = { ...parsed }
+  delete clean[PROVENANCE_RESERVED_KEY]
+  return { resultJson: clean, provenance }
+}
+
 function rowToJudgeHistory(row: JudgeHistoryRow): JudgeHistoryRecord {
+  const parsed = safeJsonParse<Record<string, unknown> | null>(row.result_json, null)
+  const { resultJson, provenance } = splitProvenance(parsed)
   return {
     id: row.id,
     createdAt: row.created_at,
@@ -59,8 +89,9 @@ function rowToJudgeHistory(row: JudgeHistoryRow): JudgeHistoryRecord {
     stage: row.stage,
     side: row.side,
     topic: row.topic,
-    resultJson: safeJsonParse<Record<string, unknown> | null>(row.result_json, null),
-    error: row.error
+    resultJson,
+    error: row.error,
+    provenance
   }
 }
 
@@ -79,6 +110,11 @@ function create(input: JudgeHistoryCreateInput): JudgeHistoryRecord {
   const db = getDb()
   const id = input.id ?? uuidv4()
   const now = new Date().toISOString()
+  // provenance 不新增列：以保留键挂到 result_json 上，随其 JSON 落库
+  let resultJson = input.resultJson ?? null
+  if (input.provenance && typeof resultJson === 'object') {
+    resultJson = { ...resultJson, [PROVENANCE_RESERVED_KEY]: input.provenance }
+  }
   db.prepare(`
     INSERT INTO judge_history (
       id, created_at, event_id, round_id, match_id, judge_id, tool_name,
@@ -95,7 +131,7 @@ function create(input: JudgeHistoryCreateInput): JudgeHistoryRecord {
     input.stage ?? null,
     input.side ?? null,
     input.topic ?? null,
-    input.resultJson ? JSON.stringify(input.resultJson) : null,
+    resultJson ? JSON.stringify(resultJson) : null,
     input.error ?? null
   )
 

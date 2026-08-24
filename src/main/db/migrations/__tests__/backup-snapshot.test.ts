@@ -24,11 +24,16 @@ vi.mock('electron', () => ({
   app: { getPath: () => userData }
 }))
 
-// ---- mock better-sqlite3（getDbFileSchemaVersion 内动态 import）----
-const state = vi.hoisted(() => ({ schemaVersion: 0 }))
+// ---- mock better-sqlite3（getDbFileSchemaVersion / 恢复后 foreign_key_check 的动态 import）----
+const state = vi.hoisted(() => ({
+  schemaVersion: 0,
+  /** 恢复后 foreign_key_check 应返回的孤立引用行（[] 表示无违规） */
+  fkViolations: [] as unknown[]
+}))
 vi.mock('better-sqlite3', () => ({
   default: class FakeDb {
-    pragma(_x: string, _opts?: { simple?: boolean }): number {
+    pragma(op: string, _opts?: { simple?: boolean }): unknown {
+      if (op === 'foreign_key_check') return state.fkViolations
       return state.schemaVersion
     }
     close(): void {}
@@ -104,5 +109,29 @@ describe('restoreBackup schema 版本校验', () => {
 
     // 恢复后 db 文件内容被备份覆盖
     expect(fs.readFileSync(dbPath, 'utf8')).toBe('DBDATA-v5')
+  })
+
+  it('恢复后 foreign_key_check 存在孤立引用 → 明确抛错（不静默成功）', async () => {
+    const name = listBackupFiles()[0]
+    expect(name).toBeTruthy()
+
+    state.schemaVersion = SCHEMA_VERSION
+    state.fkViolations = [
+      { table: 'match_judges', rowid: 7, parent: 'matches', fkid: 0 }
+    ]
+    try {
+      await expect(restoreBackup(name! as string)).rejects.toThrow('外键校验失败')
+    } finally {
+      state.fkViolations = []
+    }
+  })
+
+  it('恢复后无孤立引用 → 恢复成功且不抛错', async () => {
+    const name = listBackupFiles()[0]
+    expect(name).toBeTruthy()
+
+    state.schemaVersion = SCHEMA_VERSION
+    state.fkViolations = []
+    await expect(restoreBackup(name! as string)).resolves.toBeUndefined()
   })
 })

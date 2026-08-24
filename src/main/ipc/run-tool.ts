@@ -13,7 +13,7 @@
 // ============================================================
 
 import type { RunToolRequest, RunToolResult } from '@shared/agent-types'
-import { getDefinition, execute, ToolPermissionError } from '../agent/tool-registry'
+import { getDefinition, execute, createGrant, ToolPermissionError } from '../agent/tool-registry'
 
 /** 裁判工具白名单（AI 裁判工作台可直调；2026-08-18 移除 rewrite_speech） */
 export const JUDGE_TOOL_NAMES: string[] = [
@@ -66,13 +66,21 @@ export async function runJudgeTool(
   }
 
   // 4. 执行工具（透传 config/signal，供裁判工具内部调 LLM 与支持取消）。
-  //    用户在本页面显式点选工具即视为授权，故以 toolName 声明 grants，
-  //    满足默认只读权限门控（裁判工具多为 dangerous 级外部网络调用）。
+  //    用户在本页面显式点选工具即视为授权，故由主进程创建并登记一次性 grant，
+  //    execute 据此自校验（存在/未过期/tool/argsHash/tier 等），而非仅声明 grants。
+  //    绑定本次实际入参，防止参数被偷换；grant 校验通过即一次性消费。
   try {
+    const grant = createGrant({
+      sessionId: req.sessionId,
+      toolName: req.toolName,
+      args: req.args ?? {},
+      tier: definition.tier ?? 'read'
+    })
     const data = await execute(req.toolName, req.args ?? {}, {
       config: req.config,
       signal,
-      grants: [{ toolName: req.toolName }]
+      sessionId: req.sessionId,
+      grantId: grant.grantId
     })
     // 取消优先判定（工具可能内部处理 abort 返回部分结果）
     if (signal?.aborted) {

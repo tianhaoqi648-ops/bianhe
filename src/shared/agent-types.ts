@@ -51,12 +51,37 @@ export type ToolPermissionTier = 'read' | 'write' | 'dangerous'
  * 工具权限授权声明。
  * 传给 execute 的 ctx.grants，标记本次调用已获得哪些工具 / 哪些权限级别的授权。
  * 匹配规则：按 toolName 精确匹配 或 按 tier 级别匹配，二者任一命中即视为已授权。
+ *
+ * 注意（governance Task 9）：execute 不再信任调用方自行声明的 grants 作为授权依据，
+ * 而要求 write / dangerous 工具提供主进程登记过的一次性 ToolGrant（见 ctx.grantId）。
+ * 本声明保留仅为既有工具/测试的兼容。
  */
 export interface PermissionGrant {
   /** 已授权的工具名（精确匹配） */
   toolName?: string
   /** 已授权的权限级别（匹配该级别全部工具） */
   tier?: ToolPermissionTier
+}
+
+/**
+ * 一次性绑定授权 grant（governance Task 9）。
+ * 由主进程（agent-loop 在用户确认后 / run-tool 显式调用时）创建并登记到 grant 登记处，
+ * execute() 校验 grant 是否有效（存在、未过期、session/tool/argsHash/tier 均匹配）后才放行，
+ * 避免仅信任调用方传入的 grants 声明。校验通过即一次性消费，杜绝重放。
+ */
+export interface ToolGrant {
+  /** grant 唯一 id（execute 据此从登记处取回记录校验） */
+  grantId: string
+  /** 归属会话 id（用户确认时登记；execute 校验 ctx.sessionId 与之一致） */
+  sessionId?: string
+  /** 被授权的工具名（execute 校验与目标工具一致） */
+  toolName: string
+  /** 入参哈希（execute 校验与本次实际 args 哈希一致，防止参数被偷换） */
+  argsHash: string
+  /** 授权级别（execute 校验与目标工具要求的 tier 一致） */
+  tier: ToolPermissionTier
+  /** 过期时间戳（毫秒）；过期即拒绝 */
+  expiresAt: number
 }
 
 /** 工具元数据（不含 execute 函数，用于 IPC 与 UI 显示） */
@@ -83,10 +108,21 @@ export interface ToolExecutionContext {
   config?: LLMConfig
   /** 取消信号（agent-loop 的 AbortSignal，透传给内部 LLM 调用） */
   signal?: AbortSignal
+  /** 所属会话 id（governance Task 9：execute 校验 grant.sessionId 与之一致） */
+  sessionId?: string
+  /**
+   * 一次性授权 grant id（governance Task 9）。
+   * write / dangerous 工具执行前，调用方须引用主进程登记过的一次性 ToolGrant，
+   * execute 据此校验（存在/未过期/session/tool/argsHash/tier 均匹配）才放行，
+   * 校验通过即一次性消费。不再信任调用方自行声明的 grants。
+   */
+  grantId?: string
   /**
    * 已授予的权限（AI Agent v1.5.0：默认只读）。write / dangerous 工具执行前，
    * 调用方需在此声明本次已获得的授权（用户确认弹窗 / 设置页自动放行），否则被拒绝。
    * read 工具为空数组 / 缺省即可放行。
+   * 注意：governance Task 9 起，execute 的授权校验以 ctx.grantId 对应的 ToolGrant 为准，
+   * 不再以 grants 声明为授权依据。
    */
   grants?: PermissionGrant[]
 }

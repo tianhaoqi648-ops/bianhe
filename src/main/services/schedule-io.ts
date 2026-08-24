@@ -298,6 +298,15 @@ export interface ScheduleApplyContext {
   ops: ScheduleApplyOps
   /** 当前既有比赛 id：key → matchId（供 update/delete 定位） */
   matchIdsByKey: Map<string, string>
+  /**
+   * 可选：外层事务执行器（governance 原子边界）。
+   * 提供时，整个「应用赛程差异」动作（对 ops.create/update/remove 的全部调用）
+   * 都会包在该执行器内——成功全部提交，任一写入失败整批回滚零残留。
+   * 不提供（如纯逻辑单测注入 mock ops）则直接执行、不开事务。
+   * 由 IPC 层 / agent 工具层注入 `run => getDb().transaction(run)()`，
+   * 使本函数成为唯一原子边界（两条调用路径共用，避免各自包两次导致嵌套）。
+   */
+  transaction?: (run: () => ScheduleApplyResult) => ScheduleApplyResult
 }
 
 /**
@@ -309,61 +318,68 @@ export function applyScheduleDiff(
   preview: ScheduleDiffPreview,
   context: ScheduleApplyContext
 ): ScheduleApplyResult {
-  const warnings = [...preview.warnings]
-  let appliedAdd = 0
-  let appliedUpdate = 0
-  let appliedDelete = 0
-  let skipped = 0
+  // 原子边界：整个「应用赛程差异」动作（对 ops.create/update/remove 的全部调用）
+  // 是否在一个事务内执行由 context.transaction 决定。成功则整体提交；
+  // 任一写入抛错则事务（由注入方保证）整批回滚并向上抛出，调用后零残留。
+  const run = (): ScheduleApplyResult => {
+    const warnings = [...preview.warnings]
+    let appliedAdd = 0
+    let appliedUpdate = 0
+    let appliedDelete = 0
+    let skipped = 0
 
-  for (const action of preview.added) {
-    const r = resolveRow(action.row, context.ctx)
-    if (r.skip) {
-      skipped++
-      warnings.push(`跳过新增：「${action.key}」——${r.reason}`)
-      continue
+    for (const action of preview.added) {
+      const r = resolveRow(action.row, context.ctx)
+      if (r.skip) {
+        skipped++
+        warnings.push(`跳过新增：「${action.key}」——${r.reason}`)
+        continue
+      }
+      context.ops.create({
+        eventId: context.eventId,
+        roundId: r.roundId,
+        matchNumber: action.row.matchNumber,
+        teamAffId: r.teamAffId,
+        teamNegId: r.teamNegId,
+        topicId: r.topicId,
+        teamAff: action.row.teamAff,
+        teamNeg: action.row.teamNeg,
+        topic: action.row.topic
+      })
+      appliedAdd++
     }
-    context.ops.create({
-      eventId: context.eventId,
-      roundId: r.roundId,
-      matchNumber: action.row.matchNumber,
-      teamAffId: r.teamAffId,
-      teamNegId: r.teamNegId,
-      topicId: r.topicId,
-      teamAff: action.row.teamAff,
-      teamNeg: action.row.teamNeg,
-      topic: action.row.topic
-    })
-    appliedAdd++
+
+    for (const action of preview.updated) {
+      const matchId = context.matchIdsByKey.get(action.key)
+      if (!matchId) {
+        skipped++
+        warnings.push(`跳过更新：「${action.key}」——未找到对应比赛`)
+        continue
+      }
+      const r = resolveRow(action.row, context.ctx)
+      if (r.skip) {
+        skipped++
+        warnings.push(`跳过更新：「${action.key}」——${r.reason}`)
+        continue
+      }
+      context.ops.update(matchId, { teamAffId: r.teamAffId, teamNegId: r.teamNegId, topicId: r.topicId })
+      appliedUpdate++
+    }
+
+    for (const action of preview.deleted) {
+      const matchId = context.matchIdsByKey.get(action.key)
+      if (!matchId) {
+        skipped++
+        continue
+      }
+      context.ops.remove(matchId)
+      appliedDelete++
+    }
+
+    return { appliedAdd, appliedUpdate, appliedDelete, skipped, warnings }
   }
 
-  for (const action of preview.updated) {
-    const matchId = context.matchIdsByKey.get(action.key)
-    if (!matchId) {
-      skipped++
-      warnings.push(`跳过更新：「${action.key}」——未找到对应比赛`)
-      continue
-    }
-    const r = resolveRow(action.row, context.ctx)
-    if (r.skip) {
-      skipped++
-      warnings.push(`跳过更新：「${action.key}」——${r.reason}`)
-      continue
-    }
-    context.ops.update(matchId, { teamAffId: r.teamAffId, teamNegId: r.teamNegId, topicId: r.topicId })
-    appliedUpdate++
-  }
-
-  for (const action of preview.deleted) {
-    const matchId = context.matchIdsByKey.get(action.key)
-    if (!matchId) {
-      skipped++
-      continue
-    }
-    context.ops.remove(matchId)
-    appliedDelete++
-  }
-
-  return { appliedAdd, appliedUpdate, appliedDelete, skipped, warnings }
+  return context.transaction ? context.transaction(run) : run()
 }
 
 // ============================================================

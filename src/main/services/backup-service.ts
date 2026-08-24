@@ -23,7 +23,10 @@ import { importBatchRepo } from '../db/repository/import-batch.repo'
 import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
 import { undoLogRepo } from '../db/repository/undo-log.repo'
 import { judgeHistoryRepo } from '../db/repository/judge-history.repo'
+import { agentSessionRepo } from '../db/repository/agent-session.repo'
+import { agentMessageRepo } from '../db/repository/agent-message.repo'
 import { topicGroupRepo } from '../db/repository/topic-group.repo'
+import { matchRepo } from '../db/repository/match.repo'
 import {
   findForBackup as badgeFindForBackup,
   encodeBadgeFiles as badgeEncodeBadgeFiles,
@@ -45,6 +48,7 @@ import type {
   TeamBadgeMap
 } from '../../shared/types'
 import { bulkInsert, clearTable, TABLE_COLUMNS } from '../db/repository/utils'
+import { validateBackupPackage } from '../../shared/config-validator'
 import { version as APP_VERSION } from '../../../package.json'
 
 /**
@@ -85,6 +89,13 @@ export function exportBackup(params: BackupParams): BackupPackage {
       Object.assign(tables, data)
     }
 
+    if (cats.includes('match_records')) {
+      const data = matchRepo.findAllForBackup()
+      tables.matches = data.matches
+      tables.match_judges = data.match_judges
+      tables.match_judge_votes = data.match_judge_votes
+    }
+
     if (cats.includes('timer')) {
       const data = timerSessionRepo.findAllForBackup()
       Object.assign(tables, data)
@@ -115,6 +126,11 @@ export function exportBackup(params: BackupParams): BackupPackage {
       tables.judge_history = judgeHistoryRepo.findAllForBackup()
     }
 
+    if (cats.includes('agent_sessions')) {
+      tables.agent_sessions = agentSessionRepo.findAllForBackup()
+      tables.agent_messages = agentMessageRepo.findAllForBackup()
+    }
+
     if (cats.includes('badges')) {
       const badgeData = badgeFindForBackup()
       // badges 为 index.json 注册表（条目数组）；team_bindings 为队伍→队徽绑定；
@@ -141,6 +157,38 @@ export function exportBackup(params: BackupParams): BackupPackage {
     categories: cats,
     tables: tables as BackupPackage['tables']
   }
+}
+
+/**
+ * 执行 PRAGMA foreign_key_check（返回当前库的孤立引用清单）。
+ *
+ * 用于两种恢复路径（JSON 全量导入 / 文件级恢复）完成后做完整性校验：
+ *  - 无孤立引用 → { invalid: false, count: 0, violations: [] }
+ *  - 存在孤立引用 → { invalid: true, count, violations }（violations 为可读描述）
+ *
+ * 容错：PRAGMA 执行失败（如表不存在/连接异常）视为不可判定，返回无违规
+ * （主路径已在外层 try/catch 保证导入本身的失败会抛错，此处不影响主流程）。
+ */
+export function runForeignKeyCheck(): {
+  invalid: boolean
+  count: number
+  violations: string[]
+} {
+  const db = getDb()
+  let rows: unknown
+  try {
+    rows = db.pragma('foreign_key_check')
+  } catch (e) {
+    console.warn('[backup-service] foreign_key_check 执行失败，跳过完整性校验', e)
+    return { invalid: false, count: 0, violations: [] }
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { invalid: false, count: 0, violations: [] }
+  }
+  const violations = (rows as Array<{ table: string; rowid: number; parent: string; fkid: number }>).map(
+    (r) => `table=${r.table}, rowid=${r.rowid}, 引用缺失父表 ${r.parent} (fkid=${r.fkid})`
+  )
+  return { invalid: true, count: violations.length, violations }
 }
 
 /**
@@ -181,6 +229,11 @@ export function previewImport(filePath: string): BackupPreviewResult {
     throw new Error(
       `不支持的备份版本：${pkg.version}，当前支持：${SUPPORTED_BACKUP_VERSION}`
     )
+  }
+  // governance 12：解析后校验备份包结构（类别/版本/导出信息/tables），非法即拒绝
+  const v = validateBackupPackage(pkg)
+  if (!v.ok) {
+    throw new Error(v.error)
   }
   const tableCounts: Record<string, number> = {}
   for (const [key, value] of Object.entries(pkg.tables)) {
@@ -225,6 +278,11 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
   }
   if (pkg.version !== SUPPORTED_BACKUP_VERSION) {
     throw new Error(`不支持的备份版本：${pkg.version}`)
+  }
+  // governance 12：解析后校验备份包结构（类别/版本/导出信息/tables），非法即拒绝
+  const v = validateBackupPackage(pkg)
+  if (!v.ok) {
+    throw new Error(v.error)
   }
 
   // 仅导入用户勾选 + 备份中存在的类别
@@ -340,7 +398,27 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
     )
   }
 
-  return { inserted, skipped, overwritten, bellFilesRestored, badgeFilesRestored }
+  // 恢复后完整性校验（governance 1.2）：对所有策略（含 clear_rebuild）都执行
+  // PRAGMA foreign_key_check，发现孤立引用 → 明确返回 fkInvalid + 违规详情，
+  // 不静默判定恢复成功（数据已入库，故不抛错回滚，而是标记「部分恢复」供上层判断）。
+  const fk = runForeignKeyCheck()
+  if (fk.invalid) {
+    console.error(
+      `[backup-service] 恢复后外键校验失败：${fk.count} 处孤立引用`,
+      fk.violations
+    )
+  }
+
+  return {
+    inserted,
+    skipped,
+    overwritten,
+    bellFilesRestored,
+    badgeFilesRestored,
+    fkInvalid: fk.invalid,
+    fkViolationCount: fk.count,
+    fkViolations: fk.violations
+  }
 }
 
 /**

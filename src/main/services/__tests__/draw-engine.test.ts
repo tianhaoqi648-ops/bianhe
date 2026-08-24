@@ -278,7 +278,11 @@ import {
   InsufficientTopicsError,
   applyExclusions,
   applyDifficultyOverride,
-  applySourceMixRatio
+  applySourceMixRatio,
+  selectTopics,
+  assertSufficientTopics,
+  buildSessionSettings,
+  buildAuditDetail
 } from '../draw-engine'
 import {
   weightedRandomSelect,
@@ -1946,5 +1950,206 @@ describe('Task5.1: 随机概率基本合理（统计近似）', () => {
     const ratio = t / N
     expect(ratio).toBeGreaterThan(0.4)
     expect(ratio).toBeLessThan(0.6)
+  })
+})
+
+// ============================================================
+// Task 11: Selection Stage 纯函数（selectTopics）+ 题池校验（assertSufficientTopics）
+// ============================================================
+
+describe('Task11: selectTopics（Selection Stage 加权随机/去重）', () => {
+  function makeTopics(n: number): Topic[] {
+    return Array.from({ length: n }, (_, i) => makePoolTopic(`sel-${i}`, `题${i}`, '官方'))
+  }
+
+  it('普通模式：无放回加权抽取，结果不重复', () => {
+    const pool = makeTopics(6)
+    const picked = selectTopics(pool, 4)
+    expect(picked).toHaveLength(4)
+    expect(new Set(picked.map((t) => t.id)).size).toBe(4)
+    // 全部来自候选池
+    for (const t of picked) {
+      expect(pool.map((p) => p.id)).toContain(t.id)
+    }
+  })
+
+  it('allowRepeat=true 且无 sourceMixConsumed：有放回可抽超池数量', () => {
+    const pool = makeTopics(2)
+    const picked = selectTopics(pool, 4, { allowRepeat: true })
+    expect(picked).toHaveLength(4)
+    // 有放回：总量 4 但唯一 id ≤ 2
+    expect(new Set(picked.map((t) => t.id)).size).toBeLessThanOrEqual(2)
+  })
+
+  it('sourceMixConsumed=true：直接截取前 count 道，不二次抽样', () => {
+    const pool = makeTopics(5)
+    const picked = selectTopics(pool, 3, {
+      sourceMixConsumed: true,
+      allowRepeat: true
+    })
+    expect(picked).toHaveLength(3)
+    expect(picked.map((t) => t.id)).toEqual(['sel-0', 'sel-1', 'sel-2'])
+  })
+
+  it('allowRepeat=true + sourceMixConsumed=true：截取且不重复抽样', () => {
+    const pool = makeTopics(2)
+    // 即使 allowRepeat，sourceMixConsumed 时也仅截取池内经来源比例抽样后的结果
+    const picked = selectTopics(pool, 2, { allowRepeat: true, sourceMixConsumed: true })
+    expect(picked).toHaveLength(2)
+  })
+
+  it('普通模式 count=0 → 空数组', () => {
+    expect(selectTopics(makeTopics(3), 0)).toEqual([])
+  })
+
+  it('普通模式 count=池大小 → 返回全部（去重）', () => {
+    const picked = selectTopics(makeTopics(4), 4)
+    expect(new Set(picked.map((t) => t.id)).size).toBe(4)
+  })
+})
+
+describe('Task11: assertSufficientTopics（题池充足性 gate）', () => {
+  function makeTopics(n: number): Topic[] {
+    return Array.from({ length: n }, (_, i) => makePoolTopic(`g-${i}`, `题${i}`, '官方'))
+  }
+
+  it('候选充足且允许重复：不抛错', () => {
+    expect(() => assertSufficientTopics(makeTopics(3), 2, true)).not.toThrow()
+    expect(() => assertSufficientTopics(makeTopics(5), 2, false)).not.toThrow()
+  })
+
+  it('候选不足且不允许重复：抛 InsufficientTopicsError', () => {
+    expect(() => assertSufficientTopics(makeTopics(2), 4, false)).toThrow(
+      InsufficientTopicsError
+    )
+  })
+
+  it('候选不足但 allowRepeat=true：跳过检查不抛错', () => {
+    expect(() => assertSufficientTopics(makeTopics(2), 4, true)).not.toThrow()
+  })
+
+  it('未传 allowRepeat（默认 false）：不足时抛错', () => {
+    expect(() => assertSufficientTopics(makeTopics(2), 4)).toThrow(
+      InsufficientTopicsError
+    )
+  })
+
+  it('错误携带候选/需求数量信息', () => {
+    try {
+      assertSufficientTopics(makeTopics(2), 5, false)
+      // 不应走到这里
+      expect(true).toBe(false)
+    } catch (e) {
+      const err = e as InsufficientTopicsError
+      expect(err.candidateCount).toBe(2)
+      expect(err.requiredCount).toBe(5)
+    }
+  })
+})
+
+// ============================================================
+// Task 11: Persistence 数据准备纯函数（settings / audit detail）
+// ============================================================
+
+describe('Task11: buildSessionSettings（Persistence settings 准备）', () => {
+  const base = {
+    event_id: 'event-1',
+    round_id: 'round-1',
+    topic_count: 3,
+    include_stance: true,
+    draw_mode: 'versus' as const,
+    teams_per_topic: null,
+    is_test: false,
+    allow_repeat: false
+  }
+
+  it('versus 模式：group_ids 置空、teams_per_topic 置空', () => {
+    const s = buildSessionSettings({ ...base, group_ids: ['g1'] })
+    expect(s.group_ids).toBeNull()
+    expect(s.teams_per_topic).toBeNull()
+    expect(s.round_difficulty_override).toBeNull()
+  })
+
+  it('group 模式：保留 group_ids、teams_per_topic 置空', () => {
+    const s = buildSessionSettings({ ...base, draw_mode: 'group', group_ids: ['g1', 'g2'] })
+    expect(s.group_ids).toEqual(['g1', 'g2'])
+    expect(s.teams_per_topic).toBeNull()
+  })
+
+  it('multi_team 模式：teams_per_topic 生效、group_ids 置空', () => {
+    const s = buildSessionSettings({ ...base, draw_mode: 'multi_team', teams_per_topic: 3 })
+    expect(s.teams_per_topic).toBe(3)
+    expect(s.group_ids).toBeNull()
+  })
+
+  it('透传实际比例、难度 override、测试/重复标记', () => {
+    const s = buildSessionSettings({
+      ...base,
+      actual_ratio: { official: 0.7, custom: 0.3 },
+      round_difficulty_override: '决赛',
+      source_mix_ratio: { official: 0.7, custom: 0.3 },
+      solo_team_id: 'solo-1',
+      is_test: true,
+      allow_repeat: true
+    })
+    expect(s.actual_ratio).toEqual({ official: 0.7, custom: 0.3 })
+    expect(s.source_mix_ratio).toEqual({ official: 0.7, custom: 0.3 })
+    expect(s.round_difficulty_override).toBe('决赛')
+    expect(s.solo_team_id).toBe('solo-1')
+    expect(s.is_test).toBe(true)
+    expect(s.allow_repeat).toBe(true)
+  })
+})
+
+describe('Task11: buildAuditDetail（Persistence 审计 detail 准备）', () => {
+  const base = {
+    event_id: 'event-1',
+    round_id: 'round-1',
+    topic_count: 3,
+    include_stance: true,
+    team_count: 0,
+    picked_topic_ids: ['t1', 't2', 't3'],
+    session_id: 'session-1',
+    draw_mode: 'versus' as const,
+    teams_per_topic: null,
+    is_test: false,
+    allow_repeat: false
+  }
+
+  it('versus：group_ids/teams_per_topic 置空，保留 picked_topic_ids', () => {
+    const d = buildAuditDetail({ ...base, team_count: 4 })
+    expect(d.group_ids).toBeNull()
+    expect(d.teams_per_topic).toBeNull()
+    expect(d.picked_topic_ids).toEqual(['t1', 't2', 't3'])
+    expect(d.team_count).toBe(4)
+    expect(d.session_id).toBe('session-1')
+  })
+
+  it('group：保留 group_ids', () => {
+    const d = buildAuditDetail({ ...base, draw_mode: 'group', group_ids: ['g1'] })
+    expect(d.group_ids).toEqual(['g1'])
+    expect(d.teams_per_topic).toBeNull()
+  })
+
+  it('multi_team：teams_per_topic 生效', () => {
+    const d = buildAuditDetail({ ...base, draw_mode: 'multi_team', teams_per_topic: 3 })
+    expect(d.teams_per_topic).toBe(3)
+    expect(d.group_ids).toBeNull()
+  })
+
+  it('透传实际比例/难度/测试/重复标记', () => {
+    const d = buildAuditDetail({
+      ...base,
+      actual_ratio: { official: 0.5, custom: 0.5 },
+      source_mix_ratio: { official: 0.5, custom: 0.5 },
+      is_test: true,
+      allow_repeat: true,
+      solo_team_id: 'solo-1'
+    })
+    expect(d.actual_ratio).toEqual({ official: 0.5, custom: 0.5 })
+    expect(d.source_mix_ratio).toEqual({ official: 0.5, custom: 0.5 })
+    expect(d.is_test).toBe(true)
+    expect(d.allow_repeat).toBe(true)
+    expect(d.solo_team_id).toBe('solo-1')
   })
 })

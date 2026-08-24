@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
 import type { BatchEditFieldAction, CustomFieldValue, BackupImportStrategy } from '../../../shared/types'
+import { AppError } from '../../../shared/app-error'
+import { validateTopicCustomData } from '../../../shared/config-validator'
 import { bulkInsert } from './utils'
 
 /**
@@ -9,6 +11,19 @@ import { bulkInsert } from './utils'
  */
 function escapeLike(str: string): string {
   return str.replace(/[%_\\]/g, '\\$&')
+}
+
+/**
+ * 校验并序列化 topic.custom_data（governance 12：写路径守卫，非法不入库）。
+ * - 缺省 / 空对象（旧、无自定义字段）→ 返回 null（写 NULL，兼容旧结构）；
+ * - 合法 string / string[] → 校验通过后 JSON.stringify；
+ * - 非法（原始类型值、数组内非字符串等）→ 抛 AppError('VALIDATION') 拒绝写入。
+ */
+function serializeCustomData(cd: Record<string, CustomFieldValue> | null | undefined): string | null {
+  if (!cd || Object.keys(cd).length === 0) return null
+  const v = validateTopicCustomData(cd)
+  if (!v.ok) throw new AppError('VALIDATION', v.error, v.error)
+  return JSON.stringify(v.value)
 }
 
 /**
@@ -265,10 +280,8 @@ function createTopic(data: TopicCreateInput): Topic {
   const weight = data.weight ?? 1.0
   const status = data.status ?? 'active'
   const tagsJson = data.tags ? JSON.stringify(data.tags) : null
-  const customDataJson =
-    data.custom_data && Object.keys(data.custom_data).length > 0
-      ? JSON.stringify(data.custom_data)
-      : null
+  // governance 12：写前校验 custom_data，非法不入库
+  const customDataJson = serializeCustomData(data.custom_data)
 
   const stmt = db.prepare(`
     INSERT INTO topics (
@@ -332,10 +345,8 @@ function createMany(items: TopicCreateInput[]): Topic[] {
       const status = data.status ?? 'active'
       const batchId = data.batch_id ?? null
       const tagsJson = data.tags ? JSON.stringify(data.tags) : null
-      const customDataJson =
-        data.custom_data && Object.keys(data.custom_data).length > 0
-          ? JSON.stringify(data.custom_data)
-          : null
+      // governance 12：写前校验每项 custom_data，任一项非法则整批拒绝（不入库）
+      const customDataJson = serializeCustomData(data.custom_data)
       stmt.run(
         id,
         data.title,
@@ -456,8 +467,8 @@ function updateTopic(id: string, data: TopicUpdateInput): Topic | undefined {
 
   if (data.custom_data !== undefined) {
     setColumns.push('custom_data = ?')
-    const cd = data.custom_data
-    params.push(cd && Object.keys(cd).length > 0 ? JSON.stringify(cd) : null)
+    // governance 12：写前校验 custom_data，非法不入库
+    params.push(serializeCustomData(data.custom_data))
   }
 
   if (setColumns.length === 0) {
@@ -895,12 +906,9 @@ function batchUpdateTopics(
             : null
       const customDataJson =
         update.custom_data !== undefined
-          ? update.custom_data && Object.keys(update.custom_data).length > 0
-            ? JSON.stringify(update.custom_data)
-            : null
-          : topic.custom_data && Object.keys(topic.custom_data).length > 0
-            ? JSON.stringify(topic.custom_data)
-            : null
+          ? // governance 12：批量编辑合并后的 custom_data 写前校验，非法不入库
+            serializeCustomData(update.custom_data)
+          : serializeCustomData(topic.custom_data)
 
       updateScalarStmt.run(
         update.type !== undefined ? update.type : topic.type,

@@ -117,7 +117,16 @@ export default function BackupImportModal({ open, onClose }: Props) {
       }
       const res = await backup.import({ filePath, strategy, categories })
       if (res.success && res.data) {
-        const { inserted, skipped, overwritten, bellFilesRestored, badgeFilesRestored } = res.data
+        const {
+          inserted,
+          skipped,
+          overwritten,
+          bellFilesRestored,
+          badgeFilesRestored,
+          fkInvalid,
+          fkViolationCount,
+          fkViolations
+        } = res.data
         let msg = ''
         if (strategy === 'clear_rebuild') {
           msg = `已恢复 ${inserted} 条数据`
@@ -132,7 +141,15 @@ export default function BackupImportModal({ open, onClose }: Props) {
         if (badgeFilesRestored > 0) {
           msg += `，${badgeFilesRestored} 个队徽文件`
         }
-        toast.success(msg)
+        // governance 1.2：恢复后外键校验发现孤立引用 → 明确提示「部分恢复」而非静默成功
+        if (fkInvalid) {
+          const sample = (fkViolations || []).slice(0, 3).join('；')
+          toast.error(
+            `恢复完成但外键校验失败：存在 ${fkViolationCount} 处孤立引用（${sample}），数据可能不完整，请谨慎使用。`
+          )
+        } else {
+          toast.success(msg)
+        }
         // P1-15 修复：导入成功后刷新所有 stores，确保 UI 与新数据一致
         // 各 store 刷新方法名不同：topicStore.fetchList / eventStore.listEvents /
         // drawStore.listSessions / formatStore.fetchAll / settingsStore.fetchAll / timerStore.fetchSessions

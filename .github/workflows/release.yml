@@ -48,6 +48,12 @@ jobs:
       - name: Rebuild native modules for Electron
         run: npx @electron/rebuild -f -w better-sqlite3
 
+      - name: Typecheck (node + web)
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
       - name: Build app
         run: npm run build
 

@@ -274,6 +274,15 @@ export const agentSessionRepo = {
   },
 
   /**
+   * 备份用：一次性返回 agent_sessions 表的全部行（DB 原始格式）。
+   * 与 timer-session.repo 的 findAllForBackup 一致，供 backup-service 导出。
+   */
+  findAllForBackup(): Array<Record<string, unknown>> {
+    const db = getDb()
+    return db.prepare('SELECT * FROM agent_sessions').all() as Array<Record<string, unknown>>
+  },
+
+  /**
    * 迁移 v1.3.0 单会话模式的孤儿消息为「默认会话」（v1.3.0 + v1.4.0 合并版兼容）。
    *
    * 背景：v1.3.0 首次引入 Agent 时，部分早期版本可能直接向 agent_messages 写入消息

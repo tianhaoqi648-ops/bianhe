@@ -173,6 +173,14 @@ function countRows(db: MigMockDb, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n
 }
 
+/** 某表的外键「父表」名集合 */
+function foreignParentTables(db: MigMockDb, table: string): Set<string> {
+  const rows = db
+    .prepare('SELECT "table" AS t FROM pragma_foreign_key_list(?)')
+    .all(table)
+  return new Set(rows.map((r) => String(r.t)))
+}
+
 const OPEN: Array<MigMockDb> = []
 function track(db: MigMockDb): MigMockDb {
   OPEN.push(db)
@@ -310,6 +318,113 @@ describe('中途失败非半状态（3.2 / 3.5）', () => {
 
     // 3) 之后的迁移也未执行（流水中止）
     expect(applied).not.toContain('20260906_ensure_match_multijudge_schema')
+  })
+})
+
+describe('matches 外键安全迁移（Task2 / governance）', () => {
+  const FK_MIG = '20260916_matches_add_fk'
+  const fkIndex = (): number => MIGRATION_DEFS.findIndex((m) => m.id === FK_MIG)
+  const appliedBeforeFk = (db: MigMockDb): void => applyPrefix(db, fkIndex())
+  const expectFkParents = (db: MigMockDb): void => {
+    expect([...foreignParentTables(db, 'matches')].sort()).toEqual([
+      'events',
+      'rounds',
+      'teams',
+      'topics'
+    ])
+  }
+
+  // 造母表数据；注意 FK 已启用，轮次/队伍须指向存在的赛事
+  const seedParents = (db: MigMockDb): void => {
+    db.exec(`
+      INSERT INTO events (id, name) VALUES ('evt1', '赛事A');
+      INSERT INTO rounds (id, event_id, name) VALUES ('rnd1', 'evt1', '第一轮');
+      INSERT INTO teams (id, name, event_id) VALUES ('teamA', '甲队', 'evt1');
+      INSERT INTO teams (id, name, event_id) VALUES ('teamB', '乙队', 'evt1');
+      INSERT INTO topics (id, title) VALUES ('top1', '辩题一');
+    `)
+  }
+  const insertMatch = (
+    db: MigMockDb,
+    m: { id: string; event: string; round: string; teamA: string; teamB: string; topic: string }
+  ): void => {
+    db.prepare(
+      `INSERT INTO matches (id, event_id, round_id, team_a_id, team_b_id, topic_id, status, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(m.id, m.event, m.round, m.teamA, m.teamB, m.topic, 'planned', '2026-08-01', '2026-08-01')
+  }
+
+  it('空库升级后 matches 已带四类父表 FK，列与索引完整保留', () => {
+    const db = track(createDbSeed())
+    runMigrations(db as never)
+    expectFkParents(db)
+    expect(listAppliedMigrations(db as never)).toContain(FK_MIG)
+
+    const cols = tableColumns(db, 'matches')
+    expect(cols.has('id')).toBe(true)
+    expect(cols.has('event_id')).toBe(true)
+    expect(cols.has('topic_id')).toBe(true)
+    expect(cols.has('format_id')).toBe(true)
+    expect(cols.has('judge_system')).toBe(true)
+    expect(cols.has('recording_meta')).toBe(true)
+    const idx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_matches%'")
+      .all()
+    expect(idx.map((r) => String(r.name)).sort()).toEqual(['idx_matches_event', 'idx_matches_round'])
+  })
+
+  it('已有 matches 且无非法引用 → 升上新 FK，数据完整（行数/内容不变）', () => {
+    const db = track(createDbSeed())
+    appliedBeforeFk(db)
+    seedParents(db)
+    insertMatch(db, { id: 'm1', event: 'evt1', round: 'rnd1', teamA: 'teamA', teamB: 'teamB', topic: 'top1' })
+
+    expect(foreignParentTables(db, 'matches').size).toBe(0) // 迁移前 matches 无 FK
+
+    const r = runMigrations(db as never)
+    expect(r.results.find((x) => x.id === FK_MIG)?.status).toBe('applied')
+    expectFkParents(db)
+
+    const rows = db.prepare('SELECT * FROM matches').all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('m1')
+    expect(rows[0].event_id).toBe('evt1')
+    expect(rows[0].team_a_id).toBe('teamA')
+    expect(rows[0].topic_id).toBe('top1')
+  })
+
+  it('有非法引用 → 中止并报告，不静默丢行、不重建', () => {
+    const db = track(createDbSeed())
+    appliedBeforeFk(db)
+    seedParents(db)
+    // 制造非法引用：team_b_id 指向不存在的队伍 ghostTeam
+    insertMatch(db, { id: 'm2', event: 'evt1', round: 'rnd1', teamA: 'teamA', teamB: 'ghostTeam', topic: 'top1' })
+
+    let thrown = ''
+    try {
+      runMigrations(db as never)
+    } catch (e) {
+      thrown = e instanceof Error ? e.message : String(e)
+    }
+    expect(thrown).toContain('非法引用')
+    expect(listAppliedMigrations(db as never)).not.toContain(FK_MIG)
+
+    // matches 未被重建（仍无 FK），且存在非法引用的行仍原样保留（未被静默删除）
+    expect(foreignParentTables(db, 'matches').size).toBe(0)
+    expect(countRows(db, 'matches')).toBe(1)
+    expect(
+      (db.prepare("SELECT team_b_id FROM matches WHERE id='m2'").get() as { team_b_id: string }).team_b_id
+    ).toBe('ghostTeam')
+  })
+
+  it('连升幂等：重复执行不破坏，FK 不重复叠加', () => {
+    const db = track(createDbSeed())
+    runMigrations(db as never)
+    runMigrations(db as never)
+    expectFkParents(db)
+    expect(listAppliedMigrations(db as never)).toHaveLength(SCHEMA_VERSION)
+    const fkRows = db.prepare("SELECT id FROM pragma_foreign_key_list('matches')").all()
+    expect(fkRows.length).toBe(5) // events / rounds / teams(x2) / topics，各一条，不重复
   })
 })
 

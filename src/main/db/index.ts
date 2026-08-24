@@ -11,29 +11,27 @@ import { ALL_PRESETS } from '../../shared/debate-formats/presets'
 import { formatRepo } from './repository/format.repo'
 import { initAgentSessionTable } from './repository/agent-session.repo'
 import { initAgentMessageTable } from './repository/agent-message.repo'
+// gov4.1：dbMode 状态独立成模块（mode.ts，不依赖 electron / better-sqlite3，可独立单测）。
+import { dbModeStore } from './mode'
+// 导出 dbModeStore 供主进程入口（main/index.ts ipc 'db:get-mode' / 广播）读取当前模式。
+export { dbModeStore }
 
 let db: Database.Database | null = null
 
-/**
- * 当前数据库模式：
- * - 'persistent'：使用磁盘数据库文件（默认）
- * - 'memory'：因 SQLITE_CANTOPEN / SQLITE_CORRUPT 等错误降级为内存数据库
- *
- * 主进程通过 IPC 事件 `db:status` 通知渲染进程当前模式，
- * 渲染进程在 AppHeader 显示"临时模式"Badge。
- */
-export type DbMode = 'persistent' | 'memory'
-
-export let currentDbMode: DbMode = 'persistent'
-
-/** 设置当前 db 模式并广播给所有 BrowserWindow */
-function setDbMode(mode: DbMode): void {
-  currentDbMode = mode
+// 主进程通过 IPC 事件 `db:status` 通知渲染进程当前模式，
+// 渲染进程据此显示"临时内存模式"常驻警告。
+// dbModeStore 是主进程 dbMode 的唯一来源；模式变化时广播给所有 BrowserWindow。
+dbModeStore.onChange((mode) => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('db:status', mode)
     }
   }
+})
+
+/** 设置当前 db 模式（内部语义：仅在实际变化时触发广播，等价于原 setDbMode） */
+function setDbMode(mode: import('./mode').DbMode): void {
+  dbModeStore.setMode(mode)
 }
 
 /** Promise 化的延迟 */
@@ -135,7 +133,7 @@ export async function initDatabase(): Promise<Database.Database> {
   // P2: DB 降级为内存库后，重置 timer_records 唯一索引标志，
   // 确保下次 addRecord 时在新库实例上重新创建索引。
   // 使用动态 import 避免 index.ts <-> timer-session.repo.ts 循环依赖。
-  if (currentDbMode === 'memory') {
+  if (dbModeStore.mode === 'memory') {
     try {
       const { resetTimerRecordsIndexFlag } = await import('./repository/timer-session.repo')
       resetTimerRecordsIndexFlag()
@@ -144,7 +142,7 @@ export async function initDatabase(): Promise<Database.Database> {
     }
   }
 
-  console.log('[db] Database initialized successfully, mode =', currentDbMode)
+  console.log('[db] Database initialized successfully, mode =', dbModeStore.mode)
   return db
 }
 

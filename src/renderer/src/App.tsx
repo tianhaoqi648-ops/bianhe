@@ -23,6 +23,7 @@ import { useMediaQuery } from './hooks/useMediaQuery';
 import { ToastProvider, useToast } from './hooks/useToast';
 import AppSidebar, { MENU_GROUPS } from './components/Layout/AppSidebar';
 import AppHeader from './components/Layout/AppHeader';
+import MemoryModeBanner from './components/Layout/MemoryModeBanner';
 import UpdaterNotifier from './components/settings/UpdaterNotifier';
 import MobileTabBar from './components/Layout/MobileTabBar';
 import HotkeyHelpModal from './components/HotkeyHelpModal';
@@ -33,6 +34,8 @@ import WelcomeTour from './components/onboarding/WelcomeTour';
 import { AgentChatPanel } from './components/agent/AgentChatPanel';
 import { SAMPLE_TOPICS, SAMPLE_FORMAT } from './data/sample-data';
 import { useUIStore } from './stores/uiStore';
+import { useDbModeStore } from './stores/dbModeStore';
+import { installMemoryWriteGuard } from './utils/memoryWriteGuard';
 
 const { Content } = Layout;
 
@@ -55,6 +58,17 @@ function AppLayout() {
   const navigate = useNavigate();
   const { resolvedMode } = useThemeMode();
   const toast = useToast();
+
+  // gov4.2：内存（临时）模式下，对写/破坏性操作（导入/删除/批量修改/比赛记录/
+  // AI 评审结果/数据恢复等）在执行前统一给一次 toast 警示。
+  // 全局拦截，避免逐调用点手写判断；卸载时还原被包裹的方法。
+  useEffect(() => {
+    const cleanup = installMemoryWriteGuard({
+      isMemory: () => useDbModeStore.getState().dbMode === 'memory',
+      warn: (msg: string) => toast.warning(msg)
+    });
+    return cleanup;
+  }, [toast]);
 
   // 响应式断点
   const isMobile = useMediaQuery('(max-width: 767px)'); // <768px
@@ -214,6 +228,8 @@ function AppLayout() {
         {/* 全局更新通知（启动自检可见反馈，不渲染 DOM，任何页面常驻） */}
         <UpdaterNotifier />
         <AppHeader selectedKey={selectedKey} />
+        {/* gov4.1：内存（临时）模式常驻警告条，位于内容区之上、任何页面常驻 */}
+        <MemoryModeBanner />
         <Content style={contentStyle}>
           <ErrorBoundary>
             <div key={location.pathname} className="page-transition">
@@ -292,7 +308,12 @@ function App() {
     void fetchSettings();
     // 初始化全局快捷键监听
     hotkeyManager.init();
-    return () => hotkeyManager.destroy();
+    // gov4.1：初始化数据库模式状态（订阅 main 的 dbMode），供常驻警告 / 写操作拦截读取
+    const unsubscribeDbMode = useDbModeStore.getState().initDbMode();
+    return () => {
+      hotkeyManager.destroy();
+      unsubscribeDbMode?.();
+    };
   }, [fetchSettings]);
 
   // 同步 <html data-theme> 便于自定义 CSS 区分明暗

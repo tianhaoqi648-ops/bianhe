@@ -32,6 +32,7 @@ import { addTeamHistoryTopicTitle } from './20260905_add_team_history_topic_titl
 import { createJudgeHistoryTable } from './20260912_create_judge_history'
 import { createTopicGroupsTable } from './20260913_create_topic_groups'
 import { createRoundTopicGroupsTable } from './20260914_create_round_topic_groups'
+import { addForeignKeysToMatches } from './20260916_matches_add_fk'
 import { ensureColumn, ensureIndex } from './helpers'
 
 interface Migration {
@@ -391,6 +392,16 @@ const MIGRATIONS: Migration[] = [
     up: (db) => {
       createRoundTopicGroupsTable(db)
     }
+  },
+  {
+    id: '20260916_matches_add_fk',
+    up: (db) => {
+      // matches 外键安全迁移（Task2）：先校验非法引用，无非法引用才重建带 FK 的 matches。
+      // 内部需临时切 foreign_keys pragma（事务内为 no-op），故 transactional:false，
+      // 内部重建各自包事务，非法引用直接抛错中止。
+      addForeignKeysToMatches(db)
+    },
+    transactional: false
   },
   {
     id: '20260910_add_pool_remaining_to_timer_sessions',
