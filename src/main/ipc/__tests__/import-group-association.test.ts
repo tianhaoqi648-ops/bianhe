@@ -169,4 +169,23 @@ describe('导入目标题组关联（赛事题库 T2）', () => {
     expect(mocks.mockEnsureTopicsInDefaultGroup).not.toHaveBeenCalled()
     expect(mocks.mockAddTopicsToGroup).not.toHaveBeenCalled()
   })
+
+  it('T2：关联题组失败 → 成功返回但带 PARTIAL_FAILURE 警示（不阻断已成功部分）', async () => {
+    mocks.mockAddTopicsToGroup.mockImplementation(() => {
+      throw new Error('UNIQUE constraint failed: topic_group_members')
+    })
+
+    const res = await executeImport({ ...baseReq(), groupIds: ['g1'] })
+    const data = res.data as { imported: number; warnings?: string[] }
+
+    // 主流程（数据入库）仍成功，不阻断 renderer 展示导入结果
+    expect(res.success).toBe(true)
+    expect((res as { appError?: { code: string } }).appError?.code).toBe('PARTIAL_FAILURE')
+    // 部分失败已被反馈到 warnings
+    expect(data.imported).toBe(2)
+    expect(data.warnings).toBeDefined()
+    expect(data.warnings!.length).toBe(1)
+    expect(data.warnings![0]).toContain('关联题组失败')
+    // 失败不再被静默吞掉，仍然记录了错误日志
+  })
 })

@@ -95,6 +95,7 @@ export const optimizeTeamGroupsTool: ToolDefinition<
     required: ['eventId', 'strategy']
   },
   riskLevel: 'high',
+  tier: 'dangerous',
   async execute(args: OptimizeTeamGroupsArgs): Promise<OptimizeTeamGroupsResult> {
     // 1. 校验 eventId
     const eventId = typeof args.eventId === 'string' ? args.eventId.trim() : ''

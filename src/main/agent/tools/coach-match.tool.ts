@@ -256,6 +256,7 @@ export const coachMatchTool: ToolDefinition<CoachMatchArgs, CoachMatchResult | C
       required: ['topic', 'side']
     },
     riskLevel: 'low',
+    tier: 'dangerous',
     async execute(
       args: CoachMatchArgs,
       ctx?: { config?: LLMConfig; signal?: AbortSignal }

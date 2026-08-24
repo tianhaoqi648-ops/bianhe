@@ -67,6 +67,7 @@ export const scheduleExportTool: ToolDefinition<
     required: ['eventId']
   },
   riskLevel: 'low',
+  tier: 'dangerous',
   async execute(args: ScheduleExportArgs): Promise<ScheduleExportResult> {
     // 1. 校验 eventId
     const eventId = typeof args.eventId === 'string' ? args.eventId.trim() : ''

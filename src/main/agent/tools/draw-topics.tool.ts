@@ -56,6 +56,7 @@ export const drawTopicsTool: ToolDefinition<DrawTopicsArgs, DrawResult> = {
     required: ['count']
   },
   riskLevel: 'medium',
+  tier: 'write',
 
   async execute(args) {
     // 1. 校验 count 范围 1-50

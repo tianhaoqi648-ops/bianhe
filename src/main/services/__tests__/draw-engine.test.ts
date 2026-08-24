@@ -143,8 +143,8 @@ const {
   })
 
   // Task 10: 暴露 applyExclusions 内部调用的 mock，用于 test_mode 跳过验证
-  const listDrawnTopicIdsByEvent = vi.fn(() => [])
-  const listTeamHistory = vi.fn(() => [])
+  const listDrawnTopicIdsByEvent = vi.fn<() => string[]>(() => [])
+  const listTeamHistory = vi.fn<(teamId: string) => Array<{ topic_id: string }>>(() => [])
   // Task 10: addTeamHistory 实际调用在 IPC 层，draw-engine 不应调用
   const addTeamHistory = vi.fn(() => undefined)
 
@@ -275,8 +275,17 @@ import {
   assignGroupStances,
   assignMultiTeamStances,
   resolveBankTopicIds,
-  InsufficientTopicsError
+  InsufficientTopicsError,
+  applyExclusions,
+  applyDifficultyOverride,
+  applySourceMixRatio
 } from '../draw-engine'
+import {
+  weightedRandomSelect,
+  weightedRandomSelectWithReplacement,
+  getDifficultyDistribution,
+  coinFlip
+} from '../probability'
 import type { ResolveBankContext } from '../draw-engine'
 import type { EventBankConfig, TopicGroup } from '../../db/repository/topic-group.repo'
 import type { Topic } from '../../db/repository/topic.repo'
@@ -1718,5 +1727,224 @@ describe('drawTopics: 多库选题模式（T2）', () => {
     expect(tgListGroupsByEventMock).not.toHaveBeenCalled()
     expect(result.topics).toHaveLength(3)
     for (const t of result.topics) expect(t.id.startsWith('topic-custom-')).toBe(true)
+  })
+})
+
+// ============================================================
+// Task 5.1：抽题引擎纯函数补齐（applyExclusions / applyDifficultyOverride /
+//            applySourceMixRatio / 概率边界与统计合理性）
+// ============================================================
+
+function makePoolTopic(id: string, title: string, sourceType: string, difficulty = '进阶级'): Topic {
+  return {
+    id,
+    title,
+    type: null,
+    domain: null,
+    difficulty,
+    source: null,
+    source_type: sourceType,
+    tags: null,
+    weight: 1,
+    status: 'active',
+    batch_id: null,
+    created_at: '',
+    updated_at: ''
+  }
+}
+
+describe('Task5.1: applyExclusions（不可重复 / 历史排除）', () => {
+  beforeEach(() => {
+    listDrawnTopicIdsByEventMock.mockClear()
+    listTeamHistoryMock.mockClear()
+    listDrawnTopicIdsByEventMock.mockReturnValue([])
+    listTeamHistoryMock.mockReturnValue([])
+  })
+
+  it('排除本赛事已抽的辩题', () => {
+    listDrawnTopicIdsByEventMock.mockReturnValue(['t1', 't2'])
+    const candidates = [
+      makePoolTopic('t1', '题1', '官方'),
+      makePoolTopic('t2', '题2', '官方'),
+      makePoolTopic('t3', '题3', '官方')
+    ]
+    const result = applyExclusions(candidates, { event_id: 'e1', topic_count: 3, include_stance: false })
+    expect(result.map((t) => t.id)).toEqual(['t3'])
+    expect(listDrawnTopicIdsByEventMock).toHaveBeenCalledWith('e1')
+  })
+
+  it('排除参与队伍的历史辩题（listTeamHistory 汇总 topic_id）', () => {
+    listTeamHistoryMock.mockImplementation((_teamId: string) => [
+      { topic_id: 't2' },
+      { topic_id: 't4' }
+    ])
+    const candidates = [
+      makePoolTopic('t1', '题1', '官方'),
+      makePoolTopic('t2', '题2', '官方'),
+      makePoolTopic('t3', '题3', '官方'),
+      makePoolTopic('t4', '题4', '官方')
+    ]
+    const result = applyExclusions(candidates, {
+      event_id: 'e1',
+      topic_count: 4,
+      include_stance: false,
+      teams: [{ id: 'team-a' } as any, { id: 'team-b' } as any]
+    })
+    expect(result.map((t) => t.id)).toEqual(['t1', 't3'])
+    // 每支队伍都查询一次历史
+    expect(listTeamHistoryMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('无队伍无历史时不排除任何题', () => {
+    const candidates = [makePoolTopic('t1', '题1', '官方'), makePoolTopic('t2', '题2', '官方')]
+    const result = applyExclusions(candidates, { event_id: 'e1', topic_count: 2, include_stance: false })
+    expect(result.map((t) => t.id)).toEqual(['t1', 't2'])
+    expect(listTeamHistoryMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('Task5.1: applyDifficultyOverride（难度筛选）', () => {
+  it('无 override / 无 round → 返回原候选池（不过滤难度）', () => {
+    const candidates = [
+      makePoolTopic('t1', '题1', '官方', '入门级'),
+      makePoolTopic('t2', '题2', '官方', '进阶级')
+    ]
+    expect(applyDifficultyOverride(candidates, undefined, 2)).toBe(candidates)
+    expect(applyDifficultyOverride(candidates, { id: 'r1' } as any, 2)).toBe(candidates)
+  })
+
+  it('决赛 override → 只抽专业级（分布 专业:1）', () => {
+    const candidates = [
+      makePoolTopic('t1', '题1', '官方', '入门级'),
+      makePoolTopic('t2', '题2', '官方', '进阶级'),
+      makePoolTopic('t3', '题3', '官方', '专业级'),
+      makePoolTopic('t4', '题4', '官方', '专业级')
+    ]
+    const round = { id: 'r1', difficulty_override: '决赛' } as any
+    const result = applyDifficultyOverride(candidates, round, 2)
+    expect(result).toHaveLength(2)
+    for (const t of result) expect(t.difficulty).toBe('专业级')
+  })
+
+  it('getDifficultyDistribution 关键词匹配', () => {
+    expect(getDifficultyDistribution('小组赛')).toEqual({ 入门级: 0.6, 进阶级: 0.4, 专业级: 0 })
+    expect(getDifficultyDistribution('半决赛')).toEqual({ 入门级: 0, 进阶级: 0.6, 专业级: 0.4 })
+    expect(getDifficultyDistribution('总决赛')).toEqual({ 入门级: 0, 进阶级: 0, 专业级: 1 })
+  })
+})
+
+describe('Task5.1: applySourceMixRatio（来源比例分层抽样）', () => {
+  function pool(official: number, custom: number): Topic[] {
+    const r: Topic[] = []
+    for (let i = 0; i < official; i++) r.push(makePoolTopic(`o-${i}`, `官方题${i}`, '官方'))
+    for (let i = 0; i < custom; i++) r.push(makePoolTopic(`c-${i}`, `自定义题${i}`, '自定义'))
+    return r
+  }
+
+  it('count <= 0 返回空', () => {
+    const res = applySourceMixRatio(pool(5, 5), { official: 0.5, custom: 0.5 }, 0)
+    expect(res.picked).toEqual([])
+    expect(res.actualRatio).toEqual({ official: 0, custom: 0 })
+  })
+
+  it('按 0.5/0.5 抽偶数数量 → 官方/自定义各半', () => {
+    const res = applySourceMixRatio(pool(10, 10), { official: 0.5, custom: 0.5 }, 4)
+    expect(res.picked).toHaveLength(4)
+    const officialCount = res.picked.filter((t) => t.source_type === '官方').length
+    const customCount = res.picked.length - officialCount
+    expect(officialCount).toBe(2)
+    expect(customCount).toBe(2)
+  })
+
+  it('子池不足时从另一子池补足（总量仍达标）', () => {
+    // 官方仅 1 题，需要 4 题 → 不足部分由自定义补足
+    const res = applySourceMixRatio(pool(1, 10), { official: 0.7, custom: 0.3 }, 4)
+    expect(res.picked).toHaveLength(4)
+  })
+
+  it('空候选池返回空', () => {
+    const res = applySourceMixRatio([], { official: 0.5, custom: 0.5 }, 3)
+    expect(res.picked).toEqual([])
+    expect(res.actualRatio).toEqual({ official: 0, custom: 0 })
+  })
+})
+
+describe('Task5.1: 概率边界数量（0 / 1 / N）', () => {
+  const items = [
+    { id: 'a', weight: 1 },
+    { id: 'b', weight: 1 },
+    { id: 'c', weight: 1 },
+    { id: 'd', weight: 1 }
+  ]
+
+  it('weightedRandomSelect count=0 → []', () => {
+    expect(weightedRandomSelect(items, 0)).toEqual([])
+  })
+
+  it('weightedRandomSelect count=1 → 1 个', () => {
+    expect(weightedRandomSelect(items, 1)).toHaveLength(1)
+  })
+
+  it('weightedRandomSelect count >= 池大小 → 返回全部（打乱）', () => {
+    const res = weightedRandomSelect(items, 4)
+    expect(res).toHaveLength(4)
+    expect(new Set(res.map((x) => x.id)).size).toBe(4)
+  })
+
+  it('weightedRandomSelect 空池抛错', () => {
+    expect(() => weightedRandomSelect([], 1)).toThrow('候选池为空')
+  })
+
+  it('weightedRandomSelectWithReplacement count 可大于池大小（有放回）', () => {
+    const res = weightedRandomSelectWithReplacement(items, 10)
+    expect(res).toHaveLength(10)
+  })
+
+  it('weightedRandomSelectWithReplacement 空池/零数 → []', () => {
+    expect(weightedRandomSelectWithReplacement([], 3)).toEqual([])
+    expect(weightedRandomSelectWithReplacement(items, 0)).toEqual([])
+  })
+})
+
+describe('Task5.1: 随机概率基本合理（统计近似）', () => {
+  it('加权抽取符合权重占比（放宽容差，随机性伴随小抖动）', () => {
+    // A 权重 1，B 权重 3，单次抽 1，A 理论约 25%
+    const items = [
+      { id: 'A', weight: 1 },
+      { id: 'B', weight: 3 }
+    ]
+    const N = 4000
+    let aCount = 0
+    for (let i = 0; i < N; i++) {
+      const picked = weightedRandomSelect(items, 1)
+      if (picked[0].id === 'A') aCount++
+    }
+    const ratio = aCount / N
+    expect(ratio).toBeGreaterThan(0.18) // 距 0.25 允许 ±0.07
+    expect(ratio).toBeLessThan(0.32)
+  })
+
+  it('等权重多轮抽取各自均有机会命中', () => {
+    const items = [
+      { id: 'a', weight: 1 },
+      { id: 'b', weight: 1 },
+      { id: 'c', weight: 1 }
+    ]
+    const hit = new Set<string>()
+    for (let i = 0; i < 300; i++) {
+      const picked = weightedRandomSelect(items, 1)
+      hit.add(picked[0].id)
+    }
+    // 3 个元素在 300 轮里应都被抽到过
+    expect(hit.size).toBe(3)
+  })
+
+  it('coinFlip 约各半（统计近似）', () => {
+    const N = 2000
+    let t = 0
+    for (let i = 0; i < N; i++) if (coinFlip()) t++
+    const ratio = t / N
+    expect(ratio).toBeGreaterThan(0.4)
+    expect(ratio).toBeLessThan(0.6)
   })
 })

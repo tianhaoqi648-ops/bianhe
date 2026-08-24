@@ -39,6 +39,26 @@ export interface ToolSchema {
   required?: string[]
 }
 
+/**
+ * 工具权限等级（用于默认只读权限策略，AI Agent v1.5.0 引入）。
+ * - read      ：纯查询，直接放行，无需授权
+ * - write     ：创建/修改赛事、题库、比赛、写回评审、保存历史等，需用户授权
+ * - dangerous ：删除/批量修改/文件写入/外部网络调用/清空类，需用户授权
+ */
+export type ToolPermissionTier = 'read' | 'write' | 'dangerous'
+
+/**
+ * 工具权限授权声明。
+ * 传给 execute 的 ctx.grants，标记本次调用已获得哪些工具 / 哪些权限级别的授权。
+ * 匹配规则：按 toolName 精确匹配 或 按 tier 级别匹配，二者任一命中即视为已授权。
+ */
+export interface PermissionGrant {
+  /** 已授权的工具名（精确匹配） */
+  toolName?: string
+  /** 已授权的权限级别（匹配该级别全部工具） */
+  tier?: ToolPermissionTier
+}
+
 /** 工具元数据（不含 execute 函数，用于 IPC 与 UI 显示） */
 export interface ToolMeta {
   /** 工具唯一名（与 LLM function name 对齐） */
@@ -49,6 +69,8 @@ export interface ToolMeta {
   parameters: ToolSchema
   /** 风险等级（用于决定是否需要人工确认；ToolDefinition 通过继承获得该字段） */
   riskLevel: ToolRiskLevel
+  /** 权限等级（默认 'read'；write / dangerous 执行前需授权，否则拒绝执行） */
+  tier: ToolPermissionTier
 }
 
 /**
@@ -61,6 +83,12 @@ export interface ToolExecutionContext {
   config?: LLMConfig
   /** 取消信号（agent-loop 的 AbortSignal，透传给内部 LLM 调用） */
   signal?: AbortSignal
+  /**
+   * 已授予的权限（AI Agent v1.5.0：默认只读）。write / dangerous 工具执行前，
+   * 调用方需在此声明本次已获得的授权（用户确认弹窗 / 设置页自动放行），否则被拒绝。
+   * read 工具为空数组 / 缺省即可放行。
+   */
+  grants?: PermissionGrant[]
 }
 
 /**
@@ -189,7 +217,14 @@ export interface DoneEvent {
 export interface ErrorEvent {
   type: 'error'
   sessionId: string
-  code: 'no_api_key' | 'invalid_api_key' | 'rate_limit' | 'network' | 'tool_error' | 'unknown'
+  code:
+    | 'no_api_key'
+    | 'invalid_api_key'
+    | 'rate_limit'
+    | 'network'
+    | 'tool_error'
+    | 'agent_restore_failed'
+    | 'unknown'
   message: string
 }
 
@@ -374,7 +409,14 @@ export interface RunToolRequest {
 /** agent:run-tool 结果（AI 裁判工作台） */
 export interface RunToolResult {
   success: boolean
-  code?: 'ok' | 'forbidden_tool' | 'not_found' | 'no_api_key' | 'cancelled' | 'error'
+  code?:
+    | 'ok'
+    | 'forbidden_tool'
+    | 'not_found'
+    | 'no_api_key'
+    | 'permission_denied'
+    | 'cancelled'
+    | 'error'
   message?: string
   /** 工具执行结果（成功时） */
   data?: unknown

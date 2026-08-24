@@ -167,6 +167,7 @@ export const recommendFormatTool: ToolDefinition<
     required: ['teamCount']
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args: RecommendFormatArgs): Promise<RecommendFormatResult> {
     // 1. 校验 teamCount
     const teamCount = Number(args.teamCount)

@@ -16,9 +16,17 @@ const { mockGetDefinition, mockExecute } = vi.hoisted(() => ({
 vi.mock('../../agent/tool-registry', () => ({
   getDefinition: mockGetDefinition,
   execute: mockExecute,
+  ToolPermissionError: class ToolPermissionError extends Error {
+    code = 'permission_denied'
+    constructor(toolName: string, tier: string) {
+      super(`工具「${toolName}」属于 ${tier} 级别，当前未授权执行`)
+      this.name = 'ToolPermissionError'
+    }
+  },
   register: vi.fn(),
   get: vi.fn(),
   getRiskLevel: vi.fn(),
+  getTier: vi.fn(),
   list: vi.fn(),
   toOpenAITools: vi.fn(),
   clear: vi.fn()

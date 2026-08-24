@@ -98,6 +98,8 @@ export function registerImportIpc(): void {
         let imported = 0
         let duplicates = 0
         let failed = 0
+        // T2：部分失败/警示收集。主流程不阻断，但反馈给用户（见下方 return）。
+        const warnings: string[] = []
 
         // 1. 创建批次记录（占位，imported_count=0）
         const batch = importBatchRepo.createBatch({
@@ -245,7 +247,8 @@ export function registerImportIpc(): void {
         // 6.1 新题关联题组（赛事题库 T2 桥接）：
         //   - 指定目标题组 groupIds（可多选）→ 新题关联到每个目标题组
         //   - 未指定 → 新题默认进「默认题库」
-        // 失败不阻断主流程（仅记录日志），避免因题组关联异常导致整批导入报错。
+        // T2 修复：失败不阻断主流程（本次批量导入已成功），但把部分失败
+        // 反馈到 warnings / PARTIAL_FAILURE，而非静默仅 console.error。
         if (imported > 0 && createdIds.length > 0) {
           try {
             if (groupIds && groupIds.length > 0) {
@@ -257,6 +260,8 @@ export function registerImportIpc(): void {
             }
           } catch (e) {
             console.error('[import.ipc] topic group association failed:', e)
+            const reason = e instanceof Error ? e.message : String(e)
+            warnings.push(`辩题已成功导入，但关联题组失败：${reason}`)
           }
         }
 
@@ -293,7 +298,19 @@ export function registerImportIpc(): void {
 
         return {
           success: true,
-          data: { imported, duplicates, failed, duplicateGroups, batchId: batch.id }
+          data: { imported, duplicates, failed, duplicateGroups, batchId: batch.id, warnings },
+          // T2：存在部分失败时透出 PARTIAL_FAILURE（成功导入但题组关联未完全成功）。
+          // success 保持 true——主流程（数据入库）已成功，不阻断 renderer 展示导入结果。
+          ...(warnings.length > 0
+            ? {
+                appError: {
+                  name: 'AppError',
+                  code: 'PARTIAL_FAILURE' as const,
+                  message: warnings.join('；'),
+                  userMessage: warnings.join('；')
+                }
+              }
+            : {})
         }
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }

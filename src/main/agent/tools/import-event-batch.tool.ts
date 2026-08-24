@@ -91,6 +91,7 @@ export const importEventBatchTool: ToolDefinition<
     required: ['filePath', 'fileType']
   },
   riskLevel: 'high',
+  tier: 'dangerous',
   async execute(args: ImportEventBatchArgs): Promise<ImportEventBatchResult> {
     // 1. 校验 filePath
     const filePath = typeof args.filePath === 'string' ? args.filePath.trim() : ''

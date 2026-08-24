@@ -346,6 +346,7 @@ export const judgeMatchTool: ToolDefinition<JudgeMatchArgs, JudgeMatchResult | J
       required: ['topic']
     },
     riskLevel: 'low',
+    tier: 'dangerous',
     async execute(
       args: JudgeMatchArgs,
       ctx?: { config?: LLMConfig; signal?: AbortSignal }

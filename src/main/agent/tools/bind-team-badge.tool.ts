@@ -53,6 +53,7 @@ export const bindTeamBadgeTool: ToolDefinition<
     required: ['teamId', 'badgeId']
   },
   riskLevel: 'high',
+  tier: 'dangerous',
   async execute(args: BindTeamBadgeArgs): Promise<BindTeamBadgeResult> {
     // 1. 校验入参
     const teamId = typeof args.teamId === 'string' ? args.teamId.trim() : ''

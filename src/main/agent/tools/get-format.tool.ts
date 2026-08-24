@@ -23,6 +23,7 @@ export const getFormatTool: ToolDefinition = {
     }
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args) {
     // 1. 如 args.formatId 为非空字符串，按 ID 查询指定赛制
     const formatId = args.formatId

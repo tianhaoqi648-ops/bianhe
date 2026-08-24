@@ -14,6 +14,7 @@
 // ============================================================
 
 import type { Database } from 'better-sqlite3'
+import { ensureColumn } from './helpers'
 
 /**
  * 建 round_topic_groups 表 + 索引，并给 events 加 bank_config 列。
@@ -29,10 +30,6 @@ export function createRoundTopicGroupsTable(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_round_topic_groups_group_id ON round_topic_groups(group_id);
   `)
 
-  // events 加 bank_config 列（JSON：选题模式配置），旧库无该列时补齐
-  try {
-    db.exec('ALTER TABLE events ADD COLUMN bank_config TEXT')
-  } catch {
-    /* 字段已存在 */
-  }
+  // events 加 bank_config 列（JSON：选题模式配置），旧库无该列时补齐（幂等，缺失且失败则真实抛错）
+  ensureColumn(db, 'events', 'bank_config', 'bank_config TEXT')
 }

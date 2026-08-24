@@ -71,6 +71,7 @@ export const searchTopicsTool: ToolDefinition<SearchTopicsArgs, Topic[]> = {
     }
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args: SearchTopicsArgs): Promise<Topic[]> {
     // 1. 校验并归一化 limit
     let limit = DEFAULT_LIMIT

@@ -52,6 +52,7 @@ export const listBadgesTool: ToolDefinition<ListBadgesArgs, ListBadgesResult> = 
     }
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args: ListBadgesArgs): Promise<ListBadgesResult> {
     const keyword = typeof args.keyword === 'string' ? args.keyword : ''
     const items = searchBadges(keyword)

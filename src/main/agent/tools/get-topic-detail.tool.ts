@@ -37,6 +37,7 @@ export const getTopicDetailTool: ToolDefinition<GetTopicDetailArgs, Topic> = {
     required: ['topicId']
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args: GetTopicDetailArgs): Promise<Topic> {
     // 1. 校验 topicId 非空
     if (args.topicId === undefined || args.topicId === null) {

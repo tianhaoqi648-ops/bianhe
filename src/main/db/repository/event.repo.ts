@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../index'
-import type { RandomAssignGroupResult, BackupImportStrategy } from '../../../shared/types'
+import type {
+  RandomAssignGroupResult,
+  BackupImportStrategy,
+  EventStats
+} from '../../../shared/types'
 import { bulkInsert } from './utils'
 import { topicGroupRepo } from './topic-group.repo'
 
@@ -376,6 +380,69 @@ function deleteRound(id: string): boolean {
   const stmt = db.prepare('DELETE FROM rounds WHERE id = ?')
   const result = stmt.run(id)
   return result.changes > 0
+}
+
+// ============================================================
+// 赛事批量统计
+// ============================================================
+
+/**
+ * 批量统计多个赛事的 轮次数 / 队伍数 / 已完成轮数。
+ *
+ * 用三条按 event_id 分组的聚合 SQL 一次完成，避免 N+1（原先前端对每个赛事 ×3 组 IPC）。
+ * - rounds：COUNT(*) FROM rounds GROUP BY event_id
+ * - teams：COUNT(*) FROM teams GROUP BY event_id
+ * - 已完成轮数：COUNT(DISTINCT round_id) FROM draw_sessions
+ *   与 EventManage 卡片进度环的语义一致（有抽取会话命中的去重轮次数）。
+ *
+ * @returns Map<eventId, EventStats>；包含全部入参 eventId（无数据则计数为 0）。
+ */
+function getEventStats(eventIds: string[]): Map<string, EventStats> {
+  const db = getDb()
+  const map = new Map<string, EventStats>()
+  if (!eventIds || eventIds.length === 0) return map
+
+  // 预置所有入参赛事，保证调用方读到每一项（缺数据时计数为 0，前端优雅降级）
+  for (const id of eventIds) {
+    map.set(id, { event_id: id, round_count: 0, team_count: 0, done_session_count: 0 })
+  }
+
+  const placeholders = eventIds.map(() => '?').join(',')
+
+  // 1. 轮次数
+  const roundRows = db
+    .prepare(
+      `SELECT event_id, COUNT(*) AS cnt FROM rounds WHERE event_id IN (${placeholders}) GROUP BY event_id`
+    )
+    .all(...eventIds) as Array<{ event_id: string; cnt: number }>
+  for (const r of roundRows) {
+    const row = map.get(r.event_id)
+    if (row) row.round_count = Number(r.cnt)
+  }
+
+  // 2. 队伍数
+  const teamRows = db
+    .prepare(
+      `SELECT event_id, COUNT(*) AS cnt FROM teams WHERE event_id IN (${placeholders}) GROUP BY event_id`
+    )
+    .all(...eventIds) as Array<{ event_id: string; cnt: number }>
+  for (const r of teamRows) {
+    const row = map.get(r.event_id)
+    if (row) row.team_count = Number(r.cnt)
+  }
+
+  // 3. 已完成轮数 = 有抽取会话（round_id 命中）的去重轮次数
+  const doneRows = db
+    .prepare(
+      `SELECT event_id, COUNT(DISTINCT round_id) AS cnt FROM draw_sessions WHERE event_id IN (${placeholders}) AND round_id IS NOT NULL GROUP BY event_id`
+    )
+    .all(...eventIds) as Array<{ event_id: string; cnt: number }>
+  for (const r of doneRows) {
+    const row = map.get(r.event_id)
+    if (row) row.done_session_count = Number(r.cnt)
+  }
+
+  return map
 }
 
 // ============================================================
@@ -863,6 +930,8 @@ export const eventRepo = {
   listEvents,
   updateEvent,
   deleteEvent,
+  // 赛事批量统计
+  getEventStats,
   // 轮次
   createRound,
   getRoundById,

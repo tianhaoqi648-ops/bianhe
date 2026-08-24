@@ -20,6 +20,7 @@ export const getTimerStateTool: ToolDefinition = {
     properties: {}
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute() {
     // 1. 查询最近一次计时会话
     const recent = timerSessionRepo.listRecent(1)

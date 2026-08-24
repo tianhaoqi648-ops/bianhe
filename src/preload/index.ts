@@ -83,6 +83,7 @@ import {
   type Round,
   type Team,
   type TeamHistory,
+  type EventStats,
   type DrawResult,
   type DrawSessionDetail,
   type DrawSessionItem,
@@ -196,6 +197,9 @@ const eventAPI = {
   updateEvent: (id: string, data: EventUpdateInput) =>
     invoke<ApiResponse<Event | null>>(IPC_CHANNELS.EVENT_UPDATE, id, data),
   deleteEvent: (id: string) => invoke<ApiResponse<void>>(IPC_CHANNELS.EVENT_DELETE, id),
+  /** 批量统计多赛事的 轮次数/队伍数/已完成轮数（N+1 优化，一次 IPC 替代逐赛事 ×3 组调用） */
+  statsByEvents: (eventIds: string[]) =>
+    invoke<ApiResponse<EventStats[]>>(IPC_CHANNELS.EVENT_STATS_BULK, eventIds),
   // round
   listRoundsByEvent: (eventId: string) => invoke<ApiResponse<Round[]>>(IPC_CHANNELS.ROUND_LIST_BY_EVENT, eventId),
   getRound: (id: string) => invoke<ApiResponse<Round | undefined>>(IPC_CHANNELS.ROUND_GET, id),

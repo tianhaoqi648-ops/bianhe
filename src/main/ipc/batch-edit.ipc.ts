@@ -14,7 +14,8 @@ import { ipcMain } from 'electron'
 import { topicRepo } from '../db/repository/topic.repo'
 import { batchEditHistoryRepo } from '../db/repository/batch-edit-history.repo'
 import { auditRepo } from '../db/repository/audit.repo'
-import { getDb } from '../db'
+import { withUndoLog } from '../services/undo-service'
+import { wrapWithUndo } from './utils'
 import {
   IPC_CHANNELS,
   type ApiResponse,
@@ -57,69 +58,74 @@ function buildSummary(
 
 export function registerBatchEditIpc(): void {
   // 执行批量编辑
+  // 接入 undo：以 topic store 的 'batchUpdate' action 记录撤销日志，还原批量编辑/标签批量修改。
   ipcMain.handle(
     IPC_CHANNELS.BATCH_EDIT_EXECUTE,
-    async (
+    (
       _e,
       req: BatchEditExecuteRequest
-    ): Promise<ApiResponse<BatchEditExecuteResult>> => {
-      try {
-        if (!req.topicIds || req.topicIds.length === 0) {
-          return { success: false, error: '未选择辩题' }
-        }
-        if (!req.actions || req.actions.length === 0) {
-          return { success: false, error: '未指定编辑动作' }
-        }
+    ): ApiResponse<BatchEditExecuteResult> => {
+      if (!req.topicIds || req.topicIds.length === 0) {
+        return { success: false, error: '未选择辩题' }
+      }
+      if (!req.actions || req.actions.length === 0) {
+        return { success: false, error: '未指定编辑动作' }
+      }
 
-        const db = getDb()
-
-        // 在单一事务内：批量更新 + 创建历史
-        const tx = db.transaction(() => {
-          const updateResult = topicRepo.batchUpdateTopics(
-            req.topicIds,
-            req.actions
-          )
-          const summary = buildSummary(req.actions, updateResult.affectedCount)
-          const historyId = batchEditHistoryRepo.createHistory(
-            updateResult.snapshots,
-            summary
-          )
-          return { ...updateResult, historyId }
+      // 在单一事务内：采集 before/after 快照 + 批量更新 + 创建历史
+      const response = wrapWithUndo(() =>
+        withUndoLog({
+          storeName: 'topic',
+          action: 'batchUpdate',
+          targetType: 'topic',
+          targetId: null,
+          label: `批量编辑辩题`,
+          getBefore: () => ({
+            topics: req.topicIds
+              .map((id) => topicRepo.getTopicById(id))
+              .filter((t): t is NonNullable<typeof t> => t !== undefined)
+          }),
+          execute: () => {
+            const updateResult = topicRepo.batchUpdateTopics(req.topicIds, req.actions)
+            const summary = buildSummary(req.actions, updateResult.affectedCount)
+            const historyId = batchEditHistoryRepo.createHistory(
+              updateResult.snapshots,
+              summary
+            )
+            return {
+              historyId,
+              affectedCount: updateResult.affectedCount,
+              fieldCount: updateResult.fieldCount
+            }
+          },
+          getAfter: () => ({
+            topics: req.topicIds
+              .map((id) => topicRepo.getTopicById(id))
+              .filter((t): t is NonNullable<typeof t> => t !== undefined)
+          })
         })
+      )
 
-        const result = tx()
-
-        // 审计日志（失败不阻断主流程）
+      // 审计日志（失败不阻断主流程）
+      if (response.success && response.data) {
         try {
           auditRepo.addLog({
             action: 'batch_edit_execute',
             target_type: 'topic',
-            target_id: result.historyId,
+            target_id: response.data.historyId,
             operator: 'renderer',
             detail: {
-              topicCount: result.affectedCount,
-              fieldCount: result.fieldCount,
+              topicCount: response.data.affectedCount,
+              fieldCount: response.data.fieldCount,
               actions: req.actions
             }
           })
         } catch (e) {
           console.error('[batch-edit.ipc] addLog failed:', e)
         }
-
-        return {
-          success: true,
-          data: {
-            historyId: result.historyId,
-            affectedCount: result.affectedCount,
-            fieldCount: result.fieldCount
-          }
-        }
-      } catch (e) {
-        return {
-          success: false,
-          error: e instanceof Error ? e.message : String(e)
-        }
       }
+
+      return response
     }
   )
 

@@ -36,6 +36,7 @@ export const createEventTool: ToolDefinition = {
     required: ['name']
   },
   riskLevel: 'high',
+  tier: 'write',
   async execute(args) {
     // 1. 校验 name 非空
     const name = typeof args.name === 'string' ? args.name.trim() : ''

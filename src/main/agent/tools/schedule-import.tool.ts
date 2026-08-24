@@ -126,6 +126,7 @@ export const scheduleImportTool: ToolDefinition<
     required: ['eventId', 'filePath']
   },
   riskLevel: 'high',
+  tier: 'dangerous',
   async execute(args: ScheduleImportArgs): Promise<ScheduleImportResult> {
     // 1. 校验 eventId 与 filePath
     const eventId = typeof args.eventId === 'string' ? args.eventId.trim() : ''

@@ -30,6 +30,7 @@ export default defineConfig({
       'src/main/agent/__tests__/**/*.test.ts',
       'src/main/agent/tools/__tests__/**/*.test.ts',
       'src/main/db/repository/__tests__/**/*.test.ts',
+      'src/main/db/migrations/__tests__/**/*.test.ts',
       'src/main/ipc/__tests__/**/*.test.ts'
     ],
     environment: 'node',

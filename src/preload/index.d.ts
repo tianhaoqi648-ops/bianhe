@@ -16,6 +16,7 @@ import type {
   EventFilter,
   EventCreateInput,
   EventUpdateInput,
+  EventStats,
   Round,
   RoundCreateInput,
   RoundUpdateInput,
@@ -165,6 +166,8 @@ export interface EventAPI {
   createEvent: (data: EventCreateInput) => Promise<ApiResponse<Event>>
   updateEvent: (id: string, data: EventUpdateInput) => Promise<ApiResponse<Event>>
   deleteEvent: (id: string) => Promise<ApiResponse<boolean>>
+  /** 批量统计多赛事的 轮次数/队伍数/已完成轮数（N+1 优化，一次 IPC 替代逐赛事 ×3 组调用） */
+  statsByEvents: (eventIds: string[]) => Promise<ApiResponse<EventStats[]>>
   listRoundsByEvent: (eventId: string) => Promise<ApiResponse<Round[]>>
   getRound: (id: string) => Promise<ApiResponse<Round | undefined>>
   createRound: (data: RoundCreateInput) => Promise<ApiResponse<Round>>
@@ -353,7 +356,7 @@ export interface BatchEditAPI {
 export interface UndoAPI {
   /** 撤销最近一步操作（或指定 logId） */
   undo: (req?: UndoRequest) => Promise<ApiResponse<UndoResult>>
-  /** 重做（占位，本阶段返回"暂未实现"） */
+  /** 重做最近一步撤销的操作（或指定 logId） */
   redo: (req?: RedoRequest) => Promise<ApiResponse<RedoResult>>
   /** 列出最近 N 条 undo_log（默认 50） */
   listUndoLog: (limit?: number) => Promise<ApiResponse<UndoLogEntry[]>>

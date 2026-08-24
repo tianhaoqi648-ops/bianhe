@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Event,
+  EventStats,
   EventFilter,
   EventCreateInput,
   EventUpdateInput,
@@ -28,6 +29,8 @@ interface EventState {
   events: Event[];
   total: number;
   loading: boolean;
+  /** 赛事统计缓存：event_id -> EventStats（listEvents 时一次批量拉取，卡片进度环用） */
+  eventStats: Record<string, EventStats>;
   // 当前选中赛事
   currentEvent: Event | null;
   // 当前赛事下的轮次、队伍与分组
@@ -86,6 +89,7 @@ export const useEventStore = create<EventState>((set) => ({
   events: [],
   total: 0,
   loading: false,
+  eventStats: {},
   currentEvent: null,
   rounds: [],
   teams: [],
@@ -96,6 +100,22 @@ export const useEventStore = create<EventState>((set) => ({
     const res = await window.eventAPI.listEvents(filter);
     const data = extractError<EventListResponse>(res);
     set({ events: data.items, total: data.total });
+    // N+1 优化：一次批量 IPC 拉取当前列表各赛事的 轮次数/队伍数/已完成轮数，
+    // 替代原先前端对每个赛事 ×3 组调用。个别赛事缺失时由组件回退默认值（优雅降级）。
+    const ids = data.items.map((e) => e.id);
+    let eventStats: Record<string, EventStats> = {};
+    if (ids.length > 0) {
+      try {
+        const statsRes = await window.eventAPI.statsByEvents(ids);
+        if (statsRes.success && statsRes.data) {
+          eventStats = {};
+          for (const s of statsRes.data) eventStats[s.event_id] = s;
+        }
+      } catch {
+        eventStats = {};
+      }
+    }
+    set({ eventStats });
     return data.items;
   },
 

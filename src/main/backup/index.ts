@@ -10,10 +10,16 @@
 //   - 备份文件名格式：{YYYYMMDD-HHmmss}.db
 //   - 保留最近 7 份，超出自动清理（按 mtime 排序）
 //   - 恢复：复制备份覆盖当前 db 文件（不关闭连接，由用户重启生效）
+//
+// Task3 加固：
+//   - backupDatabaseSync()：同步快照，供 schema 升级前自动备份复用（沿用本文件备份机制）
+//   - 备份文件本身为原始 .db 拷贝，天然保留数据 + schema 版本（PRAGMA user_version），
+//     恢复时校验备份的 schema 版本不高于当前应用支持的版本，避免把未来 schema 的数据回灌旧应用。
 // ============================================================
 
 import { app } from 'electron'
 import { join } from 'path'
+import type Database from 'better-sqlite3'
 import {
   copyFileSync,
   existsSync,
@@ -25,6 +31,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
+import { SCHEMA_VERSION } from '../db/migrations'
 
 /** 备份保留份数 */
 const MAX_BACKUPS = 7
@@ -153,6 +160,78 @@ export async function backupDatabase(): Promise<void> {
 }
 
 /**
+ * 同步执行一次数据库备份（供 schema 升级前自动备份复用）。
+ *
+ * 与 backupDatabase() 的区别：
+ *   - 同步（迁移流程为同步执行，无法 await）
+ *   - 返回备份文件名；db 文件不存在时返回 null
+ *   - 文件名以 `pre-migration-` 前缀标识「迁移前快照」，便于区分与运维排查
+ *
+ * 复用现有备份机制：同一 backups 目录、同一保留 7 份清理策略。
+ */
+export function backupDatabaseSync(): string | null {
+  const dbPath = getDbPath()
+  if (!existsSync(dbPath)) {
+    console.warn('[backup] DB file does not exist, skip schema-migration snapshot:', dbPath)
+    return null
+  }
+  const dir = getBackupsDir()
+  try {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+  } catch (e) {
+    console.error('[backup] mkdir failed:', e)
+    throw e
+  }
+
+  const timestamp = formatTimestamp(new Date())
+  const backupName = `pre-migration-${timestamp}.db`
+  const backupPath = join(dir, backupName)
+
+  try {
+    copyFileSync(dbPath, backupPath)
+    console.log('[backup] Pre-migration snapshot created:', backupPath)
+  } catch (e) {
+    console.error('[backup] copyFileSync (schema snapshot) failed:', e)
+    throw e
+  }
+
+  cleanupOldBackups()
+  return backupName
+}
+
+/**
+ * 读取某个 .db 文件的 schema 版本（PRAGMA user_version）。
+ *
+ * 用于恢复前校验：备份文件自身保留 version 信息，恢复时据此防止把新 schema 数据回灌旧应用。
+ * 使用动态 import 避免在模块顶层硬依赖 better-sqlite3（Electron ABI）以便单测加载本模块。
+ */
+async function getDbFileSchemaVersion(filePath: string): Promise<number> {
+  if (!existsSync(filePath)) return 0
+  let d: Database.Database | null = null
+  try {
+    const mod = (await import('better-sqlite3')) as {
+      default?: new (path: string, opts?: Record<string, unknown>) => Database.Database
+    }
+    const DbCtor = mod.default
+    if (!DbCtor) return 0
+    d = new DbCtor(filePath, { readonly: true, fileMustExist: true })
+    return (d.pragma('user_version', { simple: true }) as number) ?? 0
+  } catch {
+    return 0
+  } finally {
+    if (d) {
+      try {
+        d.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
  * 若距上次备份 >24h，则触发备份。
  *
  * - last-backup.txt 不存在或读取失败 → 触发备份
@@ -235,6 +314,19 @@ export async function restoreBackup(filename: string): Promise<void> {
   if (!existsSync(src)) {
     throw new Error(`Backup not found: ${filename}`)
   }
+
+  // 恢复前校验：备份文件的 schema 版本不得高于当前应用支持的版本，
+  // 避免把更新 schema 的库（含未来版本数据）回灌到旧应用造成数据损坏。
+  const backupVersion = await getDbFileSchemaVersion(src)
+  if (backupVersion > SCHEMA_VERSION) {
+    throw new Error(
+      `备份文件的 schema 版本（v${backupVersion}）高于当前应用支持的版本（v${SCHEMA_VERSION}），拒绝恢复。请先升级应用到最新版本。`
+    )
+  }
+  console.log(
+    `[backup] Backup schema version check passed (v${backupVersion} <= v${SCHEMA_VERSION})`
+  )
+
   const dbPath = getDbPath()
   // 先复制到临时文件再 rename，避免覆盖失败导致半写状态
   const tmp = `${dbPath}.restore-tmp`

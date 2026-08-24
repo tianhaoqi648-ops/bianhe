@@ -14,17 +14,23 @@
 
 import { BrowserWindow } from 'electron'
 import type { ApiResponse } from '../../shared/types'
+import { toApiError, toAppErrorObject } from '../../shared/app-error'
 import type { WithUndoLogResult } from '../services/undo-service'
 
 /**
  * 读操作通用包装：捕获异常返回 ApiResponse。
  * 不附带 _undoLogId（读操作无副作用，无需撤销）。
+ *
+ * T2：异常交由 toApiError 结构化分类。
+ *  - error 字段保持 string（对未知错误回退原始 message，不破坏既有判读）
+ *  - appError 字段透出结构化分类（code/userMessage），renderer 可展示中文提示
  */
 export function wrap<T>(fn: () => T): ApiResponse<T> {
   try {
     return { success: true, data: fn() }
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) }
+    const appError = toApiError(e)
+    return { success: false, error: appError.userMessage, appError: toAppErrorObject(appError) }
   }
 }
 
@@ -43,7 +49,8 @@ export function wrapWithUndo<T>(
     const { result, logId } = fn()
     return { success: true, data: result, _undoLogId: logId }
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) }
+    const appError = toApiError(e)
+    return { success: false, error: appError.userMessage, appError: toAppErrorObject(appError) }
   }
 }
 

@@ -5,7 +5,8 @@ import { mkdirSync } from 'fs'
 // 使用 ?raw 将 schema.sql 作为字符串内联进打包产物，
 // 避免 electron-vite 打包后运行期再 readFileSync 文件路径错乱的问题。
 import schemaSql from './schema.sql?raw'
-import { runMigrations } from './migrations'
+import { runMigrations, SCHEMA_VERSION, getDbSchemaVersion } from './migrations'
+import { backupDatabaseSync } from '../backup'
 import { ALL_PRESETS } from '../../shared/debate-formats/presets'
 import { formatRepo } from './repository/format.repo'
 import { initAgentSessionTable } from './repository/agent-session.repo'
@@ -168,8 +169,38 @@ function configureAndSeed(database: Database.Database): void {
   // 执行 schema.sql（建表 + 索引）
   database.exec(schemaSql)
 
+  // 迁移前安全保护（Task3）：
+  // 检测当前库 schema 版本 < 目标版本（SCHEMA_VERSION）时，先用现有 backup 机制
+  // 做一次迁移前自动快照到 backups 目录；快照失败则抛错中止本次迁移，
+  // 由 initDatabase 的降级策略提示（回滚到内存库），不冒险在无备份前提下改动结构。
+  // 全新空库（version 0）或内存库无需备份。
+  const preMigVersion = getDbSchemaVersion(database)
+  if (!database.memory && preMigVersion > 0 && preMigVersion < SCHEMA_VERSION) {
+    try {
+      const snapshot = backupDatabaseSync()
+      if (!snapshot) {
+        throw new Error('schema 升级前自动备份未生成快照，已中止迁移以免无备份改动结构')
+      }
+      console.log(
+        `[db] Pre-migration snapshot taken: ${snapshot} (v${preMigVersion} -> v${SCHEMA_VERSION})`
+      )
+    } catch (e) {
+      console.error('[db] Pre-migration backup failed, abort schema upgrade:', e)
+      throw e
+    }
+  }
+
   // 执行增量迁移（ALTER TABLE / 新表）
   runMigrations(database)
+
+  // 记录数值 schema 版本（PRAGMA user_version，落盘可靠）
+  database.pragma(`user_version = ${SCHEMA_VERSION}`)
+
+  // 记录 schema 版本（settings 表，兼容既有读取；数值 JSON）
+  const stmt = database.prepare(
+    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
+  )
+  stmt.run('schema_version', JSON.stringify(SCHEMA_VERSION))
 
   // 初始化 Agent 会话表（Task 28）
   initAgentSessionTable(database)
@@ -187,12 +218,6 @@ function configureAndSeed(database: Database.Database): void {
   } catch (e) {
     console.error('[db] Failed to seed format presets:', e)
   }
-
-  // 记录 schema 版本
-  const stmt = database.prepare(
-    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
-  )
-  stmt.run('schema_version', JSON.stringify('1'))
 }
 
 /**

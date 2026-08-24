@@ -603,3 +603,118 @@ describe('unknownValues 收集', () => {
     }
   })
 })
+
+// ============================================================
+// Task 5.4：空文件 / 重复数据 / 部分成功·部分失败
+// ============================================================
+
+describe('Task5.4: 空文件 / 空表', () => {
+  it('空工作表 → 提示「工作表为空」且无辩题', async () => {
+    const tmpPath = writeTmpXlsx([{ name: 'Sheet1', rows: [] }])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(0)
+      const allWarnings = result.warnings.join('\n')
+      expect(allWarnings).toContain('工作表为空')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('仅表头无数据行 → 无辩题但不报错', async () => {
+    const tmpPath = writeTmpXlsx([{ name: 'Sheet1', rows: [['标题', '类型']] }])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(0)
+      expect(result.mapping['标题']).toBe('title')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('Task5.4: 重复数据', () => {
+  it('重复行原样解析，不自动去重（去重由 dedup-engine 层负责）', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '类型'],
+          ['重复辩题', '价值辩'],
+          ['重复辩题', '价值辩'],
+          ['不同辩题', '政策辩']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      // 3 条都保留（含 2 条重复），引擎不做去重
+      expect(result.topics).toHaveLength(3)
+      const titles = result.topics.map((t) => t.title)
+      expect(titles.filter((t) => t === '重复辩题').length).toBe(2)
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})
+
+describe('Task5.4: 部分成功·部分失败', () => {
+  it('有效行全部导入，title 为空的行跳过并产生 warning（部分成功）', async () => {
+    const tmpPath = writeTmpXlsx([
+      {
+        name: 'Sheet1',
+        rows: [
+          ['标题', '难度'],
+          ['有效辩题一', '入门级'],
+          ['', '进阶级'], // title 为空 → 跳过
+          ['有效辩题二', '专业级']
+        ]
+      }
+    ])
+    try {
+      const result = await parseFile(tmpPath, 'xlsx')
+      expect(result.topics).toHaveLength(2)
+      expect(result.topics[0].title).toBe('有效辩题一')
+      expect(result.topics[1].title).toBe('有效辩题二')
+      const allWarnings = result.warnings.join('\n')
+      expect(allWarnings).toContain('title 为空')
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('损坏/垃圾字节（读取后无 sheet）→ 抛友好损坏错误', async () => {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `test-import-broken-${Date.now()}-${Math.random().toString(36).slice(2)}.xlsx`
+    )
+    fs.writeFileSync(tmpPath, Buffer.from('garbage-bytes'))
+    // 模拟 P2-32 的关键场景：XLSX.read 对损坏/加密字节安静地返回空工作簿（无 sheet）而不抛错
+    const spy = vi.spyOn(XLSX, 'read').mockReturnValue({ SheetNames: [], Sheets: {} } as any)
+    try {
+      await expect(parseFile(tmpPath, 'xlsx')).rejects.toThrow('文件解析失败：文件可能已损坏或已加密')
+    } finally {
+      spy.mockRestore()
+      fs.unlinkSync(tmpPath)
+    }
+  })
+
+  it('加密/其他损坏字节 → XLSX 抛错时保留既有 P2-32 友好错误', async () => {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `test-import-encrypted-${Date.now()}-${Math.random().toString(36).slice(2)}.xlsx`
+    )
+    // 写入 ZIP 魔数 + 垃圾，触发 XLSX 的「Unsupported ZIP encryption」抛错（走既有 P2-32 catch）
+    fs.writeFileSync(
+      tmpPath,
+      Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('garbage-garbage-garbage')])
+    )
+    try {
+      await expect(parseFile(tmpPath, 'xlsx')).rejects.toThrow(
+        '文件解析失败，文件可能已损坏或已加密：XLSX 文件无法读取'
+      )
+    } finally {
+      fs.unlinkSync(tmpPath)
+    }
+  })
+})

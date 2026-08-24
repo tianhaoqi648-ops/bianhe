@@ -379,6 +379,7 @@ export const liveDebateTool: ToolDefinition<
     required: ['topic', 'side']
   },
   riskLevel: 'low',
+  tier: 'dangerous',
   async execute(
     args: LiveDebateArgs,
     ctx?: { config?: LLMConfig; signal?: AbortSignal }

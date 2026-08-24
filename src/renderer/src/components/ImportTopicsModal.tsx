@@ -281,6 +281,10 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
       }
       setImportResult(res.data);
       setStep(3);
+      // T2：部分失败提示（如辩题已入库但关联题组失败），不阻断已成功部分
+      if (res.data.warnings && res.data.warnings.length > 0) {
+        toast.warning(res.data.warnings.join('；'));
+      }
       // 导入成功 Toast 带「撤销」按钮（仅当有 batchId 时）
       if (res.data.batchId) {
         const batchId = res.data.batchId;
@@ -621,10 +625,23 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
                 : '没有新辩题被导入'
             }
             subTitle={
-              <Space split={<Text type="secondary">·</Text>}>
-                <Text>新增 {importResult.imported}</Text>
-                <Text>重复 {importResult.duplicates}</Text>
-                {importResult.failed > 0 && <Text type="danger">失败 {importResult.failed}</Text>}
+              <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                <Space split={<Text type="secondary">·</Text>}>
+                  <Text>新增 {importResult.imported}</Text>
+                  <Text>重复 {importResult.duplicates}</Text>
+                  {importResult.failed > 0 && (
+                    <Text type="danger">失败 {importResult.failed}</Text>
+                  )}
+                </Space>
+                {/* T2：部分失败提示（如辩题已入库但关联题组失败） */}
+                {importResult.warnings && importResult.warnings.length > 0 && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="部分操作未完全成功"
+                    description={importResult.warnings.join('；')}
+                  />
+                )}
               </Space>
             }
             extra={[

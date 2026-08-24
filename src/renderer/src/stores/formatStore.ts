@@ -3,7 +3,13 @@
 // ============================================================
 
 import { create } from 'zustand';
+import { undoManager, registerStoreRefresher } from '../utils/undo-manager';
 import type { DebateFormat, DebateFormatData } from '../../../shared/types';
+
+// 注册 formatStore 的刷新函数（undo/redo 后调用，确保渲染层赛制列表与 DB 一致）
+registerStoreRefresher('format', () => {
+  void useFormatStore.getState().fetchAll();
+});
 
 interface FormatStoreState {
   formats: DebateFormat[];
@@ -51,6 +57,14 @@ export const useFormatStore = create<FormatStoreState>((set, get) => ({
       const res = await window.formatAPI.create(opts);
       if (res.success && res.data) {
         set((s) => ({ formats: [...s.formats, res.data!] }));
+        undoManager.pushEntry({
+          storeName: 'format',
+          action: 'create',
+          targetType: 'format',
+          targetId: res.data!.id,
+          label: `创建赛制 ${res.data!.name}`,
+          logId: res._undoLogId ?? undefined
+        });
         return res.data;
       }
       set({ error: res.error ?? '创建失败' });
@@ -68,6 +82,14 @@ export const useFormatStore = create<FormatStoreState>((set, get) => ({
         set((s) => ({
           formats: s.formats.map((f) => (f.id === id ? res.data! : f))
         }));
+        undoManager.pushEntry({
+          storeName: 'format',
+          action: 'update',
+          targetType: 'format',
+          targetId: id,
+          label: '更新赛制',
+          logId: res._undoLogId ?? undefined
+        });
         return res.data;
       }
       set({ error: res.error ?? '更新失败' });
@@ -83,6 +105,14 @@ export const useFormatStore = create<FormatStoreState>((set, get) => ({
       const res = await window.formatAPI.delete(id);
       if (res.success && res.data) {
         set((s) => ({ formats: s.formats.filter((f) => f.id !== id) }));
+        undoManager.pushEntry({
+          storeName: 'format',
+          action: 'delete',
+          targetType: 'format',
+          targetId: id,
+          label: '删除赛制',
+          logId: res._undoLogId ?? undefined
+        });
         return true;
       }
       return false;
@@ -96,6 +126,14 @@ export const useFormatStore = create<FormatStoreState>((set, get) => ({
       const res = await window.formatAPI.importFormat(data);
       if (res.success && res.data) {
         set((s) => ({ formats: [...s.formats, res.data!] }));
+        undoManager.pushEntry({
+          storeName: 'format',
+          action: 'create',
+          targetType: 'format',
+          targetId: res.data!.id,
+          label: `导入赛制 ${res.data!.name}`,
+          logId: res._undoLogId ?? undefined
+        });
         return res.data;
       }
       set({ error: res.error ?? '导入失败' });

@@ -34,7 +34,7 @@ export const HOTKEY_PRESETS: HotkeyPreset[] = [
   { id: 'global::escape', combo: 'escape', description: '退出大屏 / 关闭弹窗', scope: 'global' },
   { id: 'global::?', combo: '?', description: '显示快捷键帮助', scope: 'global' },
   { id: 'global::ctrl+z', combo: 'ctrl+z', description: '撤销最近一步操作', scope: 'global' },
-  { id: 'global::ctrl+shift+z', combo: 'ctrl+shift+z', description: '重做（暂未实现）', scope: 'global' },
+  { id: 'global::ctrl+shift+z', combo: 'ctrl+shift+z', description: '重做最近一步撤销的操作', scope: 'global' },
 
   // 抽取页
   { id: 'draw::r', combo: 'r', description: '重新抽取', scope: 'draw' },

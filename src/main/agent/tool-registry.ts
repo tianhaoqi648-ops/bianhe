@@ -16,9 +16,11 @@
 // ============================================================
 
 import type {
+  PermissionGrant,
   ToolDefinition,
   ToolExecutionContext,
   ToolMeta,
+  ToolPermissionTier,
   ToolRiskLevel,
   ToolSchema
 } from '@shared/agent-types'
@@ -76,6 +78,15 @@ export function getRiskLevel(toolName: string): ToolRiskLevel | undefined {
 }
 
 /**
+ * 按名称获取工具权限等级（默认只读策略，AI Agent v1.5.0）。
+ * @param toolName 工具名
+ * @returns 权限等级；工具不存在或未声明时回退 'read'（缺省只读）
+ */
+export function getTier(toolName: string): ToolPermissionTier {
+  return tools.get(toolName)?.tier ?? 'read'
+}
+
+/**
  * 列出所有已注册工具的元数据（不含 execute）。
  * @returns 工具元数据数组
  */
@@ -89,17 +100,62 @@ export function list(): ToolMeta[] {
 }
 
 // ============================================================
-// 执行
+// 执行（含默认只读权限门控，AI Agent v1.5.0）
 // ============================================================
 
+/** 权限拒绝错误：write / dangerous 工具未获授权时抛出（execute 调用方应捕获处理） */
+export class ToolPermissionError extends Error {
+  /** 错误码（供 IPC 层映射为 permission_denied） */
+  readonly code = 'permission_denied' as const
+  /** 被拒绝的工具名 */
+  readonly toolName: string
+  /** 该工具要求的权限等级 */
+  readonly tier: ToolPermissionTier
+  /** 授权方式说明（如何获得授权以放行） */
+  readonly howToGrant = '请在工具确认弹窗中确认执行该工具以临时授权，或在设置页关闭其确认要求。'
+
+  constructor(toolName: string, tier: ToolPermissionTier) {
+    super(
+      `工具「${toolName}」属于 ${tier} 级别，当前未授权执行。${'请在确认弹窗/设置页授予该权限后再试。'}`
+    )
+    this.name = 'ToolPermissionError'
+    this.toolName = toolName
+    this.tier = tier
+  }
+}
+
 /**
- * 执行工具。
+ * 判断一次调用是否已获得某 write/dangerous 工具的授权。
+ * @param grants 调用方声明的授权列表
+ * @param toolName 目标工具名
+ * @param tier 目标工具权限等级
+ */
+function isGranted(
+  grants: PermissionGrant[] | undefined,
+  toolName: string,
+  tier: ToolPermissionTier
+): boolean {
+  if (!grants || grants.length === 0) return false
+  return grants.some(
+    (g) => (g.toolName != null && g.toolName === toolName) || (g.tier != null && g.tier === tier)
+  )
+}
+
+/**
+ * 执行工具（含默认只读权限门控）。
+ *
+ * 权限策略：
+ *   - read 工具：直接放行，无需授权
+ *   - write / dangerous 工具：须在 ctx.grants 中声明已获授权，否则抛出 ToolPermissionError
+ *     （不执行工具体，返回权限拒绝错误）
+ *   - 工具不存在时抛 `Tool not found: ${name}`
+ *   - 工具 execute 抛错时透传原始错误
+ *
  * @param name 工具名
  * @param args 入参（来自 LLM 的 tool_call.arguments 解析后）
- * @param ctx 执行上下文（可选，含 LLM 配置/取消信号，供需要调用 LLM 的工具使用）
+ * @param ctx 执行上下文（可选；含 LLM 配置 / 取消信号 / 授权声明 grants）
  * @returns 工具执行结果
- * @throws 工具不存在时抛 `Tool not found: ${name}`
- *         工具 execute 抛错时透传原始错误
+ * @throws ToolPermissionError 未授权时抛出；工具不存在或 execute 抛错时透传原始错误
  */
 export async function execute(
   name: string,
@@ -109,6 +165,11 @@ export async function execute(
   const tool = tools.get(name)
   if (!tool) {
     throw new Error(`Tool not found: ${name}`)
+  }
+  // 默认只读门控：read 放行；write / dangerous 未授权即拒绝（不执行）
+  const tier = tool.tier ?? 'read'
+  if (tier !== 'read' && !isGranted(ctx?.grants, name, tier)) {
+    throw new ToolPermissionError(name, tier)
   }
   // 入参为空对象 {} 时正常传递（部分工具无入参）；
   // 工具内部抛错时透传原始错误，由 agent-loop 捕获处理

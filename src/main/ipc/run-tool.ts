@@ -13,7 +13,7 @@
 // ============================================================
 
 import type { RunToolRequest, RunToolResult } from '@shared/agent-types'
-import { getDefinition, execute } from '../agent/tool-registry'
+import { getDefinition, execute, ToolPermissionError } from '../agent/tool-registry'
 
 /** 裁判工具白名单（AI 裁判工作台可直调；2026-08-18 移除 rewrite_speech） */
 export const JUDGE_TOOL_NAMES: string[] = [
@@ -65,11 +65,14 @@ export async function runJudgeTool(
     }
   }
 
-  // 4. 执行工具（透传 config/signal，供裁判工具内部调 LLM 与支持取消）
+  // 4. 执行工具（透传 config/signal，供裁判工具内部调 LLM 与支持取消）。
+  //    用户在本页面显式点选工具即视为授权，故以 toolName 声明 grants，
+  //    满足默认只读权限门控（裁判工具多为 dangerous 级外部网络调用）。
   try {
     const data = await execute(req.toolName, req.args ?? {}, {
       config: req.config,
-      signal
+      signal,
+      grants: [{ toolName: req.toolName }]
     })
     // 取消优先判定（工具可能内部处理 abort 返回部分结果）
     if (signal?.aborted) {
@@ -79,6 +82,14 @@ export async function runJudgeTool(
   } catch (err) {
     if (signal?.aborted) {
       return { success: false, code: 'cancelled', message: '已取消' }
+    }
+    // 权限拒绝：返回 permission_denied 码并附授权方式说明
+    if (err instanceof ToolPermissionError) {
+      return {
+        success: false,
+        code: 'permission_denied',
+        message: err.message
+      }
     }
     return {
       success: false,

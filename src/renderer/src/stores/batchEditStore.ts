@@ -5,6 +5,7 @@
 // ============================================================
 
 import { create } from 'zustand'
+import { undoManager } from '../utils/undo-manager'
 import type {
   BatchEditExecuteRequest,
   BatchEditExecuteResult,
@@ -52,6 +53,15 @@ export const useBatchEditStore = create<BatchEditState>((set) => ({
       if (!res.success || !res.data) {
         throw new Error(res.error || '执行失败')
       }
+      // 接入 undo：以 topic store 的 batchUpdate 入栈（覆盖批量编辑辩题/标签批量修改）
+      undoManager.pushEntry({
+        storeName: 'topic',
+        action: 'batchUpdate',
+        targetType: 'topic',
+        targetId: null,
+        label: '批量编辑辩题',
+        logId: res._undoLogId ?? undefined
+      });
       return res.data
     } finally {
       set({ executing: false })

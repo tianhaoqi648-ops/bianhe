@@ -185,11 +185,8 @@ export default function EventManage() {
   // 预设卡片 hover 态
   const [hoveredPresetKey, setHoveredPresetKey] = useState<string | null>(null);
 
-  // 赛事卡片统计：每个赛事的轮次数、队伍数与已完成轮次数
-  // 已完成轮次 = 有抽取记录（DrawSession.round_id 命中）的轮次数
-  const [eventStats, setEventStats] = useState<
-    Record<string, { rounds: number; teams: number; completedRounds: number }>
-  >({});
+  // 赛事卡片统计由 eventStore.eventStats 提供（listEvents 时一次批量 IPC 拉取，N+1 优化）。
+  // 已完成轮次语义 = 有抽取记录（draw_sessions.round_id 命中）的去重轮次数，与详情视图一致。
   // 详情头部 Progress：已完成轮次（有抽取记录的轮次）/ 总轮次
   const [completedRoundIds, setCompletedRoundIds] = useState<Set<string>>(new Set());
   // 本周抽取次数（顶部 StatCard 展示）
@@ -234,42 +231,8 @@ export default function EventManage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 拉取每个赛事的轮次/队伍数量 + 已完成轮次（用于卡片进度环显示）
-  // 已完成轮次的判定方式与详情视图一致：抽取会话列表中出现的 round_id 视为已完成
-  useEffect(() => {
-    if (eventStore.events.length === 0) return;
-    void (async () => {
-      const stats: Record<string, { rounds: number; teams: number; completedRounds: number }> = {};
-      await Promise.all(
-        eventStore.events.map(async (e) => {
-          try {
-            const [roundsRes, teamsRes, sessionsRes] = await Promise.all([
-              window.eventAPI.listRoundsByEvent(e.id),
-              window.eventAPI.listTeamsByEvent(e.id),
-              window.drawAPI.listSessions({ event_id: e.id, pageSize: 1000 })
-            ]);
-            const rounds = roundsRes.success && roundsRes.data ? roundsRes.data : [];
-            const sessions =
-              sessionsRes.success && sessionsRes.data ? (sessionsRes.data.items ?? []) : [];
-            // 用 Set 对 round_id 去重，得到已完成轮次数量
-            const completedSet = new Set<string>();
-            sessions.forEach((s) => {
-              if (s.round_id) completedSet.add(s.round_id);
-            });
-            stats[e.id] = {
-              rounds: rounds.length,
-              teams: teamsRes.success && teamsRes.data ? teamsRes.data.length : 0,
-              completedRounds: completedSet.size
-            };
-          } catch {
-            stats[e.id] = { rounds: 0, teams: 0, completedRounds: 0 };
-          }
-        })
-      );
-      setEventStats(stats);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventStore.events]);
+  // 赛事卡片统计（轮次数/队伍数/已完成轮数）由 eventStore.eventStats 提供：
+  // listEvents 时一次批量 IPC 拉取（N+1 优化），本组件不再对每个赛事 ×3 组调用。
 
   // 选中赛事后加载详情
   useEffect(() => {
@@ -992,7 +955,12 @@ export default function EventManage() {
 
   // ====== 渲染：赛事卡片 ======
   const renderEventCard = (event: Event) => {
-    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0, completedRounds: 0 };
+    const stats = eventStore.eventStats[event.id] ?? {
+      event_id: event.id,
+      round_count: 0,
+      team_count: 0,
+      done_session_count: 0
+    };
     const statusInfo = event.status ? STATUS_TAG[event.status] : null;
     return (
       <Col xs={24} sm={12} md={8} lg={6} key={event.id}>
@@ -1017,8 +985,8 @@ export default function EventManage() {
               {event.allow_repeat === 1 && (
                 <Tag color="gold" style={{ margin: 0 }}>允许重复</Tag>
               )}
-              <Tooltip title={`轮次进度：${stats.completedRounds}/${stats.rounds}`}>
-                <ProgressRing current={stats.completedRounds} total={stats.rounds} size={40} />
+              <Tooltip title={`轮次进度：${stats.done_session_count}/${stats.round_count}`}>
+                <ProgressRing current={stats.done_session_count} total={stats.round_count} size={40} />
               </Tooltip>
             </Space>
           </div>
@@ -1026,12 +994,12 @@ export default function EventManage() {
             <span>
               <CalendarOutlined style={{ marginRight: 4 }} />
               <Text type="secondary" style={{ fontSize: fontSize.caption }}>轮次 </Text>
-              <Text strong>{stats.rounds}</Text>
+              <Text strong>{stats.round_count}</Text>
             </span>
             <span>
               <TeamOutlined style={{ marginRight: 4 }} />
               <Text type="secondary" style={{ fontSize: fontSize.caption }}>队伍 </Text>
-              <Text strong>{stats.teams}</Text>
+              <Text strong>{stats.team_count}</Text>
             </span>
           </div>
           {event.start_date && (
@@ -1075,7 +1043,12 @@ export default function EventManage() {
 
   // ====== 看板视图：单张赛事卡片（可拖拽） ======
   const renderBoardEventCard = (event: Event) => {
-    const stats = eventStats[event.id] ?? { rounds: 0, teams: 0 };
+    const stats = eventStore.eventStats[event.id] ?? {
+      event_id: event.id,
+      round_count: 0,
+      team_count: 0,
+      done_session_count: 0
+    };
     const group = getStatusGroup(event.status);
     const barColor = BOARD_COLUMN_COLOR[group];
     return (
@@ -1124,11 +1097,11 @@ export default function EventManage() {
         >
           <span>
             <CalendarOutlined style={{ marginRight: 4 }} />
-            轮次 <Text strong>{stats.rounds}</Text>
+            轮次 <Text strong>{stats.round_count}</Text>
           </span>
           <span>
             <TeamOutlined style={{ marginRight: 4 }} />
-            队伍 <Text strong>{stats.teams}</Text>
+            队伍 <Text strong>{stats.team_count}</Text>
           </span>
         </div>
         {event.start_date && (

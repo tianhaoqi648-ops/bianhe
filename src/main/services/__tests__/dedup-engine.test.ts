@@ -220,3 +220,91 @@ describe('findDuplicates', () => {
     expect(sizes).toEqual([2, 2])
   })
 })
+
+// ============================================================
+// Task 5.3：批量数据 / 无关题目 / 独立性补充
+// ============================================================
+
+describe('findDuplicates：批量数据（Task 5.3）', () => {
+  it('大批量互不重复辩题 → 无任何组', async () => {
+    // 每个标题用不同关键词，避免 bigram 重合触发误归组
+    const titles = [
+      '人工智能伦理治理',
+      '环境保护与经济发展',
+      '大学生创新创业教育',
+      '城市交通拥堵治理',
+      '网络隐私与个人数据',
+      '传统文化传承创新',
+      '医疗健康与公共资源',
+      '教育公平与区域发展',
+      '新能源汽车推广应用',
+      '乡村文旅融合发展',
+      '数字经济与就业结构',
+      '公共安全应急管理',
+      '青少年心理健康教育',
+      '粮食安全与耕地保护',
+      '国际文化交流互鉴'
+    ]
+    const topics = titles.map((t, i) => makeTopic(String(i + 1), t))
+    // 同一条加入 2 份用于验证唯一性处理（不同 id、相同标题）
+    const duplicated = [...topics, makeTopic('dup-a', titles[0]), makeTopic('dup-b', titles[0])]
+    const groups = await findDuplicates(duplicated)
+    // 仅 titles[0] 有 3 份 → 只有 1 个组，组内 3 条
+    expect(groups).toHaveLength(1)
+    expect(groups[0].topics).toHaveLength(3)
+    expect(groups[0].reason).toBe('exact')
+  })
+
+  it('批量含多组重复 → 每组正确归并', async () => {
+    const topics = [
+      makeTopic('1', '人工智能是否应该被禁止'),
+      makeTopic('2', '人工智能是否应该被禁止'),
+      makeTopic('3', '人工智能是否应该被禁止的'), // 距离 1 → levenshtein
+      makeTopic('4', '环保政策是否立即执行'),
+      makeTopic('5', '环保政策是否立即执行'),
+      makeTopic('6', '完全独立的一道命题'),
+      makeTopic('7', '另一个完全不同的命题'),
+      makeTopic('8', '再一个不同命题讨论')
+    ]
+    const groups = await findDuplicates(topics)
+    // 组1: 1,2,3；组2: 4,5；其余独立
+    expect(groups).toHaveLength(2)
+    const sizes = groups.map((g) => g.topics.length).sort()
+    expect(sizes).toEqual([2, 3])
+  })
+
+  it('大量无关题不互相误归组', async () => {
+    // 语义互异、彼此编辑距离 >5 且关键词重合度 <0.8 的 25 道无关题
+    const titles = [
+      '人工智能是否应该被用于教育评估',
+      '城市垃圾分类究竟由谁负责',
+      '线上教学取代线下课堂是否可行',
+      '短视频平台应否限制未成年人使用',
+      '共享单车治理的关键在政府还是企业',
+      '高校扩招是否加剧了就业压力',
+      '新能源汽车补贴是否应当取消',
+      '公共交通免费政策利大于弊还是弊大于利',
+      '外卖骑手权益保障谁之责',
+      '数字人民币普及对货币体系的影响',
+      '图书馆是否应延长夜间开放时间',
+      '电子竞技应否纳入正式体育项目',
+      '跨境数据流动如何平衡安全与发展',
+      '老旧小区改造的资金从何而来',
+      '直播带货是否值得长期信赖',
+      '城市河道生态修复的难点所在',
+      '青少年体育锻炼与学业如何兼顾',
+      '满汉全席式公务接待应否禁止',
+      '纳米科技产业化进程是否会受阻',
+      '志愿者服务时长能否折算学分',
+      '供应链国产化替代是否必然',
+      '沉浸式展览是否只是昙花一现',
+      '双碳目标下传统能源行业何去何从',
+      '预制菜进校园究竟该不该',
+      '宠物经济能否成为新增长引擎'
+    ]
+    const topics = titles.map((t, i) => makeTopic(`t${i}`, t))
+    const groups = await findDuplicates(topics)
+    // 全部语义无关，不应产生任何组
+    expect(groups).toHaveLength(0)
+  })
+})

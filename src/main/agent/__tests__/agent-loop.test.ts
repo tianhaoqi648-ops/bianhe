@@ -31,6 +31,7 @@ const {
   mockChatStream,
   mockExecute,
   mockGetRiskLevel,
+  mockGetTier,
   mockGet,
   mockList,
   mockAddMessage,
@@ -54,6 +55,7 @@ const {
   const mockChatStream = vi.fn()
   const mockExecute = vi.fn()
   const mockGetRiskLevel = vi.fn()
+  const mockGetTier = vi.fn()
   const mockGet = vi.fn()
   const mockList = vi.fn()
   const mockAddMessage = vi.fn()
@@ -77,6 +79,7 @@ const {
     mockChatStream,
     mockExecute,
     mockGetRiskLevel,
+    mockGetTier,
     mockGet,
     mockList,
     mockAddMessage,
@@ -129,6 +132,7 @@ vi.mock('../tool-registry', () => ({
   list: mockList,
   execute: mockExecute,
   getRiskLevel: mockGetRiskLevel,
+  getTier: mockGetTier,
   get: mockGet
 }))
 
@@ -170,6 +174,8 @@ vi.mock('../../db/index', () => ({
 
 // 导入被测模块（在 mock 之后）
 import { runAgentLoop } from '../agent-loop'
+// LLMError：来自 llm-client 的 mock，用于构造可被 agent-loop instanceof 识别的 LLM 错误
+import { LLMError } from '../llm-client'
 import type {
   ChatEvent,
   ChatEventWithoutSession,
@@ -251,6 +257,8 @@ beforeEach(() => {
   // 重置后无法再次捕获，会导致后续测试报「confirm handler 未捕获」。
   // 默认 mock 行为
   mockList.mockReturnValue([])
+  // 默认权限等级为 'read'（缺省只读）。各用例可按需覆写（如 write/dangerous 触发授权确认）。
+  mockGetTier.mockReturnValue('read')
   mockBuildLLMMessages.mockReturnValue([])
   mockAddMessage.mockImplementation(() => {})
   mockSetContext.mockImplementation(() => {})
@@ -293,6 +301,34 @@ describe('runAgentLoop：无 tool_calls 分支', () => {
     expect(events.some((e) => e.type === 'tool_call_start')).toBe(false)
     // 不应有 tool_call_confirm
     expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(false)
+  })
+})
+
+describe('runAgentLoop：会话恢复失败（T2）', () => {
+  it('历史恢复抛错 → 推 error(agent_restore_failed) 事件，仍继续完成对话', async () => {
+    const sessionId = 'session-restore-fail'
+    mockListBySession.mockImplementation(() => {
+      throw new Error('db unavailable')
+    })
+    mockChatStream.mockResolvedValueOnce(makeAssistantDone('你好'))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '你好',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent,
+      sessionId
+    })
+
+    const err = events.find((e) => e.type === 'error') as
+      | { type: 'error'; code: string; message: string }
+      | undefined
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('agent_restore_failed')
+    expect(err!.message).toContain('恢复会话历史失败')
+    // 恢复失败不静默：仍推送 done 完成对话（从空历史开始）
+    expect(events.some((e) => e.type === 'done')).toBe(true)
   })
 })
 
@@ -772,5 +808,556 @@ describe('runAgentLoop：多会话上下文隔离（P0-1）', () => {
     // 不持久化上下文
     expect(mockUpdateContext).not.toHaveBeenCalled()
     expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+})
+
+describe('runAgentLoop：权限等级授权确认（AI Agent v1.5.0）', () => {
+  it('dangerous 工具（riskLevel=low）→ 默认需确认，确认后带 grants 执行', async () => {
+    const toolName = 'judge_debate'
+    const toolCallId = 'call-tier-dangerous'
+    const args = { topic: 'AI', affSpeech: 'a', negSpeech: 'b' }
+
+    // dangerous 级 + 兼容旧 low risk → 依赖 tier 判定需确认（授权入口）
+    mockGetTier.mockReturnValue('dangerous')
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({
+      name: toolName,
+      description: '评审质辩',
+      riskLevel: 'low'
+    })
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('评审完成'))
+
+    mockExecute.mockResolvedValue({ dimensions: [] })
+
+    const { events, onEvent } = collectEvents()
+    const loopPromise = runAgentLoop({
+      userMessage: '评审这场辩论',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // dangerous 级 → 应有 tool_call_confirm（作为授权入口）
+    expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(true)
+
+    await simulateConfirmResult({ toolCallId, confirmed: true })
+    await loopPromise
+
+    // 确认后执行，且 ctx 携带危险级授权 grants
+    expect(mockExecute).toHaveBeenCalledWith(
+      toolName,
+      args,
+      expect.objectContaining({ grants: [{ tier: 'dangerous' }] })
+    )
+  })
+
+  it('read 工具 → 无 grants 亦执行（直接放行）', async () => {
+    const toolName = 'list_events'
+    const toolCallId = 'call-tier-read'
+    const args = {}
+
+    mockGetTier.mockReturnValue('read')
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({
+      name: toolName,
+      description: '列出赛事',
+      riskLevel: 'low'
+    })
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('完成'))
+    mockExecute.mockResolvedValue({ events: [] })
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '列出赛事',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // read 直接放行：无 confirm，无 grants
+    expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(false)
+    expect(mockExecute).toHaveBeenCalledWith(toolName, args, expect.objectContaining({ grants: [] }))
+  })
+})
+
+// ============================================================
+// Task6：Agent 专项自动测试（多会话不污染 + 错误路径完整性）
+// ============================================================
+
+describe('Task6.1：LLM 网络失败 / API key 错误', () => {
+  it('chatStream 抛 LLMError(network) → 推送 error(network)，不崩、不推 done', async () => {
+    mockChatStream.mockRejectedValueOnce(
+      new LLMError('network', '网络连接失败：ETIMEDOUT')
+    )
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '你好',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const err = events.find((e) => e.type === 'error') as
+      | { type: 'error'; code: string; message: string }
+      | undefined
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('network')
+    expect(err!.message).toContain('网络连接失败')
+    // 错误后直接结束，不推 done、不进入工具执行
+    expect(events.some((e) => e.type === 'done')).toBe(false)
+    expect(events.some((e) => e.type === 'tool_call_start')).toBe(false)
+    // 只调用一次 LLM，错误后终止循环
+    expect(mockChatStream).toHaveBeenCalledTimes(1)
+  })
+
+  it('chatStream 抛 LLMError(invalid_api_key) → 推送 error(invalid_api_key) 且 message 可理解', async () => {
+    mockChatStream.mockRejectedValueOnce(new LLMError('invalid_api_key', 'API Key 无效或已过期', 401))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '你好',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const err = events.find((e) => e.type === 'error') as
+      | { type: 'error'; code: string; message: string }
+      | undefined
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('invalid_api_key')
+    expect(err!.message).toContain('API Key')
+    expect(events.some((e) => e.type === 'done')).toBe(false)
+  })
+
+  it('chatStream 抛未知 Error → 推送 error(unknown) 且不崩', async () => {
+    mockChatStream.mockRejectedValueOnce(new Error('some internal crash'))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '你好',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const err = events.find((e) => e.type === 'error') as
+      | { type: 'error'; code: string; message: string }
+      | undefined
+    expect(err).toBeDefined()
+    expect(err!.code).toBe('unknown')
+    expect(err!.message).toBe('some internal crash')
+  })
+})
+
+describe('Task6.2：tool 不存在 / 参数非法 / 执行异常', () => {
+  it('execute 抛 Tool not found → 明确失败 success=false，不中断（继续下一轮）', async () => {
+    const toolName = 'no_such_tool'
+    const toolCallId = 'call-missing-tool'
+    const args = { keyword: 'xx' }
+
+    // 未注册工具：getTier 缺省 read（默认 mock），shouldConfirm 走兼容旧规则
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue(undefined)
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('我无法找到该工具'))
+
+    mockExecute.mockRejectedValue(new Error(`Tool not found: ${toolName}`))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '调用一个不存在的工具',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent).toBeDefined()
+    expect(resultEvent!.success).toBe(false)
+    expect(resultEvent!.error).toContain('Tool not found')
+    expect(resultEvent!.toolName).toBe(toolName)
+    // 工具失败不崩、不污染主循环：仍可完成对话
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('tool 参数为非法 JSON → 解析失败不崩，以空对象继续执行', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-bad-args'
+
+    // 构造 arguments 为非法的 JSON 字符串
+    const badMsg: AssistantMessage = {
+      role: 'assistant',
+      content: '即将调用 search_topics',
+      tool_calls: [
+        {
+          id: toolCallId,
+          type: 'function',
+          function: { name: toolName, arguments: '{oops not json' }
+        }
+      ]
+    }
+
+    mockChatStream
+      .mockResolvedValueOnce(badMsg)
+      .mockResolvedValueOnce(makeAssistantDone('完成'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    mockExecute.mockResolvedValue({ topics: [] })
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // 参数非法 → execute 以空对象 {} 兜底调用，不崩
+    expect(mockExecute).toHaveBeenCalledWith(toolName, {}, expect.anything())
+    expect(events.some((e) => e.type === 'tool_call_result')).toBe(true)
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('tool 执行异常（抛 Error）→ success=false 明确失败，错误追加到历史', async () => {
+    const toolName = 'create_topic'
+    const toolCallId = 'call-exc'
+    const args = { title: 'X' }
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('收到，已处理'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '创建', riskLevel: 'low' })
+    mockExecute.mockRejectedValue(new Error('数据库写失败'))
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '创建辩题',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent).toBeDefined()
+    expect(resultEvent!.success).toBe(false)
+    expect(resultEvent!.error).toBe('数据库写失败')
+    // 错误并未中断对话
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('风险修复：tool 返回 { success:false }（不抛错）→ 视为失败 success=false 且反馈失败信息', async () => {
+    // 生产风险修复：工具内部把失败封装成「成功返回值」而非抛错时，
+    // agent-loop 应识别 success:false 并标记为失败，把失败信息反馈给 LLM（不污染会话）。
+    const toolName = 'search_topics'
+    const toolCallId = 'call-wrapped-success'
+    const args = { keyword: 'AI' }
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('完成'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    // 工具返回业务失败但未 throw
+    mockExecute.mockResolvedValue({ success: false, error: '内部校验失败' } as never)
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    // 显式 success:false → 不再被当成功
+    expect(resultEvent!.success).toBe(false)
+    // 事件携带失败信息
+    expect(resultEvent!.error).toContain('内部校验失败')
+    // 不中断循环，仍可完成对话
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('风险修复：tool 返回 { success:false, error:{userMessage} } → 反馈 userMessage 给 LLM', async () => {
+    const toolName = 'create_topic'
+    const toolCallId = 'call-fail-obj'
+    const args = { title: 'X' }
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('收到'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '创建', riskLevel: 'low' })
+    mockExecute.mockResolvedValue({
+      success: false,
+      error: { userMessage: '辩题已存在，请换一个' }
+    } as never)
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '创建辩题',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent!.success).toBe(false)
+    expect(resultEvent!.error).toContain('辩题已存在，请换一个')
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('风险修复：tool 返回成功对象（success:true）→ 仍标 success=true 不误判', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-ok-explicit'
+    const args = { keyword: 'AI' }
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('完成'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    mockExecute.mockResolvedValue({ success: true, topics: [{ title: 'AI' }] } as never)
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent!.success).toBe(true)
+    expect(resultEvent!.result).toEqual({ success: true, topics: [{ title: 'AI' }] })
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+})
+
+describe('Task6.3：tool 返回超长结果 / 最大循环次数', () => {
+  it('tool 返回超长结果 → 正常标记 success=true 且不崩', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-huge-result'
+    const args = { keyword: 'AI' }
+
+    // 构造一个很大的结果对象（嵌套 + 长字符串）
+    const hugeText = 'A'.repeat(200_000)
+    const hugeResult = { topics: [{ title: hugeText }, { title: hugeText }], big: true }
+
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('完成'))
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    mockExecute.mockResolvedValue(hugeResult)
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent).toBeDefined()
+    expect(resultEvent!.success).toBe(true)
+    // 超长结果不崩会话，仍正常完成
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+
+  it('LLM 每轮都发 tool_call → 达到 MAX_ITERATIONS 终止，推送 done，不无限循环', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-infinite'
+
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    mockExecute.mockResolvedValue({ ok: true })
+
+    // LLM 持续返回 tool_call（共 MAX_ITERATIONS=5 轮），永不返回无 tool_calls 的完成消息
+    for (let i = 0; i < 5; i++) {
+      mockChatStream.mockResolvedValueOnce(
+        makeAssistantWithToolCall(`${toolCallId}-${i}`, toolName, {})
+      )
+    }
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '一直调用工具',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    // 只调用 5 次 LLM（对应 MAX_ITERATIONS）
+    expect(mockChatStream).toHaveBeenCalledTimes(5)
+    // 终止提示 + done，避免无限循环
+    expect(events.some((e) => e.type === 'delta' && e.text.includes('最大工具调用次数'))).toBe(true)
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+  })
+})
+
+describe('Task6.4：cancel / confirm / confirm 超时流转', () => {
+  it('预取消：signal 已 aborted → 推送 done，不调用 LLM、不崩溃', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '你好',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent,
+      signal: controller.signal
+    })
+
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+    expect(mockChatStream).not.toHaveBeenCalled()
+  })
+
+  it('轮次中途取消：第一轮工具执行后 abort → 下一轮循环检测到并终止', async () => {
+    const toolName = 'search_topics'
+    const toolCallId = 'call-mid-cancel'
+    const controller = new AbortController()
+
+    // 第一次 LLM 返回 tool_call，并在执行工具时触发 abort
+    mockChatStream.mockImplementationOnce(async () => {
+      return makeAssistantWithToolCall(toolCallId, toolName, { keyword: 'AI' })
+    })
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({ name: toolName, description: '搜索', riskLevel: 'low' })
+    mockExecute.mockImplementationOnce(async () => {
+      controller.abort()
+      return { topics: [] }
+    })
+
+    const { events, onEvent } = collectEvents()
+    await runAgentLoop({
+      userMessage: '搜索',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent,
+      signal: controller.signal
+    })
+
+    // 工具已执行一次，随后在下一轮循环开始检查到 abort → 推 done 终止
+    expect(mockExecute).toHaveBeenCalledTimes(1)
+    expect(events.some((e) => e.type === 'tool_call_result')).toBe(true)
+    expect(events.some((e) => e.type === 'done')).toBe(true)
+    // 第二轮未再调用 LLM
+    expect(mockChatStream).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Task6.6：权限分级在 agent-loop 中按授权放行', () => {
+  it('write 工具（未配置规则）→ 默认需确认作为授权入口，确认后带 grants(tier=write) 执行', async () => {
+    const toolName = 'create_event'
+    const toolCallId = 'call-tier-write'
+    const args = { name: '赛事X' }
+
+    mockGetTier.mockReturnValue('write')
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({
+      name: toolName,
+      description: '创建赛事',
+      riskLevel: 'low'
+    })
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('已创建'))
+    mockExecute.mockResolvedValue({ id: 'evt-1' })
+
+    const { events, onEvent } = collectEvents()
+    const loopPromise = runAgentLoop({
+      userMessage: '创建赛事',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    // write 级 → 默认需确认（授权入口）
+    expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(true)
+
+    await simulateConfirmResult({ toolCallId, confirmed: true })
+    await loopPromise
+
+    // 确认后执行，且 ctx 携带 write 级授权
+    expect(mockExecute).toHaveBeenCalledWith(
+      toolName,
+      args,
+      expect.objectContaining({ grants: [{ tier: 'write' }] })
+    )
+  })
+
+  it('dangerous 工具取消（confirmed=false）→ 不执行，未获得授权', async () => {
+    const toolName = 'judge_debate'
+    const toolCallId = 'call-tier-danger-cancel'
+    const args = { topic: 'AI' }
+
+    mockGetTier.mockReturnValue('dangerous')
+    mockGetRiskLevel.mockReturnValue('low')
+    mockGet.mockReturnValue({
+      name: toolName,
+      description: '评审质辩',
+      riskLevel: 'low'
+    })
+    mockChatStream
+      .mockResolvedValueOnce(makeAssistantWithToolCall(toolCallId, toolName, args))
+      .mockResolvedValueOnce(makeAssistantDone('已取消'))
+    mockExecute.mockResolvedValue({ ok: true })
+
+    const { events, onEvent } = collectEvents()
+    const loopPromise = runAgentLoop({
+      userMessage: '评审',
+      systemPrompt: 'test',
+      config: MOCK_CONFIG,
+      onEvent
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(events.some((e) => e.type === 'tool_call_confirm')).toBe(true)
+
+    await simulateConfirmResult({ toolCallId, confirmed: false })
+    await loopPromise
+
+    // 未确认 → 不执行工具（无授权不放行）
+    expect(mockExecute).not.toHaveBeenCalled()
+    const resultEvent = events.find(
+      (e) => e.type === 'tool_call_result'
+    ) as Extract<ChatEvent, { type: 'tool_call_result' }> | undefined
+    expect(resultEvent!.success).toBe(false)
+    expect(resultEvent!.error).toBe('用户取消了该操作')
   })
 })

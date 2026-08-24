@@ -36,7 +36,7 @@ import type {
   AgentMessageRecord
 } from '@shared/agent-types'
 import { chatStream, LLMError } from './llm-client'
-import { list, execute, getRiskLevel, get } from './tool-registry'
+import { list, execute, getRiskLevel, getTier, get } from './tool-registry'
 import {
   addMessage,
   buildLLMMessages,
@@ -195,7 +195,10 @@ function appendMessage(sessionId: string | undefined, msg: Message): void {
  * - 上下文：agent_sessions.contextJson 恢复为 AgentContext
  * 无 sessionId 时清空内存历史（防止无会话场景串话）。
  */
-function restoreSession(sessionId: string | undefined): void {
+function restoreSession(
+  sessionId: string | undefined,
+  onError?: (userMessage: string) => void
+): void {
   if (!sessionId) {
     setMessages(sessionId, [])
     return
@@ -205,6 +208,7 @@ function restoreSession(sessionId: string | undefined): void {
     setMessages(sessionId, history)
   } catch (e) {
     console.error('[agent-loop] 恢复会话历史失败：', e)
+    onError?.('恢复会话历史失败，本次对话将从头开始（本地历史已清空）')
     setMessages(sessionId, [])
   }
   try {
@@ -356,12 +360,16 @@ function loadConfirmRules(): ToolConfirmRule[] | null {
 }
 
 /**
- * 判断工具是否需要人工确认（Task 32.1）。
+ * 判断工具是否需要人工确认（Task 32.1；AI Agent v1.5.0 起并入默认只读权限策略）。
  *
  * 判断优先级：
  *   1. 用户在 settings 中配置了该工具的规则 → 以用户配置为准
- *   2. 未配置 → 按默认规则：riskLevel 为 high/medium 需确认，low 不需确认
- *   3. riskLevel 缺失（工具未注册或未声明风险等级）→ 不需确认
+ *   2. 未配置 → 默认只读策略：权限等级为 write / dangerous 的工具默认需确认（作为授权入口）
+ *   3. 未配置且权限等级为 read → 按兼容旧规则：riskLevel 为 high/medium 需确认，low 不需确认
+ *   4. 权限等级或 riskLevel 缺失（工具未注册）→ 不需确认
+ *
+ * 说明：write / dangerous 工具的人工确认弹窗即用户「授权」入口——用户在弹窗中确认后，
+ * agent-loop 才向 execute 传递 grants 使工具可执行；确认/超时/用户配置为关闭时视为未授权。
  *
  * @param toolName 工具名
  * @param rules 用户配置的确认规则（可为 null）
@@ -377,12 +385,17 @@ function shouldConfirm(
       return matched.requireConfirm
     }
   }
-  // 2. 未配置 → 按默认规则：high/medium 需确认，low 不需确认
+  // 2. 未配置 → 默认只读策略：write / dangerous 需确认（授权入口）
+  const tier = getTier(toolName)
+  if (tier === 'write' || tier === 'dangerous') {
+    return true
+  }
+  // 3. 兼容旧规则：read 工具按 riskLevel 决定（high/medium 需确认，low 不需确认）
   const riskLevel = getRiskLevel(toolName)
   if (riskLevel === 'high' || riskLevel === 'medium') {
     return true
   }
-  // 3. low 或缺失 → 不需确认
+  // 4. read 且 low，或权限/风险等级缺失 → 不需确认
   return false
 }
 
@@ -419,12 +432,47 @@ function shouldConfirm(
  *
  * @param params 入参
  */
+
+/**
+ * 判断工具返回值是否代表「业务失败」。
+ * 部分工具把失败封装成「正常返回」的对象（显式声明 success === false 并携带 error 信息），
+ * 而非向上抛错。此时 agent-loop 不能再按「未抛错」一律标记 success:true 反馈 LLM，
+ * 否则会误导会话把失败当成功。
+ *
+ * @param result 工具 execute 的返回值
+ * @returns true 表示该返回值显式声明了业务失败
+ */
+function isToolResultFailure(result: unknown): result is Record<string, unknown> {
+  if (typeof result !== 'object' || result === null) return false
+  return (result as Record<string, unknown>)['success'] === false
+}
+
+/**
+ * 从失败返回值中提取可反馈给 LLM 的失败信息。
+ * 优先取 error.userMessage / error.message（错误对象形式），其次取 error 字符串，
+ * 均取不到时回退通用兜底文案。
+ */
+function extractToolError(result: Record<string, unknown>): string {
+  const err = result['error']
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>
+    if (typeof e['userMessage'] === 'string' && e['userMessage']) return e['userMessage']
+    if (typeof e['message'] === 'string' && e['message']) return e['message']
+  }
+  if (typeof err === 'string' && err) return err
+  return '工具执行失败'
+}
+
 export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
   const { userMessage, systemPrompt, context, config, onEvent, signal, sessionId } = params
 
   try {
     // 0. 恢复会话历史与业务上下文（无 sessionId 时清空内存历史，防止串话）
-    restoreSession(sessionId)
+    // T2：会话历史恢复失败时向前端推 {type:'error'}（复用 agent 事件链路），
+    //     而非静默仅 console.error。恢复失败仍继续对话（从空历史开始）。
+    restoreSession(sessionId, (msg) =>
+      onEvent({ type: 'error', code: 'agent_restore_failed', message: msg })
+    )
 
     // 1. 更新业务上下文（如有）。
     //    注意：restoreSession 已恢复会话持久化的上下文，此处 params.context
@@ -555,22 +603,44 @@ export async function runAgentLoop(params: RunAgentLoopParams): Promise<void> {
         }
       }
 
-      // 执行工具（AI 裁判 2026-08-18：透传 config/signal 供需调用 LLM 的工具使用）
+      // 执行工具（AI 裁判 2026-08-18：透传 config/signal 供需调用 LLM 的工具使用；
+      // AI Agent v1.5.0：非 read 工具按权限等级传递 grants，作为默认只读策略的门控兑现。
+      // read 工具直接放行；write / dangerous 工具须在此前经用户确认（见上）或设置页自动放行）
+      const tier = getTier(toolName)
+      const grants = tier !== 'read' ? [{ tier }] : []
       try {
-        const result = await execute(toolName, effectiveArgs, { config, signal })
-        onEvent({
-          type: 'tool_call_result',
-          toolCallId: toolCall.id,
-          toolName,
-          success: true,
-          result
-        })
-        // 将工具成功结果加入会话历史（内存 + 按 sessionId 落库）
-        appendMessage(sessionId, {
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: JSON.stringify(result)
-        })
+        const result = await execute(toolName, effectiveArgs, { config, signal, grants })
+        if (isToolResultFailure(result)) {
+          // 工具正常返回但显式声明业务失败（success:false）：视为失败，反馈失败信息给 LLM。
+          // 不标成功、不中断循环、不污染会话（与「抛错」路径同语义）。
+          const errorMsg = extractToolError(result)
+          onEvent({
+            type: 'tool_call_result',
+            toolCallId: toolCall.id,
+            toolName,
+            success: false,
+            error: errorMsg
+          })
+          appendMessage(sessionId, {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: errorMsg })
+          })
+        } else {
+          onEvent({
+            type: 'tool_call_result',
+            toolCallId: toolCall.id,
+            toolName,
+            success: true,
+            result
+          })
+          // 将工具成功结果加入会话历史（内存 + 按 sessionId 落库）
+          appendMessage(sessionId, {
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result)
+          })
+        }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err)
         onEvent({

@@ -119,6 +119,7 @@ export const detectStageTool: ToolDefinition<DetectStageArgs, DetectStageResult 
       required: ['speech']
     },
     riskLevel: 'low',
+    tier: 'dangerous',
     async execute(
       args: DetectStageArgs,
       ctx?: { config?: LLMConfig; signal?: AbortSignal }

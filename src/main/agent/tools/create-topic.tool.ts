@@ -75,6 +75,7 @@ export const createTopicTool: ToolDefinition<CreateTopicArgs, Topic> = {
     required: ['title']
   },
   riskLevel: 'medium',
+  tier: 'write',
   async execute(args: CreateTopicArgs): Promise<Topic> {
     // 1. 校验 title 非空
     if (args.title === undefined || args.title === null) {

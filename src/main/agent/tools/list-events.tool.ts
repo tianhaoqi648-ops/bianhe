@@ -22,6 +22,7 @@ export const listEventsTool: ToolDefinition = {
     }
   },
   riskLevel: 'low',
+  tier: 'read',
   async execute(args) {
     // 构造过滤条件（status 可选）
     const filter: EventFilter = {}

@@ -8,7 +8,8 @@ import { formatRepo } from '../db/repository/format.repo'
 import { ALL_PRESETS } from '../../shared/debate-formats/presets'
 import type { DebateFormatData } from '../../shared/types'
 // L3 修复：使用公共 wrap 函数，避免重复定义
-import { wrap } from './utils'
+import { withUndoLog } from '../services/undo-service'
+import { wrap, wrapWithUndo } from './utils'
 
 /**
  * P2-23：参数校验辅助函数。
@@ -42,25 +43,53 @@ export function registerFormatIpc(): void {
   )
 
   ipcMain.handle(IPC_CHANNELS.FORMAT_CREATE, (_e, opts: { name: string; description?: string; formatData: DebateFormatData }) =>
-    wrap(() => {
+    wrapWithUndo(() => {
       assertParam(opts && typeof opts === 'object', '参数 opts 必须为对象')
       assertNonEmptyString(opts.name, 'opts.name')
-      return formatRepo.create(opts)
+      return withUndoLog({
+        storeName: 'format',
+        action: 'create',
+        targetType: 'format',
+        targetId: null,
+        label: `创建赛制 ${opts.name}`,
+        getBefore: () => null,
+        execute: () => formatRepo.create(opts),
+        getAfter: (result) => result
+      })
     })
   )
 
   ipcMain.handle(IPC_CHANNELS.FORMAT_UPDATE, (_e, id: string, opts: { name?: string; description?: string; formatData?: DebateFormatData }) =>
-    wrap(() => {
+    wrapWithUndo(() => {
       assertNonEmptyString(id, 'id')
       assertParam(opts && typeof opts === 'object', '参数 opts 必须为对象')
-      return formatRepo.update(id, opts)
+      return withUndoLog({
+        storeName: 'format',
+        action: 'update',
+        targetType: 'format',
+        targetId: id,
+        label: `更新赛制`,
+        getBefore: () => formatRepo.getById(id),
+        execute: () => formatRepo.update(id, opts),
+        getAfter: () => formatRepo.getById(id)
+      })
     })
   )
 
   ipcMain.handle(IPC_CHANNELS.FORMAT_DELETE, (_e, id: string) =>
-    wrap(() => {
+    wrapWithUndo(() => {
       assertNonEmptyString(id, 'id')
-      return formatRepo.delete(id)
+      const before = formatRepo.getById(id)
+      return withUndoLog({
+        storeName: 'format',
+        action: 'delete',
+        targetType: 'format',
+        targetId: id,
+        label: `删除赛制 ${before?.name ?? id.slice(0, 8)}`,
+        getBefore: () => before,
+        execute: () => formatRepo.delete(id),
+        getAfter: () => null
+      })
     })
   )
 
@@ -77,10 +106,19 @@ export function registerFormatIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.FORMAT_IMPORT,
     (_e, data: { name: string; description?: string; formatData: DebateFormatData }) =>
-      wrap(() => {
+      wrapWithUndo(() => {
         assertParam(data && typeof data === 'object', '参数 opts 必须为对象')
         assertNonEmptyString(data.name, 'opts.name')
-        return formatRepo.importFormat(data)
+        return withUndoLog({
+          storeName: 'format',
+          action: 'create',
+          targetType: 'format',
+          targetId: null,
+          label: `导入赛制 ${data.name}`,
+          getBefore: () => null,
+          execute: () => formatRepo.importFormat(data),
+          getAfter: (result) => result
+        })
       })
   )
 

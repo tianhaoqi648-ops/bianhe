@@ -9,6 +9,9 @@
 import type { CandidateField } from './constants'
 import type { DebateFormatData, StageSide, TimerTheme } from './debate-formats/types'
 import type { AgentAPI } from './agent-types'
+import type { AppError } from './app-error'
+
+export type { AppError, AppErrorCode } from './app-error'
 
 // ---------- 自定义字段相关类型 ----------
 
@@ -161,6 +164,20 @@ export interface EventUpdateInput {
   status?: string | null
   /** 是否允许辩题重复（0=不允许, 1=允许） */
   allow_repeat?: number
+}
+
+/**
+ * 赛事统计（批量统计 IPC EVENT_STATS_BULK 返回的一行）。
+ * - round_count：赛事下的轮次数（rounds 表按 event_id 计数）
+ * - team_count：赛事下的队伍数（teams 表按 event_id 计数）
+ * - done_session_count：赛事「已完成轮数」= 有抽取会话（draw_sessions.round_id 命中）的去重轮次数。
+ *   与 EventManage 卡片进度环的语义保持一致（原来是逐个赛事拉 listSessions 后对 round_id 去重）。
+ */
+export interface EventStats {
+  event_id: string
+  round_count: number
+  team_count: number
+  done_session_count: number
 }
 
 export interface Round {
@@ -477,6 +494,12 @@ export interface ApiResponse<T = unknown> {
   success: boolean
   data?: T
   error?: string
+  /**
+   * T2 结构化错误信息（可选，扩展字段）。
+   * 为兼容既有调用方，ApiResponse.error 保持 string 不变；
+   * 识别出具体分类时额外透传 appError，renderer 可据此展示中文 userMessage。
+   */
+  appError?: AppError
   /**
    * 撤销日志 ID（仅写操作返回）。
    * - string：成功创建 undo_log，可用于精确撤销/重做
@@ -1368,6 +1391,8 @@ export const IPC_CHANNELS = {
   EVENT_CREATE: 'event:create',
   EVENT_UPDATE: 'event:update',
   EVENT_DELETE: 'event:delete',
+  // 批量统计多赛事的 轮次数/队伍数/已完成轮数（N+1 优化，一次 IPC 替代逐赛事 ×3 组调用）
+  EVENT_STATS_BULK: 'event:statsBulk',
   // round
   ROUND_LIST_BY_EVENT: 'round:listByEvent',
   ROUND_GET: 'round:get',
@@ -1619,6 +1644,12 @@ export interface ImportExecuteResult {
   }>
   /** 本次导入的批次 id（用于撤销） */
   batchId?: string
+  /**
+   * T2 部分失败/警示信息。写入不阻断主流程但需要反馈给用户时（如
+   * 「新题已入库但关联目标题组失败」），在此透出非空数组；renderer 据此
+   * 展示部分失败提示。
+   */
+  warnings?: string[]
 }
 
 /** 导入批次记录 */
@@ -1911,7 +1942,7 @@ export interface BatchEditRevertResult {
 export interface UndoLogEntry {
   id: string
   created_at: string
-  store_name: 'topic' | 'event' | 'draw' | 'customField' | 'settings'
+  store_name: 'topic' | 'event' | 'draw' | 'format' | 'customField' | 'settings'
   action: string
   target_type: string
   target_id: string | null

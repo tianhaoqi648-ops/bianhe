@@ -9,6 +9,17 @@
 //   2. 每个 Migration.up 用 try/catch 包裹 ALTER TABLE，
 //      SQLite 不支持 ADD COLUMN IF NOT EXISTS，靠异常捕获双保险
 //   3. initDatabase() 在 db.exec(schemaSql) 后调用 runMigrations(db)
+//
+// Task3 加固（在现有机制上增强，不推翻、不丢数据）：
+//   3.1 引入数值 schema version：SCHEMA_VERSION = MIGRATIONS.length，
+//       version 即迁移在排序后的序号（i+1），用 PRAGMA user_version 落盘。
+//       getDbSchemaVersion() 在 __migrations 已应用 id 与 user_version 间取大者，
+//       兼容「旧库只靠 __migrations 追踪、user_version 从未写入」的情况。
+//   3.2 事务执行：每个迁移默认包在 db.transaction() 中（迁移 DDL + 写 __migrations
+//       记录同事务，失败整体回滚且不记应用）；仅 20260902 因须临时切 foreign_keys
+//       pragma（transaction 内为 no-op）标记 transactional:false。
+//       关键迁移失败 → 抛错中止并提示（不静默标成功）；optional 迁移失败 → 明确日志跳过。
+//   3.3 迁移前备份：由 db/index.ts 在检测到 schema 升级时调用 backup 快照（见 backup/index.ts）。
 // ============================================================
 
 import type { Database } from 'better-sqlite3'
@@ -21,10 +32,14 @@ import { addTeamHistoryTopicTitle } from './20260905_add_team_history_topic_titl
 import { createJudgeHistoryTable } from './20260912_create_judge_history'
 import { createTopicGroupsTable } from './20260913_create_topic_groups'
 import { createRoundTopicGroupsTable } from './20260914_create_round_topic_groups'
+import { ensureColumn, ensureIndex } from './helpers'
 
 interface Migration {
   id: string
   up: (db: Database) => void
+  /** 是否包在事务中执行（默认 true）。仅需临时切 pragma 的迁移设 false。 */
+  transactional?: boolean
+  /** 可选迁移：失败仅记录日志跳过，不阻断后续迁移。 */
   optional?: boolean
 }
 
@@ -32,17 +47,8 @@ const MIGRATIONS: Migration[] = [
   {
     id: '20260726_add_batch_id_to_topics',
     up: (db) => {
-      // SQLite 不支持 ADD COLUMN IF NOT EXISTS，用异常捕获
-      try {
-        db.exec('ALTER TABLE topics ADD COLUMN batch_id TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_topics_batch_id ON topics(batch_id)')
-      } catch {
-        /* 索引已存在 */
-      }
+      ensureColumn(db, 'topics', 'batch_id', 'batch_id TEXT')
+      ensureIndex(db, 'CREATE INDEX IF NOT EXISTS idx_topics_batch_id ON topics(batch_id)')
     }
   },
   {
@@ -68,11 +74,7 @@ const MIGRATIONS: Migration[] = [
     id: '20260726_add_custom_data_to_topics',
     up: (db) => {
       // 为 topics 表添加 custom_data JSON 列，存储自定义字段值
-      try {
-        db.exec('ALTER TABLE topics ADD COLUMN custom_data TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      ensureColumn(db, 'topics', 'custom_data', 'custom_data TEXT')
     }
   },
   {
@@ -229,98 +231,52 @@ const MIGRATIONS: Migration[] = [
     id: '20260727_add_stage_remaining_cache_to_timer_sessions',
     up: (db) => {
       // 为 timer_sessions 表添加 stage_remaining_cache JSON 列，存储各环节最近离开时的 remainingMs
-      // 用于 prevStage 完全保留策略
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN stage_remaining_cache TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 用于 prevStage 完全保留策略。
+      // 注意：本迁移排序早于 20260728_create_timer_tables，全新库执行时表尚不存在，
+      //       返回 'table-not-exists' 优雅跳过（后续建表会带该列）。
+      ensureColumn(db, 'timer_sessions', 'stage_remaining_cache', 'stage_remaining_cache TEXT')
     }
   },
   {
     id: '20260730_add_free_debate_remaining_to_timer_sessions',
     up: (db) => {
       // 为 timer_sessions 表添加 aff_remaining_ms / neg_remaining_ms 字段
-      // 用于持久化自由辩论环节双方独立计时器
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_remaining_ms INTEGER')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_remaining_ms INTEGER')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 用于持久化自由辩论环节双方独立计时器（全新库表尚不存在时由后续建表带列）
+      ensureColumn(db, 'timer_sessions', 'aff_remaining_ms', 'aff_remaining_ms INTEGER')
+      ensureColumn(db, 'timer_sessions', 'neg_remaining_ms', 'neg_remaining_ms INTEGER')
     }
   },
   {
     id: '20260731_add_undone_at_to_undo_log',
     up: (db) => {
       // 为 undo_log 表添加 undone_at 字段，用于实现 Redo 功能
-      // executeUndo 不再删除 log，而是标记 undone_at；executeRedo 清除 undone_at
-      try {
-        db.exec('ALTER TABLE undo_log ADD COLUMN undone_at TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      ensureColumn(db, 'undo_log', 'undone_at', 'undone_at TEXT')
       // 创建 redo 队列索引（仅 undone_at IS NOT NULL 的行）
-      try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_undo_log_undone_at ON undo_log(undone_at) WHERE undone_at IS NOT NULL')
-      } catch {
-        /* 索引已存在 */
-      }
+      ensureIndex(db, 'CREATE INDEX IF NOT EXISTS idx_undo_log_undone_at ON undo_log(undone_at) WHERE undone_at IS NOT NULL')
     }
   },
   {
     id: '20260729_add_snapshot_columns_to_draw_session_items',
     up: (db) => {
-      // 为 draw_session_items 表添加冗余快照列：
-      //   topic_title / team_a_name / team_b_name
-      // 用于辩题或队伍硬删除后仍能显示原始标题/名称，避免出现 ID 片段
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN topic_title TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_a_name TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_b_name TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 为 draw_session_items 表添加冗余快照列
+      ensureColumn(db, 'draw_session_items', 'topic_title', 'topic_title TEXT')
+      ensureColumn(db, 'draw_session_items', 'team_a_name', 'team_a_name TEXT')
+      ensureColumn(db, 'draw_session_items', 'team_b_name', 'team_b_name TEXT')
     }
   },
   {
     id: '20260729_add_session_id_to_team_history',
     up: (db) => {
       // 为 team_history 表添加 session_id 列，用于确认抽取结果时关联去重
-      // （重抽时先用 session_id 删除旧历史再写入新历史）
-      try {
-        db.exec('ALTER TABLE team_history ADD COLUMN session_id TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_team_history_session_id ON team_history(session_id) WHERE session_id IS NOT NULL')
-      } catch {
-        /* 索引已存在 */
-      }
+      ensureColumn(db, 'team_history', 'session_id', 'session_id TEXT')
+      ensureIndex(db, 'CREATE INDEX IF NOT EXISTS idx_team_history_session_id ON team_history(session_id) WHERE session_id IS NOT NULL')
     }
   },
   {
     id: '20260730_add_stance_to_team_history',
     up: (db) => {
       // 为 team_history 表添加 stance 列，用于记录队伍持方（正方/反方）
-      try {
-        db.exec('ALTER TABLE team_history ADD COLUMN stance TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      ensureColumn(db, 'team_history', 'stance', 'stance TEXT')
     }
   },
   {
@@ -338,113 +294,63 @@ const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_team_groups_event_id ON team_groups(event_id);
       `)
       // 2. 为 teams 表添加 group_id 列（可空，引用 team_groups.id）
-      try {
-        db.exec('ALTER TABLE teams ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_teams_group_id ON teams(group_id)')
-      } catch {
-        /* 索引已存在 */
-      }
+      ensureColumn(db, 'teams', 'group_id', 'group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
+      ensureIndex(db, 'CREATE INDEX IF NOT EXISTS idx_teams_group_id ON teams(group_id)')
     }
   },
   {
     id: '20260729_extend_draw_session_items_for_multi_team',
     up: (db) => {
       // 为 draw_session_items 表添加 team_ids（JSON 数组）和 group_id 列
-      // team_ids：多队同题模式下的队伍 id 列表（versus 模式为空，仍用 team_a_id/team_b_id）
-      // group_id：分组模式下记录所属分组
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_ids TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_draw_session_items_group_id ON draw_session_items(group_id)')
-      } catch {
-        /* 索引已存在 */
-      }
+      ensureColumn(db, 'draw_session_items', 'team_ids', 'team_ids TEXT')
+      ensureColumn(db, 'draw_session_items', 'group_id', 'group_id TEXT REFERENCES team_groups(id) ON DELETE SET NULL ON UPDATE CASCADE')
+      ensureIndex(db, 'CREATE INDEX IF NOT EXISTS idx_draw_session_items_group_id ON draw_session_items(group_id)')
     }
   },
   {
     id: '20260730_add_is_round_robin_to_rounds',
     up: (db) => {
-      // 为 rounds 表添加 is_round_robin 列（循环赛标记，0=普通轮次，1=循环赛）
-      try {
-        db.exec('ALTER TABLE rounds ADD COLUMN is_round_robin INTEGER NOT NULL DEFAULT 0')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 为 rounds 表添加 is_round_robin 列（循环赛标记）
+      ensureColumn(db, 'rounds', 'is_round_robin', 'is_round_robin INTEGER NOT NULL DEFAULT 0')
     }
   },
   {
     id: '20260730_add_team_stances_and_names_to_draw_session_items',
     up: (db) => {
       // 为 draw_session_items 表添加 team_stances 和 team_names 列
-      // team_stances：JSON 数组，多队持方快照，与 team_ids 一一对应
-      // team_names：JSON 数组，队伍名快照，与 team_ids 一一对应
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_stances TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE draw_session_items ADD COLUMN team_names TEXT')
-      } catch {
-        /* 字段已存在 */
-      }
+      ensureColumn(db, 'draw_session_items', 'team_stances', 'team_stances TEXT')
+      ensureColumn(db, 'draw_session_items', 'team_names', 'team_names TEXT')
     }
   },
   {
     id: '20260801_fix_stance_pairing_v4',
     up: (db) => {
-      // 修正旧会话持方数据：
-      //   - team_stances 数组相邻同侧 → 翻转第二位
-      //   - stance_a / stance_b 同侧 → 翻转 stance_b
-      // 失败时记录错误日志，不阻塞应用启动（migration 仍标记为已应用）
-      try {
-        const { fixed, skipped } = fixStancePairing(db)
-        console.log('[migration] fix_stance_pairing_v4 done', { fixed, skipped })
-      } catch (e) {
-        console.error('[migration] fix_stance_pairing_v4 failed:', e)
-      }
-    }
+      // 修正旧会话持方数据（数据修复类，可选：失败仅记录并跳过，不影响结构升级）
+      const { fixed, skipped } = fixStancePairing(db)
+      console.log('[migration] fix_stance_pairing_v4 done', { fixed, skipped })
+    },
+    optional: true
   },
   {
     id: '20260901_add_allow_repeat_and_test_flag',
     up: (db) => {
-      // 为 events 表添加 allow_repeat 列（赛事级"允许辩题重复"配置，0=不允许，1=允许）
-      // 幂等性：内部用 pragma_table_info 检查列是否已存在，已存在则跳过
-      // 不修改 draw_sessions：settings 是 JSON 字段，已支持 is_test 子字段
+      // 为 events 表添加 allow_repeat 列（幂等：pragma_table_info 检查列已存在则跳过）
       addAllowRepeatAndTestFlag(db)
     }
   },
   {
     id: '20260902_fix_fk_and_add_snapshot_columns',
     up: (db) => {
-      // P1-16: team_history.topic_id / draw_session_items.topic_id
-      //        ON DELETE CASCADE → ON DELETE SET NULL（避免删辩题级联删历史）
-      // P1-17: timer_sessions.format_id NOT NULL → 可空 + ON DELETE SET NULL
-      //        （避免删赛制外键约束失败）
-      // P2-44: timer_sessions 添加 event_name / team_aff_name / team_neg_name / topic_title
-      //        冗余快照列（避免删事件/队伍/辩题后显示空名称）
-      // SQLite 不支持 ALTER FOREIGN KEY，通过重建表实现
+      // 重建表修复外键 + 添加快照列。
+      // 内部需临时关闭/恢复 foreign_keys pragma，故整个迁移不包事务（transaction 内 pragma 为 no-op）。
+      // 内部三个 rebuild 各自包事务。
       fixFkAndAddSnapshotColumns(db)
-    }
+    },
+    transactional: false
   },
   {
     id: '20260903_add_missing_indexes',
     up: (db) => {
-      // P4-1: topics.source_type 缺索引
-      // P4-2: events.status 缺索引
-      // P4-3: team_history.topic_id 缺索引
       addMissingIndexes(db)
     }
   },
@@ -463,9 +369,7 @@ const MIGRATIONS: Migration[] = [
   {
     id: '20260906_ensure_match_multijudge_schema',
     up: (db) => {
-      // 兼容旧库：20260904_create_matches 曾在部分用户库按旧 schema 建过 matches 并记为已应用，
-      // 其 id 不变导致改写后的多裁判模型（match_judges / match_judge_votes /
-      // matches.format_id / judge_system / recording_meta / timer_sessions.match_id）不会重跑。
+      // 兼容旧库：20260904_create_matches 曾在部分用户库按旧 schema 建过 matches 并记为已应用。
       // 用新 id 幂等补齐（createMatchesTable 内部 CREATE IF NOT EXISTS + pragma 校验加列）。
       createMatchesTable(db)
     }
@@ -473,63 +377,68 @@ const MIGRATIONS: Migration[] = [
   {
     id: '20260912_create_judge_history',
     up: (db) => {
-      // T1：AI 裁判历史表（judge_match / judge_debate / judge_speech /
-      //     detect_stage / simulate_opponent 结果持久化，跨页/重启保留）。
       createJudgeHistoryTable(db)
     }
   },
   {
     id: '20260913_create_topic_groups',
     up: (db) => {
-      // T1（赛事题库·数据层）：topic_groups / topic_group_items / event_topic_groups
-      //     三张题组表 + 默认题库种子。
       createTopicGroupsTable(db)
     }
   },
   {
     id: '20260914_create_round_topic_groups',
     up: (db) => {
-      // T1（赛事题库深化·数据层）：round_topic_groups 轮次库绑定表
-      //      + events.bank_config 选题模式配置列。
       createRoundTopicGroupsTable(db)
     }
   },
   {
     id: '20260910_add_pool_remaining_to_timer_sessions',
     up: (db) => {
-      // 为 timer_sessions 表添加每队总时长池剩余字段（正方/反方池，毫秒）。
-      // 带 teamPoolMinutes 的赛制（如新国辩官方 17 分钟自由分配版）用于持久化池剩余。
-      // 采用独立列，避免与自由辩论的 aff_remaining_ms / neg_remaining_ms 冲突。
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_pool_remaining_ms INTEGER')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_pool_remaining_ms INTEGER')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 为 timer_sessions 表添加每队总时长池剩余字段（正方/反方池，毫秒）
+      ensureColumn(db, 'timer_sessions', 'aff_pool_remaining_ms', 'aff_pool_remaining_ms INTEGER')
+      ensureColumn(db, 'timer_sessions', 'neg_pool_remaining_ms', 'neg_pool_remaining_ms INTEGER')
     }
   },
   {
     id: '20260911_add_speech_count_to_timer_sessions',
     up: (db) => {
-      // 为 timer_sessions 表添加自由辩论发言次数字段（正方/反方），
-      // 用于持久化自由辩论环节按 Space 切换发言方时累计的发言次数。
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN aff_speech_count INTEGER DEFAULT 0')
-      } catch {
-        /* 字段已存在 */
-      }
-      try {
-        db.exec('ALTER TABLE timer_sessions ADD COLUMN neg_speech_count INTEGER DEFAULT 0')
-      } catch {
-        /* 字段已存在 */
-      }
+      // 为 timer_sessions 表添加自由辩论发言次数字段（正方/反方）
+      ensureColumn(db, 'timer_sessions', 'aff_speech_count', 'aff_speech_count INTEGER DEFAULT 0')
+      ensureColumn(db, 'timer_sessions', 'neg_speech_count', 'neg_speech_count INTEGER DEFAULT 0')
     }
   }
 ].sort((a, b) => a.id.localeCompare(b.id))
+
+/**
+ * 数值 schema version：即迁移总数。
+ * 迁移在其排序位置 i 的 version = i + 1。
+ */
+export const SCHEMA_VERSION: number = MIGRATIONS.length
+
+/**
+ * 只读迁移定义（排序后）。供迁移单测/调试构建任意历史 schema 状态。
+ * 生产代码请通过 runMigrations / ensureMigrationTable / listAppliedMigrations 使用。
+ */
+export const MIGRATION_DEFS: ReadonlyArray<Migration> = MIGRATIONS
+
+/** 迁移 id → 数值 version（排序后序位 +1） */
+const idToVersion = new Map<string, number>()
+MIGRATIONS.forEach((m, i) => {
+  idToVersion.set(m.id, i + 1)
+})
+
+export interface MigrationResult {
+  id: string
+  status: 'applied' | 'skipped' | 'skipped_optional' | 'failed'
+  error?: string
+}
+
+export interface RunMigrationsResult {
+  fromVersion: number
+  toVersion: number
+  results: MigrationResult[]
+}
 
 /**
  * 确保 __migrations 表存在。
@@ -545,33 +454,94 @@ export function ensureMigrationTable(db: Database): void {
 }
 
 /**
- * 执行所有未应用的迁移。
- * 每个迁移的 up 用 try/catch 包裹 ALTER TABLE，避免重复执行报错。
- * 应用成功后在 __migrations 表中记录 id。
+ * 读取当前 schema 版本（数值）：
+ *   max( 已应用迁移的最大 version , PRAGMA user_version )
+ * 兼容旧库：多数旧库只靠 __migrations 追踪、user_version 始终为 0，
+ * 故以 __migrations 已应用 id 推导的版本为准，user_version 取大者兜底。
+ * 全新库：无已应用迁移、user_version=0 → 返回 0。
  */
-export function runMigrations(db: Database): void {
+export function getDbSchemaVersion(db: Database): number {
+  ensureMigrationTable(db)
+  let maxByMigrations = 0
+  const rows = db.prepare('SELECT id FROM __migrations').all() as Array<{ id: string }>
+  for (const r of rows) {
+    const v = idToVersion.get(r.id)
+    if (v && v > maxByMigrations) maxByMigrations = v
+  }
+  let pragmaVersion = 0
+  try {
+    pragmaVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0
+  } catch {
+    pragmaVersion = 0
+  }
+  return Math.max(maxByMigrations, pragmaVersion)
+}
+
+/**
+ * 执行所有未应用的迁移。
+ *
+ * 事务策略：
+ *   - 每个迁移默认包在 db.transaction() 中，迁移 DDL 与「写入 __migrations 已应用记录」
+ *     同事务：迁移失败整体回滚且不记录，绝无「字段缺失但标记已应用」的半状态。
+ *   - 例外：20260902（transactional:false）内部需临时切 foreign_keys pragma（事务内为 no-op），
+ *     其内部三个 rebuild 各自包事务，已充分回滚边界。
+ *
+ * 失败策略：
+ *   - optional 迁移失败 → 明确日志「(optional) skipped」，继续后续迁移。
+ *   - 关键迁移失败 → 明确日志「FAILED (not applied)，abort」并重新抛出，
+ *     中止整个迁移流程（由 initDatabase 降级处理），不静默标成功。
+ *
+ * @returns 本次迁移汇总（fromVersion、toVersion、每项状态）
+ */
+export function runMigrations(db: Database): RunMigrationsResult {
+  const fromVersion = getDbSchemaVersion(db)
   ensureMigrationTable(db)
   const applied = new Set(
     db.prepare('SELECT id FROM __migrations').all().map((r: any) => r.id as string)
   )
+  const results: MigrationResult[] = []
+
   for (const m of MIGRATIONS) {
-    if (applied.has(m.id)) continue
-    try {
+    if (applied.has(m.id)) {
+      results.push({ id: m.id, status: 'skipped' })
+      continue
+    }
+
+    // 迁移 + 写已应用记录包在同一事务
+    const apply = (): void => {
       m.up(db)
+      db.prepare('INSERT INTO __migrations (id, applied_at) VALUES (?, ?)').run(
+        m.id,
+        new Date().toISOString()
+      )
+    }
+    const run = (): void => {
+      if (m.transactional !== false) {
+        db.transaction(apply)()
+      } else {
+        apply()
+      }
+    }
+
+    try {
+      run()
+      applied.add(m.id)
+      results.push({ id: m.id, status: 'applied' })
+      console.log(`[migrations] applied ${m.id}`)
     } catch (e) {
-      console.error(`[migrations] Migration ${m.id} failed:`, e)
+      const msg = e instanceof Error ? e.message : String(e)
       if (m.optional) {
-        // 可选迁移失败时仅记录日志，继续执行后续迁移
+        console.warn(`[migrations] (optional) ${m.id} skipped due to error: ${msg}`)
+        results.push({ id: m.id, status: 'skipped_optional', error: msg })
         continue
       }
-      // 关键迁移失败时重新抛出，中止整个迁移流程（保留原有行为）
+      console.error(`[migrations] ${m.id} FAILED (not applied); schema upgrade aborted: ${msg}`)
+      results.push({ id: m.id, status: 'failed', error: msg })
       throw e
     }
-    db.prepare('INSERT INTO __migrations (id, applied_at) VALUES (?, ?)').run(
-      m.id,
-      new Date().toISOString()
-    )
   }
+
+  return { fromVersion, toVersion: SCHEMA_VERSION, results }
 }
 
 /**

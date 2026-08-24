@@ -141,6 +141,7 @@ export const judgeSpeechTool: ToolDefinition<JudgeSpeechArgs, JudgeCoachResult |
       required: ['topic', 'side', 'speech']
     },
     riskLevel: 'low',
+    tier: 'dangerous',
     async execute(
       args: JudgeSpeechArgs,
       ctx?: { config?: LLMConfig; signal?: AbortSignal }

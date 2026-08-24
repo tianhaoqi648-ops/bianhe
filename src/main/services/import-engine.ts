@@ -468,6 +468,11 @@ function parseExcelOrCsv(filePath: string, fileType: FileType): ParsedResult {
       `文件解析失败，文件可能已损坏或已加密：${fileType.toUpperCase()} 文件无法读取。${e instanceof Error ? e.message : ''}`
     )
   }
+  // P2-32: XLSX.read 对损坏/加密字节常返回空工作簿而不抛错，导致上面的 catch 几乎不可达。
+  // 成功返回后若无任何工作表 → 判定为损坏/加密，抛友好错误。
+  if (workbook.SheetNames.length === 0) {
+    throw new Error('文件解析失败：文件可能已损坏或已加密')
+  }
   const firstSheetName = workbook.SheetNames[0]
   if (!firstSheetName) {
     return { topics: [], mapping: {}, warnings: ['工作簿无任何工作表'], unknownValues: [] }

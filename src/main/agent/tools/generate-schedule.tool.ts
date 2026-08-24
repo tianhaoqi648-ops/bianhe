@@ -86,6 +86,7 @@ export const generateScheduleTool: ToolDefinition<
     required: ['format', 'startDate']
   },
   riskLevel: 'high',
+  tier: 'dangerous',
   async execute(args: GenerateScheduleArgs): Promise<GenerateScheduleResult> {
     // 1. 校验 format
     const format = args.format

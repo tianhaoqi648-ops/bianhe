@@ -53,6 +53,13 @@ export function registerEventIpc(): void {
   ipcMain.handle(IPC_CHANNELS.EVENT_LIST, (_e, filter?: EventFilter) =>
     wrap(() => eventRepo.listEvents(filter))
   )
+  // 批量统计多赛事的 轮次数/队伍数/已完成轮数（N+1 优化，一次 IPC 替代逐赛事 ×3 组调用）
+  ipcMain.handle(IPC_CHANNELS.EVENT_STATS_BULK, (_e, eventIds: string[]) => {
+    return wrap(() => {
+      assertParam(Array.isArray(eventIds), '参数 eventIds 必须为数组')
+      return Array.from(eventRepo.getEventStats(eventIds).values())
+    })
+  })
   ipcMain.handle(IPC_CHANNELS.EVENT_GET, (_e, id: string) => {
     return wrap(() => {
       assertNonEmptyString(id, 'id')

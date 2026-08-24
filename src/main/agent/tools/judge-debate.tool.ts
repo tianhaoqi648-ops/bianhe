@@ -356,6 +356,7 @@ export const judgeDebateTool: ToolDefinition<JudgeDebateArgs, JudgeDebateResult 
       required: ['topic', 'affSpeech', 'negSpeech']
     },
     riskLevel: 'low',
+    tier: 'dangerous',
     async execute(
       args: JudgeDebateArgs,
       ctx?: { config?: LLMConfig; signal?: AbortSignal }

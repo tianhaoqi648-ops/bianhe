@@ -337,10 +337,10 @@ function App() {
     scope: 'global'
   });
 
-  // 全局快捷键：Ctrl+Shift+Z 重做（暂未实现）
+  // 全局快捷键：Ctrl+Shift+Z 重做
   useHotkeys({
     combo: 'ctrl+shift+z',
-    description: '重做（暂未实现）',
+    description: '重做最近一步撤销的操作',
     handler: () => {
       void redo();
     },

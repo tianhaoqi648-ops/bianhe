@@ -457,6 +457,7 @@ export const simulateOpponentTool: ToolDefinition<
     required: ['topic', 'side', 'speech']
   },
   riskLevel: 'low',
+  tier: 'dangerous',
   async execute(
     args: SimulateOpponentArgs,
     ctx?: { config?: LLMConfig; signal?: AbortSignal }

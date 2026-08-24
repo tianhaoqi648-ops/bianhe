@@ -18,6 +18,7 @@ import { undoLogRepo } from '../db/repository/undo-log.repo'
 import { topicRepo } from '../db/repository/topic.repo'
 import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
+import { formatRepo } from '../db/repository/format.repo'
 import { customFieldService } from './custom-field-service'
 import type {
   UndoLogEntry,
@@ -28,8 +29,56 @@ import type {
   Team,
   DrawResult,
   DrawSessionDetail,
-  CustomField
+  CustomField,
+  DebateFormat
 } from '../../shared/types'
+
+// ============================================================
+// 4.1 Action 模型
+//
+// 撤销日志的语义单元。不建独立表，直接映射现有 undo_log 列承载：
+//   - actionId  → undo_log.id（主进程生成，全局唯一）
+//   - type      → undo_log.action（'create'/'update'/'delete'/'batchDelete'/'batchUpdate' 等）
+//   - target    → undo_log.target_type + target_id（标识被操作对象/范围）
+//   - before    → undo_log.before_data（操作前数据快照）
+//   - after     → undo_log.after_data（操作后数据快照）
+//   - metadata  → undo_log.label（用户可读摘要）、undo_log.undone_at（撤销标记）
+// 渲染进程侧的 UndoStackEntry 是同一模型的前端投影（不含 id/created_at）。
+// 新增操作类型时：① 在此补充常量；② 在 applyXxxReverse/applyXxxForward 补分支。
+// ============================================================
+
+/** 所有受支持的撤销操作类型常量 */
+export const UNDO_ACTIONS = {
+  CREATE: 'create',
+  UPDATE: 'update',
+  DELETE: 'delete',
+  BATCH_DELETE: 'batchDelete',
+  BATCH_UPDATE: 'batchUpdate',
+  UPDATE_STATUS: 'updateStatus',
+  UPDATE_WEIGHT: 'updateWeight'
+} as const
+
+export type UndoActionType = (typeof UNDO_ACTIONS)[keyof typeof UNDO_ACTIONS]
+
+/**
+ * Action 模型（声明性类型，用于描述一条 undo_log 的业务含义）。
+ * 系统以 before_data/after_data 承载数据快照、action 字段承载 type，
+ * 因此 Action 模型不落地为独立表，仅作为语义约束与文档。
+ */
+export interface UndoActionModel {
+  /** undo_log.id（主进程生成） */
+  actionId: string
+  /** undo_log.action：操作类型 */
+  type: string
+  /** 操作目标：target_type + target_id */
+  target: { targetType: string; targetId: string | null }
+  /** 操作前数据快照 */
+  before: unknown | null
+  /** 操作后数据快照 */
+  after: unknown | null
+  /** 元数据：摘要 + 撤销标记 */
+  metadata: { label: string | null; undoneAt: string | null }
+}
 
 interface WithUndoLogOpts<T> {
   storeName: UndoLogEntry['store_name']
@@ -184,6 +233,8 @@ function applyReverse(log: UndoLogEntry): number {
       return applyEventReverse(log.action, log.target_type, before, after)
     case 'draw':
       return applyDrawReverse(log.action, log.target_type, before, after)
+    case 'format':
+      return applyFormatReverse(log.action, before, after)
     case 'customField':
       return applyCustomFieldReverse(log.action, before, after)
     case 'settings':
@@ -211,6 +262,8 @@ function applyForward(log: UndoLogEntry): number {
       return applyEventForward(log.action, log.target_type, before, after)
     case 'draw':
       return applyDrawForward(log.action, log.target_type, before, after)
+    case 'format':
+      return applyFormatForward(log.action, before, after)
     case 'customField':
       return applyCustomFieldForward(log.action, before, after)
     case 'settings':
@@ -242,19 +295,7 @@ function applyTopicReverse(
     case 'update': {
       // 反向 = 用 before 覆盖
       const beforeTopic = before as Topic
-      topicRepo.updateTopic(beforeTopic.id, {
-        title: beforeTopic.title,
-        type: beforeTopic.type,
-        domain: beforeTopic.domain,
-        difficulty: beforeTopic.difficulty,
-        source: beforeTopic.source,
-        source_type: beforeTopic.source_type,
-        tags: beforeTopic.tags,
-        weight: beforeTopic.weight,
-        status: beforeTopic.status,
-        batch_id: beforeTopic.batch_id,
-        custom_data: beforeTopic.custom_data
-      })
+      applyTopicSnapshot(beforeTopic)
       return 1
     }
     case 'delete': {
@@ -268,6 +309,14 @@ function applyTopicReverse(
       const beforeData = before as { topics: Topic[] }
       for (const t of beforeData.topics) {
         recreateTopicWithId(t)
+      }
+      return beforeData.topics.length
+    }
+    case 'batchUpdate': {
+      // 反向 = 用 before.topics 整体覆盖（还原批量编辑前的字段快照）
+      const beforeData = before as { topics: Topic[] }
+      for (const t of beforeData.topics) {
+        applyTopicSnapshot(t)
       }
       return beforeData.topics.length
     }
@@ -308,19 +357,7 @@ function applyTopicForward(
     case 'update': {
       // 正向 = 用 after 覆盖
       const afterTopic = after as Topic
-      topicRepo.updateTopic(afterTopic.id, {
-        title: afterTopic.title,
-        type: afterTopic.type,
-        domain: afterTopic.domain,
-        difficulty: afterTopic.difficulty,
-        source: afterTopic.source,
-        source_type: afterTopic.source_type,
-        tags: afterTopic.tags,
-        weight: afterTopic.weight,
-        status: afterTopic.status,
-        batch_id: afterTopic.batch_id,
-        custom_data: afterTopic.custom_data
-      })
+      applyTopicSnapshot(afterTopic)
       return 1
     }
     case 'delete': {
@@ -336,6 +373,14 @@ function applyTopicForward(
       }
       return beforeData.topics.length
     }
+    case 'batchUpdate': {
+      // 正向（redo）= 用 after.topics 整体覆盖
+      const afterData = after as { topics: Topic[] }
+      for (const t of afterData.topics) {
+        applyTopicSnapshot(t)
+      }
+      return afterData.topics.length
+    }
     case 'updateStatus': {
       const afterTopic = after as Topic
       topicRepo.updateStatus(afterTopic.id, afterTopic.status)
@@ -349,6 +394,26 @@ function applyTopicForward(
     default:
       throw new Error(`[undo] topic: unsupported action ${action}`)
   }
+}
+
+/**
+ * 用完整快照覆盖 topic（撤销/重做单条更新或批量编辑时使用）。
+ * 恢复指定 id 的全部业务字段到快照状态。
+ */
+function applyTopicSnapshot(topic: Topic): void {
+  topicRepo.updateTopic(topic.id, {
+    title: topic.title,
+    type: topic.type,
+    domain: topic.domain,
+    difficulty: topic.difficulty,
+    source: topic.source,
+    source_type: topic.source_type,
+    tags: topic.tags,
+    weight: topic.weight,
+    status: topic.status,
+    batch_id: topic.batch_id,
+    custom_data: topic.custom_data ?? null
+  })
 }
 
 /** 用指定 id 重建 topic（绕过 createTopic 的 uuid 生成） */
@@ -660,6 +725,83 @@ function recreateDrawSessionWithId(result: Pick<DrawResult, 'session'>): void {
       )
     }
   }
+}
+
+// ---------- format 反向操作 ----------
+
+function applyFormatReverse(
+  action: string,
+  before: unknown,
+  after: unknown
+): number {
+  const beforeFormat = before as DebateFormat | null
+  const afterFormat = after as DebateFormat | null
+
+  switch (action) {
+    case 'create':
+      // 反向 = 删除新建的赛制（预设不可删，但预设不产生 undo log）
+      formatRepo.delete(afterFormat!.id)
+      return 1
+    case 'update':
+      // 反向 = 用 before 覆盖（恢复更新前的 name/description/formatData）
+      formatRepo.update(beforeFormat!.id, {
+        name: beforeFormat!.name,
+        description: beforeFormat!.description ?? undefined,
+        formatData: beforeFormat!.formatData
+      })
+      return 1
+    case 'delete':
+      // 反向 = 重建 deleted 的赛制（保留原 id，is_preset=0）
+      recreateFormatWithId(beforeFormat!)
+      return 1
+    default:
+      throw new Error(`[undo] format: unsupported action ${action}`)
+  }
+}
+
+// ---------- format 正向操作（重做） ----------
+
+function applyFormatForward(
+  action: string,
+  before: unknown,
+  after: unknown
+): number {
+  const beforeFormat = before as DebateFormat | null
+  const afterFormat = after as DebateFormat | null
+
+  switch (action) {
+    case 'create':
+      recreateFormatWithId(afterFormat!)
+      return 1
+    case 'update':
+      formatRepo.update(afterFormat!.id, {
+        name: afterFormat!.name,
+        description: afterFormat!.description ?? undefined,
+        formatData: afterFormat!.formatData
+      })
+      return 1
+    case 'delete':
+      formatRepo.delete(beforeFormat!.id)
+      return 1
+    default:
+      throw new Error(`[undo] format: unsupported action ${action}`)
+  }
+}
+
+/** 用指定 id 重建非预设赛制（绕过 formatRepo.create 的 uuid 生成） */
+function recreateFormatWithId(format: DebateFormat): void {
+  const db = getDb()
+  db.prepare(`
+    INSERT INTO debate_formats (id, name, description, is_preset, format_data, created_at, updated_at)
+    VALUES (?, ?, ?, 0, ?, ?, ?)
+  `).run(
+    format.id,
+    format.name,
+    format.description,
+    JSON.stringify(format.formatData),
+    format.createdAt,
+    format.updatedAt
+  )
 }
 
 // ---------- customField 反向操作 ----------
