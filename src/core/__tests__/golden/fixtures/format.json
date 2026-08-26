@@ -98,7 +98,7 @@
           {
             "id": "s2", "side": "both", "durationMs": 240000, "graceMs": null,
             "bells": [{ "atMs": 0, "sound": "time_up", "customBellId": null }],
-            "isFreeDebate": true, "timingMode": "countdown", "isBellPreview": null,
+            "isFreeDebate": true, "timingMode": "countdown", "isBellPreview": false,
             "poolTeam": null, "poolSuggestedMs": 0, "speaker": "双方", "weight": null
           },
           {

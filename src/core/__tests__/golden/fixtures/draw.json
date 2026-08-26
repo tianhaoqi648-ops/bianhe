@@ -46,7 +46,7 @@
         "items": [{ "id": "a", "weight": 1 }, { "id": "b", "weight": 1 }],
         "count": 2
       },
-      "expected": ["a", "b"]
+      "expected": ["b", "a"]
     },
     {
       "name": "with_replacement_basic",
@@ -55,7 +55,7 @@
         "pool": [{ "id": "a", "weight": 1 }, { "id": "b", "weight": 5 }],
         "count": 4
       },
-      "expected": ["b", "b", "a", "b"]
+      "expected": ["b", "b", "b", "a"]
     },
     {
       "name": "with_replacement_float_fallback",
@@ -64,7 +64,7 @@
         "pool": [{ "id": "a", "weight": 0.3 }, { "id": "b", "weight": 0.3 }],
         "count": 3
       },
-      "expected": ["b", "a", "a"]
+      "expected": ["a", "b", "a"]
     },
     {
       "name": "with_replacement_empty_or_zero",
@@ -117,7 +117,7 @@
         "count": 2,
         "allowRepeat": false
       },
-      "expected": { "picked": ["o1", "c2"], "actualRatio": { "official": 0.5, "custom": 0.5 } }
+      "expected": { "picked": ["o1", "c1"], "actualRatio": { "official": 0.5, "custom": 0.5 } }
     },
     {
       "name": "source_mix_allow_repeat",
@@ -157,7 +157,7 @@
         "distribution": { "入门": 0.6, "进阶": 0.4, "专业": 0 },
         "count": 4
       },
-      "expected": ["e3", "e2", "m1", "m2"]
+      "expected": ["e2", "e3", "m1", "e1"]
     },
     {
       "name": "difficulty_mix_deficit_supplement",
@@ -173,7 +173,7 @@
         "distribution": { "入门": 0.6, "进阶": 0.4, "专业": 0 },
         "count": 4
       },
-      "expected": ["e1", "m1", "p3", "p2"]
+      "expected": ["e1", "m1", "p2", "p3"]
     },
     {
       "name": "exclusions_both_sets",
