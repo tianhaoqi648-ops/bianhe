@@ -1,0 +1,115 @@
+{
+  "system": "format",
+  "schemaVersion": 1,
+  "cases": [
+    { "name": "resolve_initial_side_free_both_to_aff", "fn": "resolveInitialSide", "input": { "isFreeDebate": true, "side": "both" }, "expected": "aff" },
+    { "name": "resolve_initial_side_free_aff", "fn": "resolveInitialSide", "input": { "isFreeDebate": true, "side": "aff" }, "expected": "aff" },
+    { "name": "resolve_initial_side_nonfree_neg", "fn": "resolveInitialSide", "input": { "isFreeDebate": false, "side": "neg" }, "expected": "neg" },
+    { "name": "resolve_initial_side_missing_stage", "fn": "resolveInitialSide", "input": null, "expected": "aff" },
+    { "name": "weights_all_default_equal", "fn": "normalizeStageWeights", "input": [{ "id": "a" }, { "id": "b" }], "expected": { "a": 1, "b": 1 } },
+    { "name": "weights_partial_default_one", "fn": "normalizeStageWeights", "input": [{ "id": "a", "weight": 2 }, { "id": "b" }], "expected": { "a": 2, "b": 1 } },
+    { "name": "speaker_label_speaker_priority", "fn": "stageSpeakerLabel", "input": { "speaker": "正方一辩" }, "expected": "正方一辩" },
+    { "name": "speaker_label_neg_fallback", "fn": "stageSpeakerLabel", "input": { "side": "neg" }, "expected": "反方" },
+    { "name": "speaker_label_both", "fn": "stageSpeakerLabel", "input": { "side": "both" }, "expected": "双方" },
+    { "name": "speaker_label_aff", "fn": "stageSpeakerLabel", "input": { "side": "aff" }, "expected": "正方" },
+    { "name": "speaker_label_bp_role_empty", "fn": "stageSpeakerLabel", "input": { "side": "og" }, "expected": "" },
+    { "name": "speaker_label_default_aff", "fn": "stageSpeakerLabel", "input": {}, "expected": "正方" },
+    { "name": "pool_init_team_minutes_aff", "fn": "poolInitMs", "input": { "format": { "stages": [], "totalDurationMs": 0, "teamPoolMinutes": { "aff": 3, "neg": 2 } }, "team": "aff" }, "expected": 180000 },
+    { "name": "pool_init_team_minutes_neg", "fn": "poolInitMs", "input": { "format": { "stages": [], "totalDurationMs": 0, "teamPoolMinutes": { "aff": 3, "neg": 2 } }, "team": "neg" }, "expected": 120000 },
+    {
+      "name": "pool_init_suggested_sum",
+      "fn": "poolInitMs",
+      "input": {
+        "format": {
+          "stages": [
+            { "id": "s1", "poolTeam": "aff", "poolSuggestedMs": 120000 },
+            { "id": "s2", "poolTeam": "aff", "poolSuggestedMs": 60000 },
+            { "id": "s3", "poolTeam": "neg", "poolSuggestedMs": 90000 }
+          ],
+          "totalDurationMs": 0
+        },
+        "team": "aff"
+      },
+      "expected": 180000
+    },
+    {
+      "name": "pool_init_no_pool_stages_zero",
+      "fn": "poolInitMs",
+      "input": { "format": { "stages": [{ "id": "s1", "poolTeam": "aff", "poolSuggestedMs": 120000 }], "totalDurationMs": 0 }, "team": "neg" },
+      "expected": 0
+    },
+    {
+      "name": "pool_init_zero_minutes_fallback",
+      "fn": "poolInitMs",
+      "input": { "format": { "stages": [], "totalDurationMs": 0, "teamPoolMinutes": { "aff": 0, "neg": 0 } }, "team": "aff" },
+      "expected": 0
+    },
+    {
+      "name": "default_timer_theme",
+      "fn": "defaultTimerTheme",
+      "input": null,
+      "expected": { "affLabel": "正方", "negLabel": "反方", "affColor": "#1677ff", "negColor": "#ff4d4f", "accentColor": "#1677ff" }
+    },
+    {
+      "name": "merge_theme_null_default",
+      "fn": "mergeTheme",
+      "input": null,
+      "expected": { "affLabel": "正方", "negLabel": "反方", "affColor": "#1677ff", "negColor": "#ff4d4f", "accentColor": "#1677ff" }
+    },
+    {
+      "name": "merge_theme_partial_override",
+      "fn": "mergeTheme",
+      "input": { "affLabel": "甲方" },
+      "expected": { "affLabel": "甲方", "negLabel": "反方", "affColor": "#1677ff", "negColor": "#ff4d4f", "accentColor": "#1677ff" }
+    },
+    {
+      "name": "format_snapshot_semantic_projection",
+      "fn": "formatSnapshot",
+      "input": {
+        "stages": [
+          {
+            "id": "s1", "name": "正方立论", "side": "aff", "durationMs": 180000, "graceMs": 15000,
+            "bells": [{ "atMs": 0, "sound": "time_up" }, { "atMs": 30000, "sound": "double_bell" }],
+            "isFreeDebate": false, "timingMode": "countdown", "isBellPreview": false,
+            "poolTeam": "aff", "poolSuggestedMs": 180000, "speaker": "正方一辩", "weight": 2
+          },
+          {
+            "id": "s2", "name": "自由辩论", "side": "both", "durationMs": 240000,
+            "bells": [{ "atMs": 0, "sound": "time_up" }],
+            "isFreeDebate": true, "timingMode": "countdown", "isBellPreview": false,
+            "poolTeam": null, "poolSuggestedMs": 0, "speaker": "双方"
+          },
+          {
+            "id": "s3", "name": "评委点评", "side": "both", "durationMs": 0,
+            "bells": [], "isFreeDebate": false, "timingMode": "untimed", "isBellPreview": true
+          }
+        ],
+        "totalDurationMs": 420000,
+        "teamPoolMinutes": { "aff": 5, "neg": 4 }
+      },
+      "expected": {
+        "stages": [
+          {
+            "id": "s1", "side": "aff", "durationMs": 180000, "graceMs": 15000,
+            "bells": [{ "atMs": 0, "sound": "time_up", "customBellId": null }, { "atMs": 30000, "sound": "double_bell", "customBellId": null }],
+            "isFreeDebate": false, "timingMode": "countdown", "isBellPreview": false,
+            "poolTeam": "aff", "poolSuggestedMs": 180000, "speaker": "正方一辩", "weight": 2
+          },
+          {
+            "id": "s2", "side": "both", "durationMs": 240000, "graceMs": null,
+            "bells": [{ "atMs": 0, "sound": "time_up", "customBellId": null }],
+            "isFreeDebate": true, "timingMode": "countdown", "isBellPreview": null,
+            "poolTeam": null, "poolSuggestedMs": 0, "speaker": "双方", "weight": null
+          },
+          {
+            "id": "s3", "side": "both", "durationMs": 0, "graceMs": null,
+            "bells": [], "isFreeDebate": false, "timingMode": "untimed", "isBellPreview": true,
+            "poolTeam": null, "poolSuggestedMs": null, "speaker": null, "weight": null
+          }
+        ],
+        "totalDurationMs": 420000,
+        "teamPoolMinutes": { "aff": 5, "neg": 4 }
+      }
+    }
+  ]
+}

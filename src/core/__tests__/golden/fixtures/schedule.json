@@ -1,0 +1,108 @@
+{
+  "system": "schedule",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "single_elimination_4teams",
+      "fn": "single_elimination",
+      "input": {
+        "teams": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }],
+        "startDate": "2026-01-15",
+        "restDays": 1
+      }
+    },
+    {
+      "name": "single_elimination_8teams",
+      "fn": "single_elimination",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" },
+          { "id": "t5", "name": "T5" }, { "id": "t6", "name": "T6" }, { "id": "t7", "name": "T7" }, { "id": "t8", "name": "T8" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 1
+      }
+    },
+    {
+      "name": "round_robin_4teams",
+      "fn": "round_robin",
+      "input": {
+        "teams": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }],
+        "startDate": "2026-01-15",
+        "restDays": 1
+      }
+    },
+    {
+      "name": "round_robin_5teams_odd",
+      "fn": "round_robin",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" },
+          { "id": "t4", "name": "T4" }, { "id": "t5", "name": "T5" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 3
+      }
+    },
+    {
+      "name": "round_robin_6teams_rest3",
+      "fn": "round_robin",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" },
+          { "id": "t4", "name": "T4" }, { "id": "t5", "name": "T5" }, { "id": "t6", "name": "T6" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 3
+      }
+    },
+    {
+      "name": "double_elimination_4teams",
+      "fn": "double_elimination",
+      "input": {
+        "teams": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }],
+        "startDate": "2026-01-15",
+        "restDays": 1
+      }
+    },
+    {
+      "name": "double_elimination_8teams",
+      "fn": "double_elimination",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" },
+          { "id": "t5", "name": "T5" }, { "id": "t6", "name": "T6" }, { "id": "t7", "name": "T7" }, { "id": "t8", "name": "T8" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 1
+      }
+    },
+    {
+      "name": "swiss_6teams_3rounds",
+      "fn": "swiss",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" },
+          { "id": "t4", "name": "T4" }, { "id": "t5", "name": "T5" }, { "id": "t6", "name": "T6" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 1,
+        "swissRounds": 3
+      }
+    },
+    {
+      "name": "swiss_7teams_odd_bye",
+      "fn": "swiss",
+      "input": {
+        "teams": [
+          { "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" },
+          { "id": "t4", "name": "T4" }, { "id": "t5", "name": "T5" }, { "id": "t6", "name": "T6" },
+          { "id": "t7", "name": "T7" }
+        ],
+        "startDate": "2026-01-15",
+        "restDays": 1,
+        "swissRounds": 3
+      }
+    }
+  ]
+}

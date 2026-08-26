@@ -1,0 +1,66 @@
+{
+  "system": "backup",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "validate_ok",
+      "fn": "validateBackupPackage",
+      "input": { "version": "1.0", "tables": { "topics": [], "events": [] } },
+      "expected": { "ok": true, "warnings": [] }
+    },
+    {
+      "name": "validate_missing_tables",
+      "fn": "validateBackupPackage",
+      "input": { "version": "1.0" },
+      "expected": { "ok": false, "error": "备份数据缺少 tables 结构", "warnings": [] }
+    },
+    {
+      "name": "validate_unknown_version_rejected",
+      "fn": "validateBackupPackage",
+      "input": { "version": "2.0", "tables": {} },
+      "expected": { "ok": false, "error": "不支持的备份版本：2.0（支持 1.0）", "warnings": [] }
+    },
+    {
+      "name": "validate_non_object_null",
+      "fn": "validateBackupPackage",
+      "input": null,
+      "expected": { "ok": false, "error": "备份数据格式不正确（非对象）", "warnings": [] }
+    },
+    {
+      "name": "validate_non_array_table_warning",
+      "fn": "validateBackupPackage",
+      "input": { "version": "1.0", "tables": { "bell_files": { "a.mp3": "data" }, "topics": [] } },
+      "expected": { "ok": true, "warnings": ["表 bell_files 为非数组数据（object），导入时跳过"] }
+    },
+    {
+      "name": "migrate_noop_current",
+      "fn": "migratePackage",
+      "input": { "schemaVersion": "1", "version": "1.0", "tables": {} },
+      "expected": { "applied": [] }
+    },
+    {
+      "name": "build_metadata_counts",
+      "fn": "buildExportMetadata",
+      "input": { "a": [1, 2], "b": {}, "c": [1] },
+      "expected": { "counts": { "a": 2, "b": 0, "c": 1 } }
+    },
+    {
+      "name": "plan_event_scoped_read_chunk_10",
+      "fn": "planEventScopedRead",
+      "input": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "e11"],
+      "expected": [["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10"], ["e11"]]
+    },
+    {
+      "name": "plan_event_scoped_read_empty_array",
+      "fn": "planEventScopedRead",
+      "input": [],
+      "expected": []
+    },
+    {
+      "name": "plan_event_scoped_read_null",
+      "fn": "planEventScopedRead",
+      "input": null,
+      "expected": []
+    }
+  ]
+}

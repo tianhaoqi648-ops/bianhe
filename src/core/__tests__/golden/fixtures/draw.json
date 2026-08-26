@@ -1,0 +1,298 @@
+{
+  "system": "draw",
+  "schemaVersion": 1,
+  "seed": 20260115,
+  "cases": [
+    {
+      "name": "weighted_1_5_10",
+      "fn": "weightedRandomSelect",
+      "input": {
+        "items": [{ "id": "a", "weight": 1 }, { "id": "b", "weight": 5 }, { "id": "c", "weight": 10 }],
+        "count": 1
+      },
+      "expected": ["c"]
+    },
+    {
+      "name": "weighted_filter_zero_weight",
+      "fn": "weightedRandomSelect",
+      "input": {
+        "items": [{ "id": "a", "weight": 0 }, { "id": "b", "weight": 5 }],
+        "count": 1
+      },
+      "expected": ["b"]
+    },
+    {
+      "name": "weighted_all_invalid_throws",
+      "fn": "weightedRandomSelect",
+      "input": {
+        "items": [{ "id": "a", "weight": 0 }],
+        "count": 1
+      },
+      "expected": { "throws": "候选池为空" }
+    },
+    {
+      "name": "weighted_count_zero_empty",
+      "fn": "weightedRandomSelect",
+      "input": {
+        "items": [{ "id": "a", "weight": 1 }],
+        "count": 0
+      },
+      "expected": []
+    },
+    {
+      "name": "weighted_count_ge_pool_shuffle_all",
+      "fn": "weightedRandomSelect",
+      "input": {
+        "items": [{ "id": "a", "weight": 1 }, { "id": "b", "weight": 1 }],
+        "count": 2
+      },
+      "expected": ["a", "b"]
+    },
+    {
+      "name": "with_replacement_basic",
+      "fn": "weightedRandomSelectWithReplacement",
+      "input": {
+        "pool": [{ "id": "a", "weight": 1 }, { "id": "b", "weight": 5 }],
+        "count": 4
+      },
+      "expected": ["b", "b", "a", "b"]
+    },
+    {
+      "name": "with_replacement_float_fallback",
+      "fn": "weightedRandomSelectWithReplacement",
+      "input": {
+        "pool": [{ "id": "a", "weight": 0.3 }, { "id": "b", "weight": 0.3 }],
+        "count": 3
+      },
+      "expected": ["b", "a", "a"]
+    },
+    {
+      "name": "with_replacement_empty_or_zero",
+      "fn": "weightedRandomSelectWithReplacement",
+      "input": { "pool": [], "count": 3 },
+      "expected": []
+    },
+    {
+      "name": "source_mix_official_only",
+      "fn": "applySourceMixRatio",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "入门", "title": "题o1", "weight": 1 },
+          { "id": "o2", "source_type": "official", "difficulty": "入门", "title": "题o2", "weight": 1 },
+          { "id": "c1", "source_type": "自定义", "difficulty": "入门", "title": "题c1", "weight": 1 },
+          { "id": "c2", "source_type": "自定义", "difficulty": "入门", "title": "题c2", "weight": 1 }
+        ],
+        "ratio": { "official": 1, "custom": 0 },
+        "count": 2,
+        "allowRepeat": false
+      },
+      "expected": { "picked": ["o2", "o1"], "actualRatio": { "official": 1, "custom": 0 } }
+    },
+    {
+      "name": "source_mix_custom_only",
+      "fn": "applySourceMixRatio",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "入门", "title": "题o1", "weight": 1 },
+          { "id": "o2", "source_type": "official", "difficulty": "入门", "title": "题o2", "weight": 1 },
+          { "id": "c1", "source_type": "自定义", "difficulty": "入门", "title": "题c1", "weight": 1 },
+          { "id": "c2", "source_type": "自定义", "difficulty": "入门", "title": "题c2", "weight": 1 }
+        ],
+        "ratio": { "official": 0, "custom": 1 },
+        "count": 2,
+        "allowRepeat": false
+      },
+      "expected": { "picked": ["c2", "c1"], "actualRatio": { "official": 0, "custom": 1 } }
+    },
+    {
+      "name": "source_mix_mixed",
+      "fn": "applySourceMixRatio",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "入门", "title": "题o1", "weight": 1 },
+          { "id": "c1", "source_type": "自定义", "difficulty": "入门", "title": "题c1", "weight": 1 },
+          { "id": "c2", "source_type": "自定义", "difficulty": "入门", "title": "题c2", "weight": 1 }
+        ],
+        "ratio": { "official": 0.5, "custom": 0.5 },
+        "count": 2,
+        "allowRepeat": false
+      },
+      "expected": { "picked": ["o1", "c2"], "actualRatio": { "official": 0.5, "custom": 0.5 } }
+    },
+    {
+      "name": "source_mix_allow_repeat",
+      "fn": "applySourceMixRatio",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "入门", "title": "题o1", "weight": 1 }
+        ],
+        "ratio": { "official": 1, "custom": 0 },
+        "count": 3,
+        "allowRepeat": true
+      },
+      "expected": { "picked": ["o1", "o1", "o1"], "actualRatio": { "official": 1, "custom": 0 } }
+    },
+    {
+      "name": "source_mix_empty",
+      "fn": "applySourceMixRatio",
+      "input": {
+        "candidates": [],
+        "ratio": { "official": 0.5, "custom": 0.5 },
+        "count": 2,
+        "allowRepeat": false
+      },
+      "expected": { "picked": [], "actualRatio": { "official": 0, "custom": 0 } }
+    },
+    {
+      "name": "difficulty_mix_old_label_pooled",
+      "fn": "applyDifficultyDistribution",
+      "input": {
+        "candidates": [
+          { "id": "e1", "difficulty": "入门级", "title": "题e1", "weight": 1 },
+          { "id": "e2", "difficulty": "入门级", "title": "题e2", "weight": 1 },
+          { "id": "e3", "difficulty": "入门级", "title": "题e3", "weight": 1 },
+          { "id": "m1", "difficulty": "进阶级", "title": "题m1", "weight": 1 },
+          { "id": "m2", "difficulty": "进阶级", "title": "题m2", "weight": 1 }
+        ],
+        "distribution": { "入门": 0.6, "进阶": 0.4, "专业": 0 },
+        "count": 4
+      },
+      "expected": ["e3", "e2", "m1", "m2"]
+    },
+    {
+      "name": "difficulty_mix_deficit_supplement",
+      "fn": "applyDifficultyDistribution",
+      "input": {
+        "candidates": [
+          { "id": "e1", "difficulty": "入门", "title": "题e1", "weight": 1 },
+          { "id": "m1", "difficulty": "进阶", "title": "题m1", "weight": 1 },
+          { "id": "p1", "difficulty": "专业", "title": "题p1", "weight": 1 },
+          { "id": "p2", "difficulty": "专业", "title": "题p2", "weight": 1 },
+          { "id": "p3", "difficulty": "专业", "title": "题p3", "weight": 1 }
+        ],
+        "distribution": { "入门": 0.6, "进阶": 0.4, "专业": 0 },
+        "count": 4
+      },
+      "expected": ["e1", "m1", "p3", "p2"]
+    },
+    {
+      "name": "exclusions_both_sets",
+      "fn": "applyExclusionsByIds",
+      "input": {
+        "candidates": [
+          { "id": "a", "title": "题a", "weight": 1 },
+          { "id": "b", "title": "题b", "weight": 1 },
+          { "id": "c", "title": "题c", "weight": 1 },
+          { "id": "d", "title": "题d", "weight": 1 },
+          { "id": "e", "title": "题e", "weight": 1 }
+        ],
+        "drawnIds": ["a"],
+        "teamHistoryIds": ["c"]
+      },
+      "expected": ["b", "d", "e"]
+    },
+    {
+      "name": "draw_from_pool_versus",
+      "fn": "drawFromPool",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "专业", "title": "题o1", "weight": 1 },
+          { "id": "o2", "source_type": "官方", "difficulty": "专业", "title": "题o2", "weight": 1 },
+          { "id": "c1", "source_type": "自定义", "difficulty": "入门", "title": "题c1", "weight": 1 },
+          { "id": "c2", "source_type": "自定义", "difficulty": "入门", "title": "题c2", "weight": 1 },
+          { "id": "c3", "source_type": "自定义", "difficulty": "进阶", "title": "题c3", "weight": 1 },
+          { "id": "c4", "source_type": "自定义", "difficulty": "进阶", "title": "题c4", "weight": 1 }
+        ],
+        "params": {
+          "topic_count": 2,
+          "include_stance": true,
+          "teams": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }],
+          "source_mix_ratio": { "official": 0.5, "custom": 0.5 }
+        },
+        "options": {}
+      },
+      "expected": {
+        "topic_ids": ["c4", "o1"],
+        "items": [
+          { "topic_id": "c4", "team_a_id": "t1", "team_b_id": "t2", "stance_a": "正方", "stance_b": "反方" },
+          { "topic_id": "o1", "team_a_id": "t3", "team_b_id": "t4", "stance_a": "反方", "stance_b": "正方" }
+        ],
+        "actual_ratio": { "official": 0.5, "custom": 0.5 },
+        "effective_topic_count": 2
+      }
+    },
+    {
+      "name": "draw_from_pool_group_mode",
+      "fn": "drawFromPool",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "专业", "title": "题o1", "weight": 1 },
+          { "id": "o2", "source_type": "官方", "difficulty": "专业", "title": "题o2", "weight": 1 }
+        ],
+        "params": {
+          "topic_count": 2,
+          "include_stance": true,
+          "draw_mode": "group",
+          "teams_per_topic": 2
+        },
+        "options": {
+          "groups": [{ "id": "g1", "name": "G1" }, { "id": "g2", "name": "G2" }],
+          "teamsByGroup": {
+            "g1": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }],
+            "g2": [{ "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }]
+          }
+        }
+      },
+      "expected": {
+        "topic_ids": ["o1", "o2"],
+        "items": [
+          { "topic_id": "o1", "group_id": "g2", "teams": [{ "id": "t3", "stance": "正方" }, { "id": "t4", "stance": "反方" }] },
+          { "topic_id": "o2", "group_id": "g1", "teams": [{ "id": "t1", "stance": "反方" }, { "id": "t2", "stance": "正方" }] }
+        ],
+        "actual_ratio": null,
+        "effective_topic_count": 2
+      }
+    },
+    {
+      "name": "draw_from_pool_multi_team_mode",
+      "fn": "drawFromPool",
+      "input": {
+        "candidates": [
+          { "id": "o1", "source_type": "官方", "difficulty": "专业", "title": "题o1", "weight": 1 },
+          { "id": "o2", "source_type": "官方", "difficulty": "专业", "title": "题o2", "weight": 1 }
+        ],
+        "params": {
+          "topic_count": 2,
+          "include_stance": true,
+          "draw_mode": "multi_team",
+          "teams_per_topic": 2,
+          "teams": [{ "id": "t1", "name": "T1" }, { "id": "t2", "name": "T2" }, { "id": "t3", "name": "T3" }, { "id": "t4", "name": "T4" }]
+        },
+        "options": {}
+      },
+      "expected": {
+        "topic_ids": ["o1", "o2"],
+        "items": [
+          { "topic_id": "o1", "group_id": null, "teams": [{ "id": "t1", "stance": "反方" }, { "id": "t4", "stance": "正方" }] },
+          { "topic_id": "o2", "group_id": null, "teams": [{ "id": "t2", "stance": "反方" }, { "id": "t3", "stance": "正方" }] }
+        ],
+        "actual_ratio": null,
+        "effective_topic_count": 2
+      }
+    },
+    {
+      "name": "draw_from_pool_insufficient",
+      "fn": "drawFromPool",
+      "input": {
+        "candidates": [
+          { "id": "a", "source_type": "自定义", "difficulty": "入门", "title": "题a", "weight": 1 },
+          { "id": "b", "source_type": "自定义", "difficulty": "入门", "title": "题b", "weight": 1 },
+          { "id": "c", "source_type": "自定义", "difficulty": "入门", "title": "题c", "weight": 1 }
+        ],
+        "params": { "topic_count": 5, "include_stance": false },
+        "options": {}
+      },
+      "expected": { "throws": { "name": "InsufficientTopicsError", "candidateCount": 3, "requiredCount": 5 } }
+    }
+  ]
+}

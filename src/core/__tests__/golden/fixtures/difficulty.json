@@ -1,0 +1,55 @@
+{
+  "system": "difficulty",
+  "schemaVersion": 1,
+  "cases": [
+    { "name": "normalize_label_entry_level", "fn": "normalizeDifficulty", "input": "入门级", "expected": "入门" },
+    { "name": "normalize_label_inter_level", "fn": "normalizeDifficulty", "input": "进阶级", "expected": "进阶" },
+    { "name": "normalize_label_pro_level", "fn": "normalizeDifficulty", "input": "专业级", "expected": "专业" },
+    { "name": "normalize_master_level_to_pro", "fn": "normalizeDifficulty", "input": "大师级", "expected": "专业" },
+    { "name": "normalize_canonical_entry", "fn": "normalizeDifficulty", "input": "入门", "expected": "入门" },
+    { "name": "normalize_trimmed", "fn": "normalizeDifficulty", "input": " 进阶 ", "expected": "进阶" },
+    { "name": "normalize_empty_null", "fn": "normalizeDifficulty", "input": "", "expected": null },
+    { "name": "normalize_null_null", "fn": "normalizeDifficulty", "input": null, "expected": null },
+    { "name": "round_standard_qualifying", "fn": "roundNameToDifficulty", "input": { "name": "分组赛", "presetKey": "standard" }, "expected": "入门" },
+    { "name": "round_standard_quarterfinal", "fn": "roundNameToDifficulty", "input": { "name": "复赛", "presetKey": "standard" }, "expected": "进阶" },
+    { "name": "round_standard_final", "fn": "roundNameToDifficulty", "input": { "name": "决赛", "presetKey": "standard" }, "expected": "专业" },
+    { "name": "round_compact_prelim", "fn": "roundNameToDifficulty", "input": { "name": "初赛", "presetKey": "compact" }, "expected": "入门" },
+    { "name": "round_compact_final", "fn": "roundNameToDifficulty", "input": { "name": "决赛", "presetKey": "compact" }, "expected": "进阶" },
+    { "name": "round_extended_group", "fn": "roundNameToDifficulty", "input": { "name": "小组赛", "presetKey": "extended" }, "expected": "入门" },
+    { "name": "round_extended_knockout", "fn": "roundNameToDifficulty", "input": { "name": "淘汰赛", "presetKey": "extended" }, "expected": "入门" },
+    { "name": "round_extended_semifinal", "fn": "roundNameToDifficulty", "input": { "name": "半决赛", "presetKey": "extended" }, "expected": "进阶" },
+    { "name": "round_extended_final", "fn": "roundNameToDifficulty", "input": { "name": "决赛", "presetKey": "extended" }, "expected": "专业" },
+    { "name": "round_unknown_name_null", "fn": "roundNameToDifficulty", "input": { "name": "表演赛", "presetKey": "standard" }, "expected": null },
+    { "name": "round_missing_preset_null", "fn": "roundNameToDifficulty", "input": { "name": "分组赛", "presetKey": null }, "expected": null },
+    { "name": "round_unknown_preset_null", "fn": "roundNameToDifficulty", "input": { "name": "分组赛", "presetKey": "weird" }, "expected": null },
+    { "name": "dist_qualifying_entry_biased", "fn": "getDifficultyDistribution", "input": "分组赛", "expected": { "入门": 0.6, "进阶": 0.4, "专业": 0 } },
+    { "name": "dist_group_stage_entry_biased", "fn": "getDifficultyDistribution", "input": "小组赛", "expected": { "入门": 0.6, "进阶": 0.4, "专业": 0 } },
+    { "name": "dist_prelim_entry_biased", "fn": "getDifficultyDistribution", "input": "初赛", "expected": { "入门": 0.6, "进阶": 0.4, "专业": 0 } },
+    { "name": "dist_quarterfinal_inter_biased", "fn": "getDifficultyDistribution", "input": "复赛", "expected": { "入门": 0, "进阶": 0.6, "专业": 0.4 } },
+    { "name": "dist_knockout_inter_biased", "fn": "getDifficultyDistribution", "input": "淘汰赛", "expected": { "入门": 0, "进阶": 0.6, "专业": 0.4 } },
+    { "name": "dist_semifinal_inter_biased", "fn": "getDifficultyDistribution", "input": "半决赛", "expected": { "入门": 0, "进阶": 0.6, "专业": 0.4 } },
+    { "name": "dist_final_pro", "fn": "getDifficultyDistribution", "input": "决赛", "expected": { "入门": 0, "进阶": 0, "专业": 1 } },
+    { "name": "dist_grand_final_pro", "fn": "getDifficultyDistribution", "input": "总决赛", "expected": { "入门": 0, "进阶": 0, "专业": 1 } },
+    { "name": "dist_champion_pro", "fn": "getDifficultyDistribution", "input": "冠军", "expected": { "入门": 0, "进阶": 0, "专业": 1 } },
+    { "name": "dist_custom_default", "fn": "getDifficultyDistribution", "input": "自定义", "expected": { "入门": 0.34, "进阶": 0.33, "专业": 0.33 } },
+    { "name": "dist_empty_default", "fn": "getDifficultyDistribution", "input": "", "expected": { "入门": 0.34, "进阶": 0.33, "专业": 0.33 } },
+    { "name": "dist_null_default", "fn": "getDifficultyDistribution", "input": null, "expected": { "入门": 0.34, "进阶": 0.33, "专业": 0.33 } }
+  ],
+  "presets": {
+    "standard": [
+      { "name": "分组赛", "difficulty": "入门" },
+      { "name": "复赛", "difficulty": "进阶" },
+      { "name": "决赛", "difficulty": "专业" }
+    ],
+    "compact": [
+      { "name": "初赛", "difficulty": "入门" },
+      { "name": "决赛", "difficulty": "进阶" }
+    ],
+    "extended": [
+      { "name": "小组赛", "difficulty": "入门" },
+      { "name": "淘汰赛", "difficulty": "入门" },
+      { "name": "半决赛", "difficulty": "进阶" },
+      { "name": "决赛", "difficulty": "专业" }
+    ]
+  }
+}

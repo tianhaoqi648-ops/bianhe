@@ -119,10 +119,14 @@ export function normalizeDrawResult(r: unknown): unknown {
 
 // ---- difficulty ----
 
-/** DIFFICULTY_ROUND_PRESETS 语义投影（丢弃 label 展示文案，保留 key+presets 规则） */
-export function normalizeDifficultyPreset(presets: unknown): unknown {
+/** DIFFICULTY_ROUND_PRESETS 语义投影（按 key 组织，丢弃 label 展示文案，保留 presets 规则） */
+export function normalizeDifficultyPreset(presets: unknown): Record<string, unknown> {
   const arr = (presets ?? []) as Array<{ key?: string; presets?: unknown }>
-  return arr.map((p) => p.presets ?? p)
+  const out: Record<string, unknown> = {}
+  for (const p of arr) {
+    if (p.key) out[p.key] = p.presets ?? []
+  }
+  return out
 }
 
 // ---- format ----

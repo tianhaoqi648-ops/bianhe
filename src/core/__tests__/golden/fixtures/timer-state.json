@@ -1,0 +1,23 @@
+{
+  "system": "timer-state",
+  "schemaVersion": 1,
+  "cases": [
+    { "name": "idle_to_running", "fn": "canTransition", "input": { "from": "idle", "to": "running" }, "expected": true },
+    { "name": "idle_to_paused_rejected", "fn": "canTransition", "input": { "from": "idle", "to": "paused" }, "expected": false },
+    { "name": "idle_to_finished_rejected", "fn": "canTransition", "input": { "from": "idle", "to": "finished" }, "expected": false },
+    { "name": "idle_to_idle_rejected", "fn": "canTransition", "input": { "from": "idle", "to": "idle" }, "expected": false },
+    { "name": "running_to_paused", "fn": "canTransition", "input": { "from": "running", "to": "paused" }, "expected": true },
+    { "name": "running_to_finished", "fn": "canTransition", "input": { "from": "running", "to": "finished" }, "expected": true },
+    { "name": "running_to_running_rejected", "fn": "canTransition", "input": { "from": "running", "to": "running" }, "expected": false },
+    { "name": "paused_to_running", "fn": "canTransition", "input": { "from": "paused", "to": "running" }, "expected": true },
+    { "name": "paused_to_finished", "fn": "canTransition", "input": { "from": "paused", "to": "finished" }, "expected": true },
+    { "name": "paused_to_paused_rejected", "fn": "canTransition", "input": { "from": "paused", "to": "paused" }, "expected": false },
+    { "name": "finished_terminal_rejects_all", "fn": "canTransition", "input": { "from": "finished", "to": "running" }, "expected": false },
+    { "name": "missing_from_defaults_idle", "fn": "canTransition", "input": { "from": null, "to": "running" }, "expected": true },
+    { "name": "missing_from_defaults_idle_paused_rejected", "fn": "canTransition", "input": { "from": null, "to": "paused" }, "expected": false },
+    { "name": "invalid_to_rejected", "fn": "canTransition", "input": { "from": "running", "to": "invalid" }, "expected": false },
+    { "name": "is_terminal_finished", "fn": "isTerminal", "input": "finished", "expected": true },
+    { "name": "is_terminal_running", "fn": "isTerminal", "input": "running", "expected": false },
+    { "name": "is_terminal_null", "fn": "isTerminal", "input": null, "expected": false }
+  ]
+}
