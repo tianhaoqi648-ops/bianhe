@@ -16,10 +16,13 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:golden": "vitest run src/core/__tests__/golden src/core/__tests__/schedule-desktop.golden.test.ts && echo Cross-End-Golden-PASS",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:linux": "electron-vite build && electron-builder --linux",
+    "core:sync": "node scripts/sync-core.cjs",
+    "core:check": "node scripts/check-core-sync.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
@@ -56,6 +59,7 @@
     "electron": "^31.0.2",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.28.2",
     "jsdom": "^30.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
