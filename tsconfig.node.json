@@ -5,6 +5,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
+    "src/core/**/*",
     "src/types/**/*.d.ts"
   ],
   "compilerOptions": {
@@ -14,7 +15,8 @@
     "paths": {
       "@main/*": ["src/main/*"],
       "@preload/*": ["src/preload/*"],
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@core/*": ["src/core/*"]
     }
   }
 }

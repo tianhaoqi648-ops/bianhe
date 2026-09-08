@@ -14,6 +14,7 @@ export default defineConfig({
       alias: {
         '@main': resolve(__dirname, 'src/main'),
         '@shared': resolve(__dirname, 'src/shared'),
+        '@core': resolve(__dirname, 'src/core'),
         '@preload': resolve(__dirname, 'src/preload')
       }
     },
@@ -31,6 +32,14 @@ export default defineConfig({
     // 无法 import 外部包），CJS preload 是 Electron 完全成熟支持的路径。
     // 同时内联 @electron-toolkit/preload（不 externalize）。
     plugins: [externalizeDepsPlugin({ exclude: ['@electron-toolkit/preload'] })],
+    resolve: {
+      // 2026-09-08 修复：shared/types.ts 已改为从 @core/schema/* 消费跨端规范类型，
+      // 而 preload 经相对路径 import 了 shared/types，因此 preload 段同样需要 @core 别名，
+      // 否则 rollup 无法解析 @core/schema/match，构建直接失败（main / renderer 段已配）。
+      alias: {
+        '@core': resolve(__dirname, 'src/core')
+      }
+    },
     build: {
       rollupOptions: {
         input: {
@@ -46,7 +55,9 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('src/renderer/src'),
+        // 修复：renderer 历史无 @shared 别名（全部用相对路径），@core 一并补齐
+        '@core': resolve(__dirname, 'src/core')
       }
     },
     plugins: [react()],

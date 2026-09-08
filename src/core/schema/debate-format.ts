@@ -1,0 +1,87 @@
+// ============================================================
+// core/schema/debate-format.ts — 赛制/环节/铃声 schema（Bianhe Core 单真源）
+//
+// 源：桌面抽辩题 src/shared/debate-formats/types.ts（两端 100% 同构）
+// 铁律：零外部 import（仅 core 内部）。
+// ============================================================
+
+export type StageSide = 'aff' | 'neg' | 'both' | 'og' | 'oo' | 'cg' | 'co'
+
+/** 铃声类型：内置 4 种 + custom 自定义文件 */
+export type BellSound = 'beep' | 'bell' | 'double_bell' | 'time_up' | 'custom'
+
+export interface BellDef {
+  /** 触发时间点（剩余毫秒，0 = 时间到） */
+  atMs: number
+  /**
+   * 铃声类型：内置 4 种 + 自定义。
+   * 自定义格式为 `custom:<bellAssetId>`，引用 bell_assets 表的 id。
+   */
+  sound: BellSound | `custom:${string}`
+  /** 当 sound='custom' 时，引用 bell_assets 表的 id */
+  customBellId?: string
+}
+
+export interface StageDef {
+  id: string
+  name: string
+  side: StageSide
+  durationMs: number
+  /** 宽限时间（毫秒）：时间到后允许继续发言的时间，超时显示红色警告 */
+  graceMs?: number
+  bells: BellDef[]
+  /** 自由辩论标记：标记后引擎允许通过 Space 键切换发言方 */
+  isFreeDebate?: boolean
+  /** 计时模式：'countdown' 倒计时（默认），'untimed' 不计时（如开场/颁奖/评委点评） */
+  timingMode?: 'countdown' | 'untimed'
+  /** 铃声试听环节标记（仅 timingMode='untimed' 时有意义） */
+  isBellPreview?: boolean
+  /** 归属队伍总时长池（仅赛制开启每队总时长池时有意义） */
+  poolTeam?: 'aff' | 'neg'
+  /** 建议分配时长（毫秒）：归属池环节的建议占用池时长，仅作提示/进度参考，不参与实际扣减 */
+  poolSuggestedMs?: number
+  /** 该环节发言辩手（中文展示，如"正方一辩/反方四辩/双方/无"）；缺省时按 side 兜底 */
+  speaker?: string
+  /** 环节票权重（>0，可选）；缺省按等权处理 */
+  weight?: number
+}
+
+export interface DebateFormatData {
+  stages: StageDef[]
+  totalDurationMs: number
+  /** 每队总时长池（单位：分钟）。存在时启用「每队总时长池」赛制 */
+  teamPoolMinutes?: { aff: number; neg: number }
+}
+
+/** 铃声资源元数据（对应 bell_assets 表） */
+export interface BellAsset {
+  id: string
+  name: string
+  /** 文件相对路径（相对于 userData/bells/） */
+  filePath: string
+  /** 文件大小（字节） */
+  fileSize: number
+  /** MIME 类型，如 audio/mp3 */
+  mimeType: string
+  /** 时长（毫秒），可选 */
+  durationMs?: number
+  createdAt: string
+}
+
+/** 计时器视觉主题 */
+export interface TimerTheme {
+  /** 正方称谓，默认"正方" */
+  affLabel: string
+  /** 反方称谓，默认"反方" */
+  negLabel: string
+  /** 正方主题色（CSS color），默认 "#1677ff" */
+  affColor: string
+  /** 反方主题色（CSS color），默认 "#ff4d4f" */
+  negColor: string
+  /** 强调色（环节高亮、按钮），默认 "#1677ff" */
+  accentColor: string
+  /** 背景图路径（绝对路径或 data URL），可选 */
+  backgroundPath?: string
+  /** 背景图模式 */
+  backgroundFit?: 'cover' | 'contain' | 'stretch'
+}

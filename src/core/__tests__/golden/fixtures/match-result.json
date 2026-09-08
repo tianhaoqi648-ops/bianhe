@@ -6,7 +6,15 @@
       "name": "three_votes_aff_win",
       "input": {
         "system": "three_votes",
-        "votes": [{ "impressionVote": "aff", "decisionVote": "aff", "affTotal": 5, "negTotal": 3, "bestSpeaker": "A" }]
+        "votes": [
+          {
+            "impressionVote": "aff",
+            "decisionVote": "aff",
+            "affTotal": 5,
+            "negTotal": 3,
+            "bestSpeaker": "A"
+          }
+        ]
       },
       "expected": {
         "winner": "aff",
@@ -14,14 +22,37 @@
         "negScore": 3,
         "isDraw": false,
         "bestSpeaker": "A",
-        "votes": { "aff": 3, "neg": 0, "impression": { "aff": 1, "neg": 0 }, "stage": { "aff": 1, "neg": 0 }, "decision": { "aff": 1, "neg": 0 } }
+        "votes": {
+          "aff": 3,
+          "neg": 0,
+          "impression": {
+            "aff": 1,
+            "neg": 0
+          },
+          "stage": {
+            "aff": 1,
+            "neg": 0
+          },
+          "decision": {
+            "aff": 1,
+            "neg": 0
+          }
+        }
       }
     },
     {
       "name": "three_votes_neg_win",
       "input": {
         "system": "three_votes",
-        "votes": [{ "impressionVote": "neg", "decisionVote": "neg", "affTotal": 3, "negTotal": 5, "bestSpeaker": "B" }]
+        "votes": [
+          {
+            "impressionVote": "neg",
+            "decisionVote": "neg",
+            "affTotal": 3,
+            "negTotal": 5,
+            "bestSpeaker": "B"
+          }
+        ]
       },
       "expected": {
         "winner": "neg",
@@ -29,7 +60,22 @@
         "negScore": 5,
         "isDraw": false,
         "bestSpeaker": "B",
-        "votes": { "aff": 0, "neg": 3, "impression": { "aff": 0, "neg": 1 }, "stage": { "aff": 0, "neg": 1 }, "decision": { "aff": 0, "neg": 1 } }
+        "votes": {
+          "aff": 0,
+          "neg": 3,
+          "impression": {
+            "aff": 0,
+            "neg": 1
+          },
+          "stage": {
+            "aff": 0,
+            "neg": 1
+          },
+          "decision": {
+            "aff": 0,
+            "neg": 1
+          }
+        }
       }
     },
     {
@@ -37,9 +83,27 @@
       "input": {
         "system": "three_votes",
         "votes": [
-          { "impressionVote": "aff", "affTotal": 4, "negTotal": 4, "decisionVote": "aff", "bestSpeaker": "A" },
-          { "impressionVote": "neg", "affTotal": 3, "negTotal": 5, "decisionVote": "aff", "bestSpeaker": "A" },
-          { "impressionVote": "neg", "affTotal": 5, "negTotal": 3, "decisionVote": "neg", "bestSpeaker": "B" }
+          {
+            "impressionVote": "aff",
+            "affTotal": 4,
+            "negTotal": 4,
+            "decisionVote": "aff",
+            "bestSpeaker": "A"
+          },
+          {
+            "impressionVote": "neg",
+            "affTotal": 3,
+            "negTotal": 5,
+            "decisionVote": "aff",
+            "bestSpeaker": "A"
+          },
+          {
+            "impressionVote": "neg",
+            "affTotal": 5,
+            "negTotal": 3,
+            "decisionVote": "neg",
+            "bestSpeaker": "B"
+          }
         ]
       },
       "expected": {
@@ -48,7 +112,22 @@
         "negScore": 4,
         "isDraw": false,
         "bestSpeaker": "A",
-        "votes": { "aff": 4.5, "neg": 4.5, "impression": { "aff": 1, "neg": 2 }, "stage": { "aff": 1.5, "neg": 1.5 }, "decision": { "aff": 2, "neg": 1 } }
+        "votes": {
+          "aff": 4.5,
+          "neg": 4.5,
+          "impression": {
+            "aff": 1,
+            "neg": 2
+          },
+          "stage": {
+            "aff": 1.5,
+            "neg": 1.5
+          },
+          "decision": {
+            "aff": 2,
+            "neg": 1
+          }
+        }
       }
     },
     {
@@ -56,8 +135,20 @@
       "input": {
         "system": "three_votes",
         "votes": [
-          { "impressionVote": "aff", "affTotal": 4, "negTotal": 4, "decisionVote": "aff", "bestSpeaker": "A" },
-          { "impressionVote": "neg", "affTotal": 4, "negTotal": 4, "decisionVote": "neg", "bestSpeaker": "A" }
+          {
+            "impressionVote": "aff",
+            "affTotal": 4,
+            "negTotal": 4,
+            "decisionVote": "aff",
+            "bestSpeaker": "A"
+          },
+          {
+            "impressionVote": "neg",
+            "affTotal": 4,
+            "negTotal": 4,
+            "decisionVote": "neg",
+            "bestSpeaker": "A"
+          }
         ]
       },
       "expected": {
@@ -66,26 +157,67 @@
         "negScore": 4,
         "isDraw": true,
         "bestSpeaker": "A",
-        "votes": { "aff": 3, "neg": 3, "impression": { "aff": 1, "neg": 1 }, "stage": { "aff": 1, "neg": 1 }, "decision": { "aff": 1, "neg": 1 } }
+        "votes": {
+          "aff": 3,
+          "neg": 3,
+          "impression": {
+            "aff": 1,
+            "neg": 1
+          },
+          "stage": {
+            "aff": 1,
+            "neg": 1
+          },
+          "decision": {
+            "aff": 1,
+            "neg": 1
+          }
+        }
       }
     },
     {
       "name": "three_votes_empty_draw",
-      "input": { "system": "three_votes", "votes": [] },
+      "input": {
+        "system": "three_votes",
+        "votes": []
+      },
       "expected": {
         "winner": "draw",
         "affScore": null,
         "negScore": null,
         "isDraw": true,
         "bestSpeaker": null,
-        "votes": { "aff": 0, "neg": 0, "impression": { "aff": 0, "neg": 0 }, "stage": { "aff": 0, "neg": 0 }, "decision": { "aff": 0, "neg": 0 } }
+        "votes": {
+          "aff": 0,
+          "neg": 0,
+          "impression": {
+            "aff": 0,
+            "neg": 0
+          },
+          "stage": {
+            "aff": 0,
+            "neg": 0
+          },
+          "decision": {
+            "aff": 0,
+            "neg": 0
+          }
+        }
       }
     },
     {
       "name": "three_votes_null_vote_missing_aff_total",
       "input": {
         "system": "three_votes",
-        "votes": [{ "impressionVote": null, "decisionVote": null, "affTotal": null, "negTotal": 5, "bestSpeaker": null }]
+        "votes": [
+          {
+            "impressionVote": null,
+            "decisionVote": null,
+            "affTotal": null,
+            "negTotal": 5,
+            "bestSpeaker": null
+          }
+        ]
       },
       "expected": {
         "winner": "neg",
@@ -93,14 +225,34 @@
         "negScore": 5,
         "isDraw": false,
         "bestSpeaker": null,
-        "votes": { "aff": 0, "neg": 1, "impression": { "aff": 0, "neg": 0 }, "stage": { "aff": 0, "neg": 1 }, "decision": { "aff": 0, "neg": 0 } }
+        "votes": {
+          "aff": 0,
+          "neg": 1,
+          "impression": {
+            "aff": 0,
+            "neg": 0
+          },
+          "stage": {
+            "aff": 0,
+            "neg": 1
+          },
+          "decision": {
+            "aff": 0,
+            "neg": 0
+          }
+        }
       }
     },
     {
       "name": "three_votes_no_totals_stage_tie",
       "input": {
         "system": "three_votes",
-        "votes": [{ "impressionVote": "aff", "decisionVote": "aff" }]
+        "votes": [
+          {
+            "impressionVote": "aff",
+            "decisionVote": "aff"
+          }
+        ]
       },
       "expected": {
         "winner": "aff",
@@ -108,7 +260,22 @@
         "negScore": 0,
         "isDraw": false,
         "bestSpeaker": null,
-        "votes": { "aff": 2.5, "neg": 0.5, "impression": { "aff": 1, "neg": 0 }, "stage": { "aff": 0.5, "neg": 0.5 }, "decision": { "aff": 1, "neg": 0 } }
+        "votes": {
+          "aff": 2.5,
+          "neg": 0.5,
+          "impression": {
+            "aff": 1,
+            "neg": 0
+          },
+          "stage": {
+            "aff": 0.5,
+            "neg": 0.5
+          },
+          "decision": {
+            "aff": 1,
+            "neg": 0
+          }
+        }
       }
     },
     {
@@ -116,9 +283,20 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "A" },
-          { "affTotal": 70, "negTotal": 75 },
-          { "affTotal": 85, "negTotal": 80, "bestSpeaker": "A" }
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "A"
+          },
+          {
+            "affTotal": 70,
+            "negTotal": 75
+          },
+          {
+            "affTotal": 85,
+            "negTotal": 80,
+            "bestSpeaker": "A"
+          }
         ]
       },
       "expected": {
@@ -135,8 +313,14 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 80, "negTotal": 85 },
-          { "affTotal": 70, "negTotal": 90 }
+          {
+            "affTotal": 80,
+            "negTotal": 85
+          },
+          {
+            "affTotal": 70,
+            "negTotal": 90
+          }
         ]
       },
       "expected": {
@@ -153,8 +337,14 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 90, "negTotal": 80 },
-          { "affTotal": 70, "negTotal": 90 }
+          {
+            "affTotal": 90,
+            "negTotal": 80
+          },
+          {
+            "affTotal": 70,
+            "negTotal": 90
+          }
         ]
       },
       "expected": {
@@ -171,8 +361,14 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 85, "negTotal": 80 },
-          { "affTotal": 80, "negTotal": 85 }
+          {
+            "affTotal": 85,
+            "negTotal": 80
+          },
+          {
+            "affTotal": 80,
+            "negTotal": 85
+          }
         ]
       },
       "expected": {
@@ -186,7 +382,10 @@
     },
     {
       "name": "percentage_empty_draw",
-      "input": { "system": "percentage", "votes": [] },
+      "input": {
+        "system": "percentage",
+        "votes": []
+      },
       "expected": {
         "winner": "draw",
         "affScore": null,
@@ -201,9 +400,21 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "A" },
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "B" },
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "B" }
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "A"
+          },
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "B"
+          },
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "B"
+          }
         ]
       },
       "expected": {
@@ -220,8 +431,16 @@
       "input": {
         "system": "percentage",
         "votes": [
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "A" },
-          { "affTotal": 90, "negTotal": 80, "bestSpeaker": "B" }
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "A"
+          },
+          {
+            "affTotal": 90,
+            "negTotal": 80,
+            "bestSpeaker": "B"
+          }
         ]
       },
       "expected": {
@@ -231,6 +450,36 @@
         "isDraw": false,
         "bestSpeaker": "A",
         "votes": null
+      }
+    },
+    {
+      "name": "abandoned_no_votes",
+      "input": {
+        "system": "three_votes",
+        "votes": []
+      },
+      "expected": {
+        "winner": "abandoned",
+        "affScore": null,
+        "negScore": null,
+        "isDraw": false,
+        "bestSpeaker": null,
+        "votes": {
+          "aff": 0,
+          "neg": 0,
+          "impression": {
+            "aff": 0,
+            "neg": 0
+          },
+          "stage": {
+            "aff": 0,
+            "neg": 0
+          },
+          "decision": {
+            "aff": 0,
+            "neg": 0
+          }
+        }
       }
     }
   ]

@@ -14,13 +14,16 @@ export default defineConfig({
     alias: {
       '@main/': `${resolve(__dirname, 'src/main')}/`,
       '@shared/': `${resolve(__dirname, 'src/shared')}/`,
+      '@core/': `${resolve(__dirname, 'src/core')}/`,
       '@preload/': `${resolve(__dirname, 'src/preload')}/`
     }
   },
   test: {
     // services 层 + shared 纯函数工具 + renderer 纯函数工具 + stores 的单元测试，避开 electron 运行时依赖
     // Task 51: 新增 agent 层（schedule-engine / agent-loop / tools）与 db repository 层测试
+    // Phase 7.7-2: 新增 src/core（Bianhe Core 单真源）测试
     include: [
+      'src/core/**/*.test.ts',
       'src/main/services/__tests__/**/*.test.ts',
       'src/shared/**/*.test.ts',
       'src/shared/utils/__tests__/**/*.test.ts',
