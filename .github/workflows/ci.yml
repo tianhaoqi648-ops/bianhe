@@ -10,6 +10,11 @@ jobs:
     steps:
       - name: Checkout (bianhe)
         uses: actions/checkout@v4
+        with:
+          # 不持久化 GITHUB_TOKEN 到仓库本地 git 配置：persist-credentials 默认
+          # 会写入 http.https://github.com/.extraheader，导致同 job 内后续对
+          # github.com 的匿名 clone（Mini 仓）也带上无权限凭据而失败。
+          persist-credentials: false
       - name: Checkout Mini (bianhe-miniprogram) for core sync check
         # 默认 GITHUB_TOKEN 是 bianhe 的仓库级 installation token，无法跨仓 checkout
         #（即使 Mini 仓公开，actions/checkout 也不会回退匿名；CI 首跑已实测失败）。
