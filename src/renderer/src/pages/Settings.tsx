@@ -184,10 +184,13 @@ const DEFAULTS = {
 };
 
 // ============================================================
-// 工具确认规则相关常量（Task 48）
+// 工具确认规则相关常量
 //
-// 在渲染进程维护一份 12 个工具的元数据常量（与 src/main/agent/tools/index.ts
-// 的 allTools 对齐），避免新增 IPC 通道。如工具清单变化，同步更新此处。
+// 在渲染进程维护工具确认规则元数据，避免新增 IPC 通道。
+// ⚠️ 注意：此表仅 12 个工具（v1.3/v1.4 时代），而 allTools 现已有 23 个；
+//   v1.5.5+ 新增工具（judge_* / coach_match / simulate_opponent / judge_live /
+//   export_event_schedule / import_event_schedule / list_badges / bind_team_badge）
+//   未纳入，如需在设置页配置其确认规则需补充本表。
 // ============================================================
 
 /** 工具确认规则元数据（用于设置页按风险等级分组展示） */
@@ -198,7 +201,8 @@ interface ToolConfirmMeta {
 }
 
 /**
- * 12 个工具的元数据常量（8 个 v1.3.0 基础工具 + 4 个 v1.4.0 赛事流程工具）。
+ * 工具确认规则元数据（当前 12 个：4 high + 2 medium + 6 low）。
+ * ⚠️ 滞后于 allTools（23 个）：v1.5.5+ 新增工具未纳入，见文件头注释。
  *
  * 风险等级分组（与各 *.tool.ts 中 riskLevel 字段对齐）：
  *   - high：create_event / import_event_batch / optimize_team_groups / generate_schedule

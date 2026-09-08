@@ -1,12 +1,15 @@
 // ============================================================
-// tools/index.ts — Agent 工具统一导出（AI Agent v1.3.0 Week 2 Task 13.1 / Week 6 Task 39）
+// tools/index.ts — Agent 工具统一导出
 //
-// 汇总 12 个业务工具的命名导出，便于按需引用；
+// 汇总全部业务工具的命名导出，便于按需引用；
 // 同时提供 allTools 数组，供 register-tools 一次性批量注册。
 //
-// 工具清单：
-//   - 8 个基础工具（Week 2 Task 13.1）：题库 / 抽取 / 赛事 / 赛制计时
-//   - 4 个赛事流程工具（Week 6 Task 35-38）：批量导入 / 赛制推荐 / 分组优化 / 赛程生成
+// 工具清单（共 23 个）：
+//   - 基础工具（8）：题库搜索/详情/新建、抽取、赛事列表/新建、赛制、计时状态
+//   - 赛事流程（4）：批量导入、赛制推荐、分组优化、赛程生成
+//   - AI 裁判/陪练（7）：judge_debate、judge_match、judge_speech、coach_match、
+//     detect_stage、simulate_opponent、judge_live
+//   - 赛程与队徽（4）：export_event_schedule、import_event_schedule、list_badges、bind_team_badge
 // ============================================================
 
 export { searchTopicsTool } from './search-topics.tool'
@@ -66,7 +69,7 @@ import { bindTeamBadgeTool } from './bind-team-badge.tool'
  * ToolDefinition<Record<string, unknown>, unknown>。此处用 any 抹平泛型差异，
  * 形成异构工具集合，便于批量注册；具体类型安全由各工具文件自行保证。
  *
- * 顺序约定：现有 8 个基础工具在前，4 个赛事流程工具在后（Task 35-38 顺序）。
+ * 顺序约定：基础工具 → 赛事流程 → AI 裁判/陪练 → 赛程与队徽。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const allTools: ToolDefinition<any, any>[] = [
