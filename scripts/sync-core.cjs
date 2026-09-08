@@ -28,13 +28,18 @@ function parseArgs(argv) {
   return { target }
 }
 
+/** 统一为 POSIX 分隔符，保证 manifest key 与跨仓比较路径在 Windows / Linux 完全一致 */
+function toPosix(rel) {
+  return rel.replace(/\\/g, '/')
+}
+
 /** 递归收集相对路径列表（排除 __tests__ 与 .test.ts） */
 function listCoreFiles(dir, base) {
   const out = []
   if (!fs.existsSync(dir)) return out
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name)
-    const rel = path.relative(base, abs)
+    const rel = toPosix(path.relative(base, abs))
     if (entry.isDirectory()) {
       if (entry.name === '__tests__') continue
       out.push(...listCoreFiles(abs, base))
@@ -57,7 +62,7 @@ function listGoldenFiles(dir = GOLDEN_DIR, base = GOLDEN_DIR) {
     if (entry.isDirectory()) {
       out.push(...listGoldenFiles(abs, base))
     } else if (entry.isFile()) {
-      out.push(path.relative(base, abs))
+      out.push(toPosix(path.relative(base, abs)))
     }
   }
   return out
@@ -131,7 +136,7 @@ async function main() {
   }
   let written = 0
   for (const out of result.outputFiles) {
-    const rel = path.relative(outDir, out.path)
+    const rel = toPosix(path.relative(outDir, out.path))
     const dest = path.join(outDir, rel)
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.writeFileSync(dest, out.contents)

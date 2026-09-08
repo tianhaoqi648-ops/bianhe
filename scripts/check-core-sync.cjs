@@ -25,6 +25,11 @@ function parseArgs(argv) {
   return { target }
 }
 
+/** 统一为 POSIX 分隔符，保证与 manifest key（sync 生成）跨平台一致（与 sync-core 对齐） */
+function toPosix(rel) {
+  return rel.replace(/\\/g, '/')
+}
+
 function listCoreFiles(dir, base) {
   const out = []
   if (!fs.existsSync(dir)) return out
@@ -34,7 +39,7 @@ function listCoreFiles(dir, base) {
       if (entry.name === '__tests__') continue
       out.push(...listCoreFiles(abs, base))
     } else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
-      out.push(path.relative(base, abs))
+      out.push(toPosix(path.relative(base, abs)))
     }
   }
   return out
@@ -51,7 +56,7 @@ function listGoldenFiles(dir = GOLDEN_DIR, base = GOLDEN_DIR) {
     if (entry.isDirectory()) {
       out.push(...listGoldenFiles(abs, base))
     } else if (entry.isFile()) {
-      out.push(path.relative(base, abs))
+      out.push(toPosix(path.relative(base, abs)))
     }
   }
   return out
@@ -120,7 +125,7 @@ async function main() {
   })
   const expectedJs = new Map()
   for (const out of result.outputFiles) {
-    const rel = path.relative(checkOutDir, out.path)
+    const rel = toPosix(path.relative(checkOutDir, out.path))
     expectedJs.set(rel, crypto.createHash('sha256').update(out.contents).digest('hex'))
   }
   for (const [rel, hash] of expectedJs) {
