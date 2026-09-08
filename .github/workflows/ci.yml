@@ -19,7 +19,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: tianhaoqi648-ops/bianhe-miniprogram
-          path: ../bianhe-miniprogram
+          # path 必须在 GITHUB_WORKSPACE 内：新版 actions/checkout 禁止逃出
+          # 工作区（run 4 注释原文 "Repository path ... is not under ..."），
+          # 故用 mini-repo 并由 core:check 的 --target 参数指向它。
+          path: mini-repo
           # 默认 GITHUB_TOKEN 是 bianhe 的仓库级 installation token，无法跨仓
           # checkout（CI 首跑 run 34258890045 已实测），必须使用只读 PAT。
           # persist-credentials: false 使 PAT 仅用于本次 clone，不写入磁盘。
@@ -33,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Core sync check (hard gate, no auto-sync)
-        run: npm run core:check
+        run: npm run core:check -- --target mini-repo
       - name: Typecheck
         run: npm run typecheck
       - name: Test
