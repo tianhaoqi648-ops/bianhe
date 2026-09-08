@@ -77,6 +77,18 @@ function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
+/** 解析 Desktop src/core/version.ts（唯一版本真源）→ { version, compatibility } */
+function readCoreVersion() {
+  const p = path.join(DESKTOP_CORE, 'version.ts')
+  const text = fs.readFileSync(p, 'utf8')
+  const vm = text.match(/export const CORE_VERSION\s*=\s*'([^']+)'/)
+  const cm = text.match(/export const CORE_COMPATIBILITY_VERSION\s*=\s*(\d+)/)
+  if (!vm || !cm) {
+    throw new Error('[sync-core] 无法解析 ' + p + ' 中的 CORE_VERSION / CORE_COMPATIBILITY_VERSION')
+  }
+  return { version: vm[1], compatibility: Number(cm[1]) }
+}
+
 async function main() {
   const { target } = parseArgs(process.argv.slice(2))
   const files = listCoreFiles(DESKTOP_CORE, DESKTOP_CORE)
@@ -84,6 +96,7 @@ async function main() {
     console.error('[sync-core] src/core 无源文件')
     process.exit(1)
   }
+  const coreVersion = readCoreVersion()
 
   // 1. TS 源复制 → 小程序 src/core
   const miniSrcCore = path.join(target, 'src', 'core')
@@ -135,7 +148,14 @@ async function main() {
   for (const rel of goldenFiles) {
     golden[rel] = sha256(path.join(GOLDEN_DIR, rel))
   }
-  const manifest = { generatedAt: new Date().toISOString(), source: 'desktop/src/core', sources, golden }
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    source: 'desktop/src/core',
+    sources,
+    golden,
+    coreVersion: coreVersion.version,
+    compatibilityVersion: coreVersion.compatibility
+  }
   fs.writeFileSync(path.join(outDir, '.core-manifest.json'), JSON.stringify(manifest, null, 2))
   console.log(`[sync-core] manifest 已写入 ${outDir}/.core-manifest.json`)
 
