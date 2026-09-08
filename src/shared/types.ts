@@ -11,12 +11,80 @@ import type { DebateFormatData, StageSide, TimerTheme } from './debate-formats/t
 import type { AgentAPI } from './agent-types'
 import type { AppError } from './app-error'
 
+// 仅本地 import 在文件体内实际用到、需要内部引用的名称；
+// 其余名称一律经下方 re-export 直接导出，无需本地绑定，避免 noUnusedLocals。
+import type {
+  Topic,
+  TopicFilter,
+  TopicCreateInput
+} from '@core/schema/topic'
+import type { SessionFilter } from '@core/schema/draw'
+import type {
+  BackupParams,
+  BackupImportParams,
+  BackupPreviewResult,
+  BackupExportResult,
+  BackupImportResult
+} from '@core/schema/backup'
+import { MatchWinner, MatchJudgeSystem } from '@core/schema/match'
+import type {
+  MatchStatus,
+  MatchStageScore,
+  MatchJudge,
+  MatchJudgeVote,
+  MatchJudgeVoteInput
+} from '@core/schema/match'
+
 export type { AppError, AppErrorCode } from './app-error'
+
+// ============================================================
+// Cross-End Canonical（Core Schema Canonicalization）
+// 单真源迁移：以下类型改为 re-export 自 Bianhe Core（src/core/schema/*），
+// shared 不再独立声明，保持 @/shared 旧引用可用；结构零变化、运行行为不变。
+// ============================================================
+
+export type {
+  CustomFieldValue,
+  Topic,
+  TopicFilter,
+  TopicCreateInput,
+  TopicUpdateInput
+} from '@core/schema/topic'
+
+export type {
+  DrawSessionSettings,
+  DrawSession,
+  DrawSessionItem,
+  DrawSessionDetail,
+  SessionFilter,
+  SourceMixRatio,
+  DrawResult
+} from '@core/schema/draw'
+
+export type {
+  BackupCategory,
+  BackupImportStrategy,
+  BackupParams,
+  BackupImportParams,
+  BackupPackage,
+  BackupPreviewResult,
+  BackupExportResult,
+  BackupImportResult
+} from '@core/schema/backup'
+
+// MatchWinner / MatchJudgeSystem 在 core 为 const + type（值 + 类型一并 re-export）
+export { MatchWinner, MatchJudgeSystem } from '@core/schema/match'
+export type {
+  MatchStatus,
+  MatchStageScore,
+  MatchJudge,
+  MatchJudgeVote,
+  MatchJudgeVoteInput
+} from '@core/schema/match'
 
 // ---------- 自定义字段相关类型 ----------
 
-/** 自定义字段值类型（字符串或字符串数组） */
-export type CustomFieldValue = string | string[]
+
 
 /** 自定义字段类型 */
 export type CustomFieldType = 'string' | 'tags' | 'number'
@@ -64,72 +132,7 @@ export type FieldMapping = Record<string, FieldMappingAction>
 
 // ---------- 业务实体（结构等价于 repository 中的类型） ----------
 
-export interface Topic {
-  id: string
-  title: string
-  type: string | null
-  domain: string | null
-  difficulty: string | null
-  source: string | null
-  source_type: string | null
-  tags: string[] | null
-  weight: number
-  status: string
-  batch_id: string | null
-  created_at: string
-  updated_at: string
-  /** 自定义字段值（key → value），来自 topics.custom_data JSON 列 */
-  custom_data?: Record<string, CustomFieldValue> | null
-}
 
-export interface TopicFilter {
-  type?: string
-  domain?: string
-  difficulty?: string
-  source?: string
-  source_type?: string
-  status?: string
-  tags?: string[]
-  keyword?: string
-  page?: number
-  pageSize?: number
-  batch_id?: string
-  // 多选字段（与上面单值字段二选一使用，数组优先）
-  types?: string[]
-  domains?: string[]
-  difficulties?: string[]
-  /** 自定义字段筛选：fieldKey → 目标值（仅支持 string 类型字段，tags 类型用 tags 数组语义） */
-  custom_filters?: Record<string, string>
-}
-
-export interface TopicCreateInput {
-  title: string
-  type?: string | null
-  domain?: string | null
-  difficulty?: string | null
-  source?: string | null
-  source_type?: string | null
-  tags?: string[] | null
-  weight?: number
-  status?: string
-  batch_id?: string | null
-  /** 自定义字段值 */
-  custom_data?: Record<string, CustomFieldValue> | null
-}
-
-export interface TopicUpdateInput {
-  title?: string
-  type?: string | null
-  domain?: string | null
-  difficulty?: string | null
-  source?: string | null
-  source_type?: string | null
-  tags?: string[] | null
-  weight?: number
-  status?: string
-  /** 自定义字段值（整体覆盖） */
-  custom_data?: Record<string, CustomFieldValue> | null
-}
 
 export interface Event {
   id: string
@@ -293,75 +296,7 @@ export interface TeamHistoryCreateInput {
   topic_title?: string | null
 }
 
-export interface DrawSessionSettings {
-  source_mix_ratio?: number
-  difficulty_override?: Record<string, number>
-  include_stance?: boolean
-  team_pairs?: Array<{ team_a_id: string; team_b_id: string }>
-  filter?: TopicFilter
-  /** 抽取结果是否已确认写入队伍历史 */
-  confirmed?: boolean
-  /** 单人持方模式：记录抽取时使用的队伍 id */
-  solo_team_id?: string | null
-  /** 抽取模式：'versus' 对战（默认）/ 'group' 分组同题 / 'multi_team' 多队同题 */
-  draw_mode?: 'versus' | 'group' | 'multi_team'
-  /** group 模式下参与抽取的分组 id 列表 */
-  group_ids?: string[]
-  /** multi_team 模式下每道题同题的队伍数（>=2） */
-  teams_per_topic?: number
-  /** 实际抽取的题数（由 draw-engine 写入，group/multi_team 模式下可能覆盖用户传入值） */
-  topic_count?: number
-  /** 测试模式标记：true 表示该 session 为测试抽取，不写入队伍历史 */
-  is_test?: boolean
-}
 
-export interface DrawSession {
-  id: string
-  event_id: string
-  round_id: string | null
-  draw_time: string | null
-  operator: string | null
-  settings: DrawSessionSettings | null
-}
-
-export interface DrawSessionItem {
-  id: string
-  session_id: string
-  topic_id: string
-  team_a_id: string | null
-  team_b_id: string | null
-  stance_a: string | null
-  stance_b: string | null
-  /** 冗余快照：辩题标题（避免硬删除后显示 ID 片段） */
-  topic_title?: string | null
-  /** 冗余快照：A 方队伍名 */
-  team_a_name?: string | null
-  /** 冗余快照：B 方队伍名 */
-  team_b_name?: string | null
-  /** 多队同题模式下的队伍 id 列表（versus 模式为空，仍使用 team_a_id/team_b_id）。
-   *  DB 中存为 JSON 字符串，应用层使用数组。 */
-  team_ids?: string[] | null
-  /** 多队持方快照（与 team_ids 一一对应）。DB 中存为 JSON 字符串，应用层使用数组。 */
-  team_stances?: string[] | null
-  /** 队伍名快照（与 team_ids 一一对应）。DB 中存为 JSON 字符串，应用层使用数组。 */
-  team_names?: string[] | null
-  /** 分组模式下的所属分组 id */
-  group_id?: string | null
-}
-
-export interface DrawSessionDetail extends DrawSession {
-  items: DrawSessionItem[]
-}
-
-export interface SessionFilter {
-  event_id?: string
-  round_id?: string
-  operator?: string
-  startTime?: string
-  endTime?: string
-  page?: number
-  pageSize?: number
-}
 
 export interface AuditLogDetail {
   action?: string
@@ -401,51 +336,13 @@ export interface AuditLogCreateInput {
 
 // ---------- 抽取引擎相关类型 ----------
 
-export interface SourceMixRatio {
-  /** 官方题源占比，0~1 */
-  official: number
-  /** 自定义题源占比，0~1 */
-  custom: number
-}
-
-export interface DrawParams {
-  event_id: string
-  round_id?: string | null
-  topic_count: number
-  include_stance: boolean
-  teams?: Team[]
-  filters?: TopicFilter
-  source_mix_ratio?: SourceMixRatio
-  operator?: string
-  /** 单人持方模式：传一支队伍 id，引擎为每道题随机分配正反方 */
-  solo_team_id?: string
-  /** 抽取模式：'versus' 对战（默认）/ 'group' 分组同题 / 'multi_team' 多队同题 */
-  draw_mode?: 'versus' | 'group' | 'multi_team'
-  /** group 模式下参与抽取的分组 id 列表 */
-  group_ids?: string[]
-  /** multi_team 模式下每道题同题的队伍数（>=2） */
-  teams_per_topic?: number
-  /**
-   * v6 新增：标记 teams 是否来自用户 TeamPairing 配置。
-   * - true：teams 来自 TeamPairing 扁平化，multi_team 引擎应保留配对顺序，不 shuffle
-   * - false 或未传：teams 来自 eventStore 或其他来源，multi_team 引擎应 shuffle
-   * - group 模式不使用此标记（总是 shuffle 同组队伍，确保随机对阵）
-   */
-  user_pairing?: boolean
-  /** 测试模式：跳过 applyExclusions、不写 team_history、settings.is_test=true、自动 allow_repeat */
-  test_mode?: boolean
-  /** 允许辩题重复：跳过题池不足检查，使用有放回抽样 */
-  allow_repeat?: boolean
-  /** 抽题选库：限定从某个题组（题库）抽取。为空时不限（全库候选）。 */
-  group_id?: string | null
-  /** P3.1 Task 1：揭晓动画模式（仅客户端使用，引擎忽略此字段） */
+/** 桌面端 DrawParams：core 基类型（@core/schema/draw）+ 桌面-only 增量。
+ *  Omit 掉 core 的 teams（DrawTeam 最小类型），换成桌面完整 Team；
+ *  另增桌面-only 的 reveal_mode 揭晓动画模式。规避 & 产生的 teams 交集类型冲突。 */
+export type DrawParams = Omit<import('@core/schema/draw').DrawParams, 'teams'> & {
+  /** 揭晓动画模式（仅客户端使用，引擎忽略此字段） */
   reveal_mode?: 'flip' | 'tear' | 'spotlight' | 'fade'
-}
-
-export interface DrawResult {
-  session: DrawSessionDetail
-  topics: Topic[]
-  actual_ratio?: { official: number; custom: number }
+  teams?: Team[]
 }
 
 // ---------- 去重引擎相关类型 ----------
@@ -583,72 +480,7 @@ declare module '@electron-toolkit/preload' {
 
 // ---------- 全量数据备份与恢复 ----------
 
-export type BackupCategory =
-  | 'topics'
-  | 'events'
-  | 'draw_records'
-  | 'match_records'
-  | 'timer'
-  | 'formats_bells'
-  | 'settings'
-  | 'audit_history'
-  | 'judge_history'
-  | 'agent_sessions'
-  | 'badges'
-  | 'topic_groups'
 
-export type BackupImportStrategy = 'clear_rebuild' | 'skip_existing' | 'overwrite_existing'
-
-export interface BackupParams {
-  categories: BackupCategory[]
-}
-
-export interface BackupImportParams {
-  filePath: string
-  strategy: BackupImportStrategy
-  /** 仅导入这些类别 */
-  categories: BackupCategory[]
-}
-
-export interface BackupPackage {
-  version: string
-  exportedAt: string
-  appVersion: string
-  categories: BackupCategory[]
-  tables: Record<string, any[]> | Record<string, Record<string, string>>
-}
-
-export interface BackupPreviewResult {
-  version: string
-  exportedAt: string
-  appVersion: string
-  categories: BackupCategory[]
-  tableCounts: Record<string, number>
-}
-
-export interface BackupExportResult {
-  filePath: string
-  totalRecords: number
-  bellFilesCount: number
-}
-
-export interface BackupImportResult {
-  inserted: number
-  skipped: number
-  overwritten: number
-  bellFilesRestored: number
-  /** 备份恢复时还原的队徽文件数（badges 类别） */
-  badgeFilesRestored: number
-  /**
-   * 恢复后 PRAGMA foreign_key_check 是否发现孤立引用（true = 部分恢复/数据不完整）。
-   * 明确标记而非静默成功，供调用方判断恢复是否完整。
-   */
-  fkInvalid: boolean
-  /** 孤立引用条数（foreign_key_check 返回行数） */
-  fkViolationCount: number
-  /** 孤立引用详情（每项描述：table=..., rowid=..., 引用缺失父表=...） */
-  fkViolations: string[]
-}
 
 // ---------- 标签显示配置 ----------
 
@@ -696,12 +528,7 @@ export interface TagDisplayConfig {
 
 // ---------- 比赛（match）：一轮下的对阵，链路承载（抽题→计时→录音→赛果→AI评审） ----------
 
-/** 比赛状态机 */
-export type MatchStatus = 'planned' | 'resulted'
-/** 赛果（人工评审权威）：aff 正方胜 / neg 反方胜 / draw 平 / abandoned 弃赛 */
-export type MatchWinner = 'aff' | 'neg' | 'draw' | 'abandoned'
-/** 评决制度：三票制（印象/环节/决胜） 或 百分制（可切换，用户决策） */
-export type MatchJudgeSystem = 'three_votes' | 'percentage'
+
 
 /** 录音环节/发言人标记（整轨按切换顺序累积，供 AI 评审区分环节与发言人，如"辨之竹"） */
 export interface MatchRecordingMarker {
@@ -750,46 +577,7 @@ export interface BoundRecording {
   durationMs?: number | null
 }
 
-/** 单环节评分（环节加权可配置，缺省等权） */
-export interface MatchStageScore {
-  stageId: string
-  stageName: string
-  weight: number
-  aff: number
-  neg: number
-}
 
-/** 裁判 */
-export interface MatchJudge {
-  id: string
-  matchId: string
-  name: string
-  sortOrder: number
-  isAi: boolean
-  createdAt: string
-}
-
-/** 裁判评决（每裁判每场一条） */
-export interface MatchJudgeVote {
-  id: string
-  matchId: string
-  judgeId: string
-  judgeSystem: MatchJudgeSystem
-  /** 印象票：aff/neg（三票制） */
-  impressionVote: 'aff' | 'neg' | null
-  /** 决胜票：aff/neg（三票制） */
-  decisionVote: 'aff' | 'neg' | null
-  /** 正方/反方得分：三票制=环节加权累计；百分制=直接分 */
-  affTotal: number | null
-  negTotal: number | null
-  /** 环节明细 */
-  stageScores: MatchStageScore[] | null
-  /** 该裁判投出的最佳辩手 */
-  bestSpeaker: string | null
-  comment: string | null
-  createdAt: string
-  updatedAt: string
-}
 
 /** AI 评审单人五维双方评分（保存 judge_match 输出） */
 export interface MatchAiDimensionScore {
@@ -937,17 +725,7 @@ export interface MatchSetResultInput {
   }>
 }
 
-/** 单裁判评决入参 */
-export interface MatchJudgeVoteInput {
-  judgeSystem?: MatchJudgeSystem
-  impressionVote?: 'aff' | 'neg' | null
-  decisionVote?: 'aff' | 'neg' | null
-  affTotal?: number | null
-  negTotal?: number | null
-  stageScores?: MatchStageScore[] | null
-  bestSpeaker?: string | null
-  comment?: string | null
-}
+
 
 // ---------- AI 裁判「录音转文字」（整场评审原料，2026-08-20） ----------
 

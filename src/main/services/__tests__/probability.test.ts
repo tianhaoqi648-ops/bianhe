@@ -95,41 +95,41 @@ describe('weightedRandomSelect', () => {
 describe('getDifficultyDistribution', () => {
   it('小组赛预设', () => {
     const d = getDifficultyDistribution('小组赛')
-    expect(d.入门级).toBe(0.6)
-    expect(d.进阶级).toBe(0.4)
-    expect(d.专业级).toBe(0)
+    expect(d.入门).toBe(0.6)
+    expect(d.进阶).toBe(0.4)
+    expect(d.专业).toBe(0)
   })
 
   it('小组赛第一轮也命中', () => {
     const d = getDifficultyDistribution('小组赛第一轮')
-    expect(d).toEqual({ 入门级: 0.6, 进阶级: 0.4, 专业级: 0 })
+    expect(d).toEqual({ 入门: 0.6, 进阶: 0.4, 专业: 0 })
   })
 
   it('复赛预设', () => {
     const d = getDifficultyDistribution('复赛')
-    expect(d).toEqual({ 入门级: 0, 进阶级: 0.6, 专业级: 0.4 })
+    expect(d).toEqual({ 入门: 0, 进阶: 0.6, 专业: 0.4 })
   })
 
   it('半决赛命中复赛规则', () => {
     const d = getDifficultyDistribution('半决赛')
-    expect(d).toEqual({ 入门级: 0, 进阶级: 0.6, 专业级: 0.4 })
+    expect(d).toEqual({ 入门: 0, 进阶: 0.6, 专业: 0.4 })
   })
 
   it('决赛预设', () => {
     const d = getDifficultyDistribution('决赛')
-    expect(d).toEqual({ 入门级: 0, 进阶级: 0, 专业级: 1 })
+    expect(d).toEqual({ 入门: 0, 进阶: 0, 专业: 1 })
   })
 
   it('未匹配的轮次返回默认分布', () => {
     const d = getDifficultyDistribution('表演赛')
-    expect(d.入门级).toBeCloseTo(0.34)
-    expect(d.进阶级).toBeCloseTo(0.33)
-    expect(d.专业级).toBeCloseTo(0.33)
+    expect(d.入门).toBeCloseTo(0.34)
+    expect(d.进阶).toBeCloseTo(0.33)
+    expect(d.专业).toBeCloseTo(0.33)
   })
 
   it('null 返回默认分布', () => {
     const d = getDifficultyDistribution(null)
-    expect(d.入门级).toBeCloseTo(0.34)
+    expect(d.入门).toBeCloseTo(0.34)
   })
 })
 
@@ -152,12 +152,12 @@ describe('applyDifficultyDistribution', () => {
   }
 
   it('count <= 0 返回空', () => {
-    const result = applyDifficultyDistribution(makePool(), { 入门级: 1, 进阶级: 0, 专业级: 0 }, 0)
+    const result = applyDifficultyDistribution(makePool(), { 入门: 1, 进阶: 0, 专业: 0 }, 0)
     expect(result).toEqual([])
   })
 
   it('candidates 为空返回空', () => {
-    const result = applyDifficultyDistribution([], { 入门级: 1, 进阶级: 0, 专业级: 0 }, 3)
+    const result = applyDifficultyDistribution([], { 入门: 1, 进阶: 0, 专业: 0 }, 3)
     expect(result).toEqual([])
   })
 
@@ -168,7 +168,7 @@ describe('applyDifficultyDistribution', () => {
     // 专业目标 = 0，专业池全进 remaining
     // deficit = 10 - 8 = 2 → 从专业池补 2
     const pool = makePool()
-    const dist = { 入门级: 0.6, 进阶级: 0.4, 专业级: 0 }
+    const dist = { 入门: 0.6, 进阶: 0.4, 专业: 0 }
     const result = applyDifficultyDistribution(pool, dist, 10)
     expect(result).toHaveLength(10)
     const entryCount = result.filter((r) => r.difficulty === '入门级').length
@@ -182,7 +182,7 @@ describe('applyDifficultyDistribution', () => {
   it('某子池不足时从其他子池补足', () => {
     // 入门池只有 4 个，但要求 8 个入门 → 不足的从其他池补
     const pool = makePool()
-    const dist = { 入门级: 1, 进阶级: 0, 专业级: 0 }
+    const dist = { 入门: 1, 进阶: 0, 专业: 0 }
     const result = applyDifficultyDistribution(pool, dist, 8)
     expect(result).toHaveLength(8)
     const entryCount = result.filter((r) => r.difficulty === '入门级').length
@@ -194,7 +194,7 @@ describe('applyDifficultyDistribution', () => {
 
   it('总数不足时不抛错，返回实际数量', () => {
     const pool: MockTopic[] = [{ id: 'only', weight: 1, difficulty: '入门级' }]
-    const dist = { 入门级: 0.5, 进阶级: 0.5, 专业级: 0 }
+    const dist = { 入门: 0.5, 进阶: 0.5, 专业: 0 }
     const result = applyDifficultyDistribution(pool, dist, 5)
     expect(result.length).toBeLessThanOrEqual(5)
     expect(result.length).toBe(1)
@@ -202,7 +202,7 @@ describe('applyDifficultyDistribution', () => {
 
   it('结果不重复', () => {
     const pool = makePool()
-    const dist = { 入门级: 0.34, 进阶级: 0.33, 专业级: 0.33 }
+    const dist = { 入门: 0.34, 进阶: 0.33, 专业: 0.33 }
     const result = applyDifficultyDistribution(pool, dist, 8)
     const ids = result.map((r) => r.id)
     expect(new Set(ids).size).toBe(ids.length)

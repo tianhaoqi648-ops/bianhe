@@ -1830,10 +1830,10 @@ describe('Task5.1: applyDifficultyOverride（难度筛选）', () => {
     for (const t of result) expect(t.difficulty).toBe('专业级')
   })
 
-  it('getDifficultyDistribution 关键词匹配', () => {
-    expect(getDifficultyDistribution('小组赛')).toEqual({ 入门级: 0.6, 进阶级: 0.4, 专业级: 0 })
-    expect(getDifficultyDistribution('半决赛')).toEqual({ 入门级: 0, 进阶级: 0.6, 专业级: 0.4 })
-    expect(getDifficultyDistribution('总决赛')).toEqual({ 入门级: 0, 进阶级: 0, 专业级: 1 })
+  it('getDifficultyDistribution 关键词匹配（规范档键）', () => {
+    expect(getDifficultyDistribution('小组赛')).toEqual({ 入门: 0.6, 进阶: 0.4, 专业: 0 })
+    expect(getDifficultyDistribution('半决赛')).toEqual({ 入门: 0, 进阶: 0.6, 专业: 0.4 })
+    expect(getDifficultyDistribution('总决赛')).toEqual({ 入门: 0, 进阶: 0, 专业: 1 })
   })
 })
 
