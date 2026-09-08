@@ -45,11 +45,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Checkout Mini (core sync check)
-        uses: actions/checkout@v4
-        with:
-          repository: tianhaoqi648-ops/bianhe-miniprogram
-          path: ../bianhe-miniprogram
-          # 私有仓需配置可读 PAT；公开仓可用默认 token（删除此行为空/公开时）
+        # 默认 GITHUB_TOKEN 是 bianhe 的仓库级 installation token，无法跨仓 checkout
+        #（即使 Mini 仓公开，actions/checkout 也不会回退匿名）。Mini 仓为公开仓，
+        # 改用匿名浅 clone（本地已实测匿名 ls-remote/clone 可行）。
+        run: git clone --depth 1 https://github.com/tianhaoqi648-ops/bianhe-miniprogram.git ../bianhe-miniprogram
       - name: Core sync check (hard gate)
         run: npm run core:check
 
