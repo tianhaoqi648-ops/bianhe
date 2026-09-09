@@ -32,7 +32,8 @@ import type {
   MatchWinner,
   BoundRecording
 } from '../../../shared/types'
-import { boundRecordingsFromMeta, metaFromBoundRecordings } from '../../../shared/match-recording'
+import { boundRecordingsFromMeta, metaFromBoundRecordings, normalizeRecordingPaths } from '../../../shared/match-recording'
+import { basename } from 'path'
 
 // ============================================================
 // 行类型 & 映射
@@ -395,7 +396,12 @@ function updateMatch(id: string, data: MatchUpdateInput): Match | null {
     const v = data[key as keyof MatchUpdateInput]
     if (v === undefined) continue
     sets.push(`${col} = ?`)
-    vals.push(typeof v === 'string' ? v : v === null ? null : JSON.stringify(v))
+    if (col === 'recording_ref' && typeof v === 'string' && v) {
+      // Phase 1.2-fix M3：recording_ref 与 recording_meta 同口径，写入 basename
+      vals.push(basename(v))
+    } else {
+      vals.push(typeof v === 'string' ? v : v === null ? null : JSON.stringify(v))
+    }
   }
   // 录音持久化：统一以 BoundRecording[] 写入 recording_meta 列。
   // - 显式传 recordings（BoundRecording[]，多录音）→ 直接用；
@@ -404,14 +410,17 @@ function updateMatch(id: string, data: MatchUpdateInput): Match | null {
     const rec = data.recordings !== undefined
       ? data.recordings
       : boundRecordingsFromMeta(data.recordingMeta)
+    // Phase 1.2-fix M3：写入端统一 basename——与读取端 basename 锁定（Phase 1.0-B）配对，
+    // 元数据与具体数据根/机器解耦；旧绝对路径数据由读取端归一天然兼容
+    const normalized = normalizeRecordingPaths(rec)
     // governance 12：写前校验 recording_meta（兼容新 BoundRecording[] / 旧 MatchRecordingMeta / null
     // 三种形态的宽容降级），非法结构拒绝写入，避免非法 JSON 入库。
-    const v = validateRecordingMeta(rec)
+    const v = validateRecordingMeta(normalized)
     if (!v.ok) throw new AppError('VALIDATION', v.error, v.error)
     sets.push('recording_meta = ?')
-    vals.push(rec === null || (Array.isArray(rec) && rec.length === 0)
+    vals.push(normalized === null || (Array.isArray(normalized) && normalized.length === 0)
       ? null
-      : JSON.stringify(rec))
+      : JSON.stringify(normalized))
   }
   // 有队伍/辩题变更时刷新快照
   const refresh =

@@ -231,8 +231,8 @@ function seedFullAggregate(): string {
     "INSERT INTO draw_session_items (id, session_id, topic_id, team_a_id, team_b_id, stance_a, stance_b, topic_title, team_a_name, team_b_name, team_ids, team_stances, team_names, group_id) VALUES ('dsi-1', 'ds-1', 'topic-1', 'team-1', 'team-2', '正方', '反方', '示例辩题', '清华队', '北大队', '[\"team-1\",\"team-2\"]', '[\"正方\",\"反方\"]', '[\"清华队\",\"北大队\"]', NULL)"
   ).run()
   db.prepare(
-    "INSERT INTO matches (id, event_id, round_id, match_number, team_a_id, team_b_id, topic_id, status, judge_system, created_at, updated_at) VALUES ('m-1', ?, 'round-1', 1, 'team-1', 'team-2', 'topic-1', 'planned', 'three_votes', '2026-09-09T01:00:00Z', '2026-09-09T01:00:00Z')"
-  ).run(eid)
+    "INSERT INTO matches (id, event_id, round_id, match_number, team_a_id, team_b_id, topic_id, status, judge_system, created_at, updated_at, recording_meta) VALUES ('m-1', ?, 'round-1', 1, 'team-1', 'team-2', 'topic-1', 'planned', 'three_votes', '2026-09-09T01:00:00Z', '2026-09-09T01:00:00Z', ?)"
+  ).run(eid, '[{"id":"rec-1","kind":"whole","filePath":"C:/OldRoot/recordings/match-x.webm","markers":[]}]')
   db.prepare(
     "INSERT INTO match_judges (id, match_id, name, sort_order, is_ai, created_at) VALUES ('mj-1', 'm-1', '裁判A', 0, 0, '2026-09-09T01:00:00Z')"
   ).run()
@@ -331,6 +331,13 @@ describe('R1：删 Event → Undo 完整聚合恢复（真实 SQLite）', () => 
       topic_title: string
     }
     expect(item.topic_title).toBe('示例辩题')
+    // recording_meta 随 matches 快照原值恢复（含旧绝对路径——读取端归一兼容）
+    const mRow = ensureDb()
+      .prepare('SELECT recording_meta FROM matches WHERE id = ?')
+      .get('m-1') as { recording_meta: string | null }
+    expect(mRow.recording_meta).not.toBeNull()
+    const rec = JSON.parse(mRow.recording_meta!) as Array<{ filePath: string }>
+    expect(rec[0].filePath).toContain('match-x.webm')
   })
 
   it('Test B：空子表（仅 teams）的 event 删除后 undo 正常恢复', () => {

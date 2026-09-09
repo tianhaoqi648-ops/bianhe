@@ -656,6 +656,15 @@ function buildAiConfig(req: SttRequest): AiTranscribeConfig {
  * @param req 转写请求
  * @returns 按时间升序的文本段（无标记时整段归一个 SttSegment）
  */
+/**
+ * Phase 1.2-fix M1：STT 输入路径归一——与 PLAY/READ 的 basename 锁定策略对齐。
+ * 一律解析为「当前录音目录 + basename」，拒绝任意绝对路径/穿越路径逃逸。
+ */
+export async function resolveSttRecordingPath(raw: string): Promise<string> {
+  const { recordingsDir } = await import('./recording-storage')
+  return join(await recordingsDir(), basename(raw.trim()))
+}
+
 export async function transcribeRecordings(req: SttRequest): Promise<SttSegment[]> {
   if (!req || typeof req.filePath !== 'string' || !req.filePath.trim()) {
     throw new Error('参数 filePath 必须为非空字符串')
@@ -663,7 +672,9 @@ export async function transcribeRecordings(req: SttRequest): Promise<SttSegment[
 
   const engine = req.engine ?? resolveSttEngine(auditRepo.getSetting(STT_ENGINE_KEY))
   const model = asWhisperModel(req.model ?? auditRepo.getSetting(STT_MODEL_KEY))
-  const filePath = req.filePath.trim()
+  // Phase 1.2-fix M1：STT 与 PLAY/READ 一致，一律 basename 锁定到录音目录——
+  // 拒绝任意绝对路径/穿越路径（与 readRecordingFile 的防护策略对齐）
+  const filePath = await resolveSttRecordingPath(req.filePath)
   const markers = Array.isArray(req.markers) ? req.markers : []
 
   const aiConfig = buildAiConfig(req)

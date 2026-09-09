@@ -182,6 +182,30 @@ export function recordingIdForFile(filePath: string): string {
   return name || `rec-${Date.now()}`
 }
 
+/** 双分隔符兼容取 basename（Windows \\ 与 POSIX / 均可）。 */
+export function filenameOf(filePath: string): string {
+  const p = filePath || ''
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return idx >= 0 ? p.slice(idx + 1) : p
+}
+
+/**
+ * Phase 1.2-fix M3：写入端路径归一——filePath 统一为 basename。
+ *
+ * 与读取端（recording-storage 的 basename 锁定，Phase 1.0-B）配对：
+ * DB 元数据与具体数据根/机器解耦，运行时由 recordingsDir() + basename 拼回实际路径。
+ * 旧绝对路径数据无需迁移——读取端 basename() 归一天然兼容。
+ */
+export function normalizeRecordingPaths<T extends BoundRecording[] | MatchRecordingMeta | null>(
+  rec: T
+): T {
+  if (rec === null) return rec
+  if (Array.isArray(rec)) {
+    return rec.map((r) => ({ ...r, filePath: filenameOf(r.filePath) })) as T
+  }
+  return { ...rec, filePath: filenameOf(rec.filePath) }
+}
+
 /**
  * 旧 MatchRecordingMeta → BoundRecording[] 迁移。
  * - segmentMode='whole'：单一 filePath + markers → 一份 kind='whole' 录音；

@@ -266,17 +266,20 @@ describe('matchRepo', () => {
     expect(m).toBeTruthy()
   })
 
-  it('update（recordings）：按 BoundRecording[] 序列化写入 recording_meta', () => {
+  it('update（recordings）：按 BoundRecording[] 序列化写入 recording_meta（M3：路径归一 basename）', () => {
     h.setRow(baseRow())
     const recs = [{ id: 'rec-a', kind: 'whole' as const, filePath: '/x/a.webm', markers: [] }]
     matchRepo.update('m1', { recordings: recs })
     const upd = h.runCalls.find((c) => c.sql.includes('UPDATE matches'))
     expect(upd).toBeTruthy()
     const json = upd!.args.find((a) => typeof a === 'string' && String(a).includes('filePath'))
-    expect(JSON.parse(String(json))).toEqual(recs)
+    // M3：写入端 basename 归一（绝对路径入参 → DB 存 a.webm）
+    expect(JSON.parse(String(json))).toEqual([
+      { id: 'rec-a', kind: 'whole', filePath: 'a.webm', markers: [] }
+    ])
   })
 
-  it('update（旧 recordingMeta）：迁移为 BoundRecording[] 后写入 recording_meta', () => {
+  it('update（旧 recordingMeta）：迁移为 BoundRecording[] 后写入 recording_meta（M3：basename 归一）', () => {
     h.setRow(baseRow())
     matchRepo.update('m1', {
       recordingMeta: { filePath: '/x/w.webm', segmentMode: 'whole', markers: [] }
@@ -285,7 +288,7 @@ describe('matchRepo', () => {
     const json = upd!.args.find((a) => typeof a === 'string' && String(a).includes('filePath'))
     const arr = JSON.parse(String(json)) as Array<{ kind: string; filePath: string }>
     expect(arr).toHaveLength(1)
-    expect(arr[0]).toMatchObject({ kind: 'whole', filePath: '/x/w.webm' })
+    expect(arr[0]).toMatchObject({ kind: 'whole', filePath: 'w.webm' })
   })
 
   it('getById：读取旧 recordingMeta 对象 → 派生成一整场 whole 录音并回填 recordingMeta', () => {
