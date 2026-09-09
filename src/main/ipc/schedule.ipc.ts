@@ -12,6 +12,7 @@
 import { ipcMain, dialog } from 'electron'
 import { writeFile } from 'fs/promises'
 import { IPC_CHANNELS } from '../../shared/types'
+import { assertNotSensitivePath } from '../../shared/security/pathGuard'
 import type {
   ApiResponse,
   ExportResult,
@@ -119,6 +120,7 @@ export function registerScheduleIpc(): void {
         assertParam(req && typeof req === 'object', '参数 req 必须为对象')
         assertNonEmptyString(req.eventId, 'req.eventId')
         assertNonEmptyString(req.filePath, 'req.filePath')
+        assertNotSensitivePath(req.filePath)
         if (!eventRepo.getEventById(req.eventId)) throw new Error('赛事不存在')
         const { rows, warnings } = parseScheduleXlsx(req.filePath)
         const preview = computeScheduleDiff(currentRows(req.eventId), rows)

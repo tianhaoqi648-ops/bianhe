@@ -12,6 +12,7 @@
 import { ipcMain, dialog } from 'electron'
 import { getActiveWindow } from './utils'
 import { IPC_CHANNELS } from '../../shared/types'
+import { assertNotSensitivePath } from '../../shared/security/pathGuard'
 import type { ApiResponse, ResetDataRequest, ResetDataResponse } from '../../shared/types'
 import { getMergedCandidatesWithDB } from '../services/candidate-service'
 import { resetData } from '../services/reset-service'
@@ -59,6 +60,8 @@ export function registerSystemIpc(): void {
       if (typeof filePath !== 'string' || filePath === '') {
         return { success: false, error: '文件路径无效' }
       }
+      // 安全加固：该通道会把文件内容回吐渲染进程，必须拒绝系统敏感目录
+      assertNotSensitivePath(filePath)
       const res = await readTextFileContent(filePath)
       if (!res.ok) {
         return { success: false, error: res.message ?? `读取失败（${res.code ?? 'unknown'}）` }

@@ -20,7 +20,7 @@ export interface MemoryWriteGuardOptions {
   warn?: (message: string) => void
 }
 
-const MEMORY_WRITE_WARNING_EVENT = 'memory:write-warning'
+// 事件名 'memory:write-warning' 已由 preload 的 memoryWarningAPI 内部封装，此处无需感知
 
 /**
  * 安装 memory 模式写警示：
@@ -30,18 +30,16 @@ const MEMORY_WRITE_WARNING_EVENT = 'memory:write-warning'
  */
 export function installMemoryWriteGuard(options: MemoryWriteGuardOptions = {}): () => void {
   const { warn } = options
-  const ipc =
-    typeof window !== 'undefined' ? window.electron?.ipcRenderer : undefined
-  if (!ipc || typeof ipc.on !== 'function' || typeof ipc.removeListener !== 'function') {
-    // 非 Electron / 缺 IPC 桥（如单测、浏览器）时安全降级为 no-op
+  // 安全加固：不再通过 window.electron.ipcRenderer 订阅（裸 ipcRenderer 已从
+  // preload 暴露面移除），改用 memoryWarning.subscribe 封装入口。
+  const subscribe =
+    typeof window !== 'undefined' ? window.electron?.memoryWarning?.subscribe : undefined
+  if (!subscribe || typeof subscribe !== 'function') {
+    // 非 Electron / 缺桥（如单测、浏览器）时安全降级为 no-op
     return () => undefined
   }
 
-  const listener = (): void => {
+  return subscribe(() => {
     if (warn) warn(MEMORY_WRITE_WARNING)
-  }
-  ipc.on(MEMORY_WRITE_WARNING_EVENT, listener)
-  return () => {
-    ipc.removeListener(MEMORY_WRITE_WARNING_EVENT, listener)
-  }
+  })
 }

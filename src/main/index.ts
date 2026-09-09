@@ -43,9 +43,12 @@ function createWindow(): void {
     mainWindow.webContents.send('db:status', dbModeStore.mode)
   })
 
-  // 放行麦克风（media）权限，用于计时/比赛可选录音
-  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media')
+  // 放行麦克风（audio）权限，用于计时/比赛可选录音。
+  // 安全加固：仅放行音频（拒绝 video/摄像头等），mediaType 不可得时放行以兜底，
+  // 避免个别构建缺 details 导致录音功能失效。
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    const mediaType = (details as { mediaType?: string } | undefined)?.mediaType
+    callback(permission === 'media' && (mediaType ?? 'audio') === 'audio')
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

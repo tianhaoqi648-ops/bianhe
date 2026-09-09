@@ -48,6 +48,7 @@ import {
   type ImportEventPackageResult,
   type ImportEventPackagePreviewResult
 } from '../../shared/types'
+import { assertNotSensitivePath } from '../../shared/security/pathGuard'
 
 /**
  * P2-23：参数校验辅助函数。
@@ -71,6 +72,7 @@ export function registerImportIpc(): void {
     async (_e, filePath: string, fileType: FileType): Promise<ApiResponse<ParsedResult>> => {
       try {
         assertNonEmptyString(filePath, 'filePath')
+        assertNotSensitivePath(filePath)
         assertParam(
           fileType === 'xlsx' || fileType === 'csv' || fileType === 'docx',
           '参数 fileType 必须为 xlsx/csv/docx 之一'
@@ -419,6 +421,7 @@ export function registerImportIpc(): void {
     async (_e, filePath: string): Promise<ApiResponse<ImportEventPackagePreviewResult>> => {
       try {
         assertNonEmptyString(filePath, 'filePath')
+        assertNotSensitivePath(filePath)
         let raw: string
         try {
           // P3-6: 改用 fs.promises.readFile 异步读取，避免阻塞主进程（大文件场景）
@@ -477,6 +480,7 @@ export function registerImportIpc(): void {
       try {
         assertParam(req && typeof req === 'object', '参数 req 必须为对象')
         assertNonEmptyString(req.filePath, 'filePath')
+        assertNotSensitivePath(req.filePath)
         const strategy = req.conflictStrategy ?? 'rename'
 
         // 1. 读取并解析 JSON 文件

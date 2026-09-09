@@ -7,7 +7,7 @@
 
 import { app } from 'electron'
 import { promises as fs } from 'fs'
-import { basename, dirname, isAbsolute, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { auditRepo } from '../db/repository/audit.repo'
 import { RECORDING_SEGMENT_KEY, RECORDING_FORMAT_KEY, resolveSegmentMode, resolveRecordingFormat, uniqueRecordingFileName, type RecordingSegmentMode, type RecordingFormat } from '../../shared/match-recording'
 
@@ -142,13 +142,16 @@ export async function listRecordings(): Promise<RecordingMeta[]> {
 
 /**
  * 读取一份录音文件的字节。
- * - 若 filePath 为绝对路径（recording_meta.filePath 存的就是绝对路径）则直接读取；
- * - 若为相对路径（仅文件名/相对路径）则 join 到录音目录下，避免路径穿越。
+ * - 安全加固：无论传入绝对路径还是相对路径，一律取 basename 后锁定到当前录音
+ *   目录内（与 saveRecording / deleteRecording 的处理一致），杜绝经
+ *   recording_meta.filePath 注入的任意绝对路径读取（路径穿越 / 越界读）。
+ *   行为变化：若用户曾更改录音数据根，指向旧目录的 recording_meta 将不再可读
+ *   （原实现可读旧绝对路径），属收紧带来的预期取舍。
  * 不存在或读取失败返回 null（由调用方/IPC 层处理）。
  */
 export async function readRecordingFile(filePath: string): Promise<Buffer | null> {
   try {
-    const resolved = isAbsolute(filePath) ? filePath : join(await recordingsDir(), filePath)
+    const resolved = join(await recordingsDir(), basename(filePath))
     return await fs.readFile(resolved)
   } catch {
     return null
@@ -157,13 +160,12 @@ export async function readRecordingFile(filePath: string): Promise<Buffer | null
 
 /**
  * 校验录音文件是否存在。
- * - filePath 为绝对路径 → 直接 stat；
- * - 相对路径 → join 到录音目录下。
+ * - 安全加固：与 readRecordingFile 一致，一律取 basename 锁定到录音目录内。
  * 不存在或读取失败返回 false。
  */
 export async function recordingFileExists(filePath: string): Promise<boolean> {
   try {
-    const resolved = isAbsolute(filePath) ? filePath : join(await recordingsDir(), filePath)
+    const resolved = join(await recordingsDir(), basename(filePath))
     const st = await fs.stat(resolved)
     return st.isFile()
   } catch {

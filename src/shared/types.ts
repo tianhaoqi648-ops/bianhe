@@ -475,7 +475,17 @@ declare module '@electron-toolkit/preload' {
     backup?: BackupAPI
     /** Agent 对话 API（AI Agent v1.3.0，通过 'agent:event' 通道推送流式事件） */
     agent?: AgentAPI
+    /**
+     * memory 写警示订阅（安全加固后替代裸 ipcRenderer.on 的唯一订阅入口）。
+     * 返回取消订阅函数。
+     */
+    memoryWarning?: MemoryWarningAPI
   }
+}
+
+/** memory 模式写警示订阅 API（preload 通过 contextBridge 暴露） */
+export interface MemoryWarningAPI {
+  subscribe: (cb: () => void) => () => void
 }
 
 // ---------- 全量数据备份与恢复 ----------

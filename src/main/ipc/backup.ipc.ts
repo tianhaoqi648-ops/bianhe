@@ -17,6 +17,7 @@
 import { ipcMain, dialog } from 'electron'
 import { extname } from 'path'
 import { IPC_CHANNELS, type ApiResponse } from '../../shared/types'
+import { assertNotSensitivePath } from '../../shared/security/pathGuard'
 import type {
   BackupParams,
   BackupImportParams,
@@ -151,6 +152,7 @@ export function registerBackupIpc(): void {
     async (_e, filePath: string): Promise<ApiResponse<BackupPreviewResult>> => {
       try {
         assertNonEmptyString(filePath, 'filePath')
+        assertNotSensitivePath(filePath)
         const data = previewImport(filePath)
         return { success: true, data }
       } catch (e) {
@@ -165,6 +167,7 @@ export function registerBackupIpc(): void {
     async (_e, params: BackupImportParams): Promise<ApiResponse<BackupImportResult>> => {
       try {
         assertParam(params && typeof params === 'object', '参数 params 必须为对象')
+        if (params.filePath) assertNotSensitivePath(params.filePath)
         const result = importBackup(params)
         return { success: true, data: result }
       } catch (e) {

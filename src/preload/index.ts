@@ -189,6 +189,17 @@ ipcRenderer.on('db:status', (_event, mode: unknown) => {
 /** 主进程收到该命名消息后，中继为向渲染进程广播的警示事件 */
 const MEMORY_WRITE_WARNING_EVENT = 'memory:write-warning'
 
+/** 订阅 memory 写警示事件（供 memoryWriteGuard 使用，替代暴露裸 ipcRenderer） */
+const memoryWarningAPI = {
+  subscribe(cb: () => void): () => void {
+    const listener = (): void => cb()
+    ipcRenderer.on(MEMORY_WRITE_WARNING_EVENT, listener)
+    return () => {
+      ipcRenderer.removeListener(MEMORY_WRITE_WARNING_EVENT, listener)
+    }
+  }
+}
+
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   if (__memoryMode && MEMORY_WRITE_CHANNELS.has(channel)) {
     ipcRenderer.send(MEMORY_WRITE_WARNING_EVENT)
@@ -1090,11 +1101,17 @@ const backupAPI = {
  *
  * 类型显式标注为 ElectronAPI（已通过 declaration merging 包含 dbStatus/logs/backup），
  * 避免类型推断丢失。
+ *
+ * 安全加固：剥离 electronAPI 中的裸 ipcRenderer——渲染进程不得获得可 invoke 任意
+ * 通道的通用能力；memory 警示订阅改经 memoryWarningAPI 暴露。
  */
-const extendedElectronAPI: typeof electronAPI = Object.assign({}, electronAPI, {
+const { ipcRenderer: _droppedIpcRenderer, ...safeElectronAPI } = electronAPI
+void _droppedIpcRenderer
+const extendedElectronAPI = Object.assign({}, safeElectronAPI, {
   dbStatus: dbStatusAPI,
   logs: logsAPI,
-  backup: backupAPI
+  backup: backupAPI,
+  memoryWarning: memoryWarningAPI
 })
 
 // ============================================================
