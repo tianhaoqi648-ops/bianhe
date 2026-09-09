@@ -371,7 +371,8 @@ export default function EventManage() {
   const handleDeleteEvent = (event: Event) => {
     Modal.confirm({
       title: `确认删除赛事"${event.name}"？`,
-      content: '将同时删除该赛事下的所有轮次、队伍及历史记录',
+      content:
+        '将同时删除该赛事下的所有轮次、队伍、比赛与抽签记录。删除后可通过「撤销」完整恢复（计时器与评委历史除外）。',
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',

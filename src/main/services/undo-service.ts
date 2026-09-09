@@ -463,7 +463,13 @@ function applyEventReverse(
       const beforeEvent = before as Event | null
       const afterEvent = after as Event | null
       if (action === 'create') {
-        eventRepo.deleteEvent(afterEvent!.id)
+        // Phase 1.1-fix R3：after 为聚合快照（新格式）或 plain Event（旧记录兼容）
+        const afterObj = after as unknown
+        if (isAggregateSnapshot(afterObj)) {
+          eventRepo.deleteEvent(String(afterObj.event.id))
+        } else {
+          eventRepo.deleteEvent(afterEvent!.id)
+        }
         return 1
       }
       // Governance-8.3：随机分组（批量改分组）可撤销。before/after 记录被改队伍的 {id, group_id}
@@ -482,8 +488,14 @@ function applyEventReverse(
         return 1
       }
       if (action === 'delete' && beforeEvent) {
-        // 重建 event（CASCADE 删除了 rounds/teams 等，无法完整恢复，仅重建 event 本身）
-        recreateEventWithId(beforeEvent)
+        // Phase 1.1-fix R1：聚合快照完整恢复（子表 CASCADE 清空后按原 id 重建）；
+        // 旧记录（plain Event）兼容走原单行恢复
+        const beforeObj = before as unknown
+        if (isAggregateSnapshot(beforeObj)) {
+          recreateEventAggregate(beforeObj)
+        } else {
+          recreateEventWithId(beforeEvent)
+        }
         return 1
       }
       break
@@ -551,7 +563,14 @@ function applyEventForward(
       const beforeEvent = before as Event | null
       const afterEvent = after as Event | null
       if (action === 'create' && afterEvent) {
-        recreateEventWithId(afterEvent)
+        // Phase 1.1-fix R3：redo 创建 = 按聚合快照完整重建（新格式）；
+        // 旧记录（plain Event）兼容走原单行恢复
+        const afterObj = after as unknown
+        if (isAggregateSnapshot(afterObj)) {
+          recreateEventAggregate(afterObj)
+        } else {
+          recreateEventWithId(afterEvent)
+        }
         return 1
       }
       // Governance-8.3：随机分组 redo。after.teams 记录重做后的 {id, group_id}
@@ -570,7 +589,13 @@ function applyEventForward(
         return 1
       }
       if (action === 'delete' && beforeEvent) {
-        eventRepo.deleteEvent(beforeEvent.id)
+        // Phase 1.1-fix R1：redo 删除 = 重放删除（CASCADE 清空子表）；
+        // 聚合快照格式取 event.id，旧 plain Event 格式取 id
+        const beforeObj = before as unknown
+        const targetId = isAggregateSnapshot(beforeObj)
+          ? String(beforeObj.event.id)
+          : beforeEvent.id
+        eventRepo.deleteEvent(targetId)
         return 1
       }
       break
@@ -624,28 +649,200 @@ function applyEventForward(
   throw new Error(`[undo] event: unsupported action ${action} for ${targetType}`)
 }
 
-function recreateEventWithId(event: Event): void {
+function recreateEventWithId(
+  event: Event & { bank_config?: string | null }
+): void {
   const db = getDb()
   db.prepare(`
-    INSERT INTO events (id, name, start_date, end_date, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(event.id, event.name, event.start_date, event.end_date, event.status, event.created_at)
+    INSERT INTO events (id, name, start_date, end_date, status, created_at, allow_repeat, bank_config)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    event.id,
+    event.name,
+    event.start_date,
+    event.end_date,
+    event.status,
+    event.created_at,
+    event.allow_repeat ?? 0,
+    (event as { bank_config?: string | null }).bank_config ?? null
+  )
 }
 
 function recreateRoundWithId(round: Round): void {
   const db = getDb()
   db.prepare(`
-    INSERT INTO rounds (id, event_id, name, round_number, difficulty_override, topic_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(round.id, round.event_id, round.name, round.round_number, round.difficulty_override, round.topic_count)
+    INSERT INTO rounds (id, event_id, name, round_number, difficulty_override, topic_count, is_round_robin)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    round.id,
+    round.event_id,
+    round.name,
+    round.round_number,
+    round.difficulty_override,
+    round.topic_count,
+    round.is_round_robin ? 1 : 0
+  )
 }
 
 function recreateTeamWithId(team: Team): void {
   const db = getDb()
   db.prepare(`
-    INSERT INTO teams (id, name, event_id)
-    VALUES (?, ?, ?)
-  `).run(team.id, team.name, team.event_id)
+    INSERT INTO teams (id, name, event_id, group_id)
+    VALUES (?, ?, ?, ?)
+  `).run(team.id, team.name, team.event_id, team.group_id ?? null)
+}
+
+// ============================================================
+// Event 聚合快照（Phase 1.1-fix R1）
+//
+// 删除 event 会经 FK CASCADE 永久清空以下子表（20260916 迁移后
+// matches 三表也在级联范围内）：
+//   rounds / team_groups / teams / team_history / draw_sessions /
+//   draw_session_items / event_topic_groups / round_topic_groups /
+//   matches / match_judges / match_judge_votes
+// 旧实现仅快照/恢复 event 单行（且丢 allow_repeat），造成
+// 「伪完整撤销」。现改为删除前采集完整聚合快照、撤销时按依赖序
+// 原值原 id 重建全部子表。
+//
+// 注意：timer_sessions 与 judge_history 的 event_id 无 FK（不级联），
+// 不在快照范围内（文案已明示）。
+// ============================================================
+
+/** event 聚合快照行（SELECT * 的原始行对象，保留 bank_config 等未声明列） */
+type SnapRow = Record<string, unknown>
+
+export interface EventAggregateSnapshot {
+  event: SnapRow
+  rounds: SnapRow[]
+  teamGroups: SnapRow[]
+  teams: SnapRow[]
+  teamHistory: SnapRow[]
+  drawSessions: Array<SnapRow & { items: SnapRow[] }>
+  eventTopicGroups: SnapRow[]
+  roundTopicGroups: SnapRow[]
+  matches: SnapRow[]
+  matchJudges: SnapRow[]
+  matchJudgeVotes: SnapRow[]
+}
+
+/** 采集 event 聚合完整快照（删除前调用；全部裸 SQL，原始行原值） */
+export function collectEventAggregateSnapshot(eventId: string): EventAggregateSnapshot | null {
+  const db = getDb()
+  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
+    | SnapRow
+    | undefined
+  if (!event) return null
+
+  const all = (sql: string): SnapRow[] =>
+    db.prepare(sql).all(eventId) as SnapRow[]
+
+  const sessions = all(
+    'SELECT * FROM draw_sessions WHERE event_id = ? ORDER BY draw_time'
+  ).map(
+    (s) => ({ ...s, items: [] as SnapRow[] }) as SnapRow & { items: SnapRow[] }
+  )
+  for (const s of sessions) {
+    s.items = db
+      .prepare('SELECT * FROM draw_session_items WHERE session_id = ?')
+      .all(s.id as string) as SnapRow[]
+  }
+
+  const matchRows = all('SELECT * FROM matches WHERE event_id = ?')
+  const matchIds = matchRows.map((m) => m.id as string)
+  const matchJudges: SnapRow[] = []
+  const matchJudgeVotes: SnapRow[] = []
+  for (const mid of matchIds) {
+    matchJudges.push(
+      ...(db.prepare('SELECT * FROM match_judges WHERE match_id = ?').all(mid) as SnapRow[])
+    )
+    matchJudgeVotes.push(
+      ...(db.prepare('SELECT * FROM match_judge_votes WHERE match_id = ?').all(mid) as SnapRow[])
+    )
+  }
+
+  return {
+    event,
+    rounds: all('SELECT * FROM rounds WHERE event_id = ? ORDER BY round_number'),
+    teamGroups: all('SELECT * FROM team_groups WHERE event_id = ? ORDER BY sort_order'),
+    teams: all('SELECT * FROM teams WHERE event_id = ?'),
+    teamHistory: all('SELECT * FROM team_history WHERE event_id = ? ORDER BY played_at'),
+    drawSessions: sessions,
+    eventTopicGroups: all('SELECT * FROM event_topic_groups WHERE event_id = ?'),
+    roundTopicGroups: db
+      .prepare(
+        `SELECT rtg.* FROM round_topic_groups rtg
+         JOIN rounds r ON r.id = rtg.round_id WHERE r.event_id = ?`
+      )
+      .all(eventId) as SnapRow[],
+    matches: matchRows,
+    matchJudges,
+    matchJudgeVotes
+  }
+}
+
+/** 判断 undo payload 是否为聚合快照格式（新）还是 plain Event 行（旧记录兼容） */
+function isAggregateSnapshot(obj: unknown): obj is EventAggregateSnapshot {
+  return typeof obj === 'object' && obj !== null && 'event' in obj
+}
+
+/** 按依赖序重建 event 聚合（全部原 id / 原值） */
+function recreateEventAggregate(snap: EventAggregateSnapshot): void {
+  const db = getDb()
+  // 动态列推导：快照行即 SELECT * 的原始行（键集/顺序 = 表实际列），
+  // 用 named 参数（@col）原值插入——天然对齐真实表结构，新增列自动跟随。
+  const insertRaw = (table: string, rows: SnapRow[]): void => {
+    if (rows.length === 0) return
+    const cols = Object.keys(rows[0])
+    const stmt = db.prepare(
+      `INSERT INTO ${table} (${cols.map((c) => '"' + c + '"').join(', ')}) VALUES (${cols
+        .map((c) => '@' + c)
+        .join(', ')})`
+    )
+    for (const r of rows) stmt.run(r)
+  }
+
+  insertRaw('events', [snap.event])
+  insertRaw('team_groups', snap.teamGroups)
+  insertRaw('teams', snap.teams)
+  insertRaw('rounds', snap.rounds)
+  insertRaw('round_topic_groups', snap.roundTopicGroups)
+  insertRaw('event_topic_groups', snap.eventTopicGroups)
+  insertRaw('team_history', snap.teamHistory)
+  for (const s of snap.drawSessions) {
+    const { items, ...sessionRow } = s
+    void items
+    insertRaw('draw_sessions', [sessionRow])
+    insertRaw('draw_session_items', s.items)
+  }
+  insertRaw('matches', snap.matches)
+  insertRaw('match_judges', snap.matchJudges)
+  insertRaw('match_judge_votes', snap.matchJudgeVotes)
+}
+
+/**
+ * 登记一条「创建赛事」undo 记录（R3：agent/import 路径统一接入）。
+ * 采集当前聚合快照作为 after，undo 时 deleteEvent（CASCADE）整体清场，
+ * redo 时按快照完整重建。
+ * 注意：不开启独立事务——由调用方事务包裹（独立调用时单语句原子）。
+ * @returns logId（payload 超限时为 null，退化为不可撤销）
+ */
+export function logEventCreateSnapshot(eventId: string): string | null {
+  const snapshot = collectEventAggregateSnapshot(eventId)
+  if (!snapshot) return null
+  try {
+    return undoLogRepo.createLog({
+      store_name: 'event',
+      action: 'create',
+      target_type: 'event',
+      target_id: eventId,
+      before_data: null,
+      after_data: snapshot as unknown as Record<string, unknown>,
+      label: `创建赛事 ${String(snapshot.event.name ?? '')}`
+    })
+  } catch (e) {
+    console.warn('[undo] logEventCreateSnapshot failed (undo disabled for this op):', e)
+    return null
+  }
 }
 
 // ---------- draw 反向操作 ----------

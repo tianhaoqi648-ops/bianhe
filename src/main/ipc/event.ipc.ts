@@ -31,7 +31,7 @@ import type {
 } from '../db/repository/event.repo'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { RandomAssignGroupParams } from '../../shared/types'
-import { withUndoLog } from '../services/undo-service'
+import { withUndoLog, collectEventAggregateSnapshot } from '../services/undo-service'
 import { wrap, wrapWithUndo } from './utils'
 
 /**
@@ -89,7 +89,8 @@ export function registerEventIpc(): void {
         label: `创建赛事`,
         getBefore: () => null,
         execute: () => createEventWithDefaultGroup(data),
-        getAfter: (result) => result
+        // Phase 1.1-fix R3：after 升级为聚合快照（undo 完整清场 / redo 完整重建）
+        getAfter: (result) => collectEventAggregateSnapshot(result.id)
       })
     })
   })
@@ -118,8 +119,9 @@ export function registerEventIpc(): void {
         action: 'delete',
         targetType: 'event',
         targetId: id,
-        label: `删除赛事 ${before?.name ?? id.slice(0, 8)}（子数据无法恢复）`,
-        getBefore: () => before,
+        label: `删除赛事 ${before?.name ?? id.slice(0, 8)}（可通过撤销完整恢复；计时器与评委历史除外）`,
+        // Phase 1.1-fix R1：删除前采集完整聚合快照（undo 按原 id 完整重建全部子表）
+        getBefore: () => collectEventAggregateSnapshot(id),
         execute: () => eventRepo.deleteEvent(id),
         getAfter: () => null
       })
