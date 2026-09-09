@@ -90,7 +90,13 @@ const h = vi.hoisted(() => {
 
 vi.mock('../../index', () => ({
   getDb: () => ({
-    prepare: (sql: string) => h.fakeStatement(sql)
+    prepare: (sql: string) => h.fakeStatement(sql),
+    // Phase 1.0-C：setResult 事务化后需 db.transaction——直通桩（fn 直接执行，
+    // run 断言仍经 fakeStatement 收集，行为与真库一致）
+    transaction:
+      (fn: (...args: unknown[]) => unknown) =>
+      (...args: unknown[]) =>
+        fn(...args)
   })
 }))
 

@@ -17,6 +17,7 @@ import type { ToolDefinition } from '@shared/agent-types'
 import { parseFile } from '@main/services/import-engine'
 import { eventRepo } from '@main/db/repository/event.repo'
 import { createEvent as createEventWithDefaultGroup } from '@main/services/event-service'
+import { getDb } from '@main/db/index'
 
 /** import_event_batch 工具入参（与 parameters schema 对齐） */
 interface ImportEventBatchArgs {
@@ -166,32 +167,38 @@ export const importEventBatchTool: ToolDefinition<
       throw new Error(`[import_event_batch] 列 "${teamNameCol}" 中未提取到任何队伍名`)
     }
 
-    // 7. 创建赛事（name 从 fieldMapping.eventName 或文件名推断）
+    // 7. 推断赛事名（fieldMapping.eventName 或文件名）
     const eventName =
       (typeof fieldMapping.eventName === 'string' && fieldMapping.eventName.trim()) ||
       path.basename(filePath, path.extname(filePath))
 
-    const event = createEventWithDefaultGroup({
-      name: eventName,
-      start_date: null,
-      end_date: null,
-      status: null
-    })
-
-    // 8. 批量创建队伍
-    let created = 0
-    for (const teamName of teamNames) {
-      eventRepo.createTeam({
-        name: teamName,
-        event_id: event.id
+    // 7+8. 创建赛事与批量创建队伍（事务化，Phase 1.0-C）：
+    // 整段包入单个事务——中途任一队伍写入失败 → 全部回滚（含赛事本身），
+    // 消除「赛事已建、部分队伍残留」的脏数据状态。
+    // 注：createEventWithDefaultGroup 内部自带的 db.transaction 嵌套于外层
+    // 事务时由 better-sqlite3 自动降级为 savepoint，回滚语义保持正确。
+    const event = getDb().transaction(() => {
+      const ev = createEventWithDefaultGroup({
+        name: eventName,
+        start_date: null,
+        end_date: null,
+        status: null
       })
-      created++
-    }
+      let created = 0
+      for (const teamName of teamNames) {
+        eventRepo.createTeam({
+          name: teamName,
+          event_id: ev.id
+        })
+        created++
+      }
+      return { ev, created }
+    })()
 
     // 9. 返回结果（roundCount=0，本工具不创建轮次）
     return {
-      eventId: event.id,
-      teamCount: created,
+      eventId: event.ev.id,
+      teamCount: event.created,
       roundCount: 0
     }
   }

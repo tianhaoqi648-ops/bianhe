@@ -42,6 +42,19 @@ vi.mock('@main/db/repository/event.repo', () => ({
   }
 }))
 
+// 事务化（Phase 1.0-C）后工具经 getDb().transaction(...) 包裹：
+// 测试环境提供直通事务桩（fn 直接执行），保持既有 mock 语义不变。
+const { mockGetDb } = vi.hoisted(() => ({
+  mockGetDb: vi.fn(() => ({
+    transaction:
+      (fn: (...a: unknown[]) => unknown) =>
+      (...a: unknown[]) =>
+        fn(...a)
+  }))
+}))
+
+vi.mock('@main/db/index', () => ({ getDb: mockGetDb }))
+
 // 导入被测模块（在 mock 之后）
 import { importEventBatchTool } from '../import-event-batch.tool'
 

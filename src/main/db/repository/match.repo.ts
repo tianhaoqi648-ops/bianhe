@@ -602,49 +602,57 @@ export function computeResult(matchId: string, _judges: MatchJudge[], votes: Mat
 /** 计入赛果：写裁判+评决 → 聚合 → 落 winner/aff_score/neg_score/best_speaker/notes，status=resulted */
 function setResult(matchId: string, data: MatchSetResultInput): Match | null {
   const db = getDb()
-  const match = getMatchRow(matchId)
-  if (!match) return null
 
-  if (data.judges && data.judges.length) {
-    const sys = data.judges[0]?.vote?.judgeSystem ?? ((match.judge_system as MatchJudgeSystem) || 'three_votes')
-    // 显式指定个别裁判评决制度？统一用比赛制度。若 judges[0].vote.judgeSystem 为空，则沿用比赛制度。
-    replaceJudges(matchId, data.judges)
-    if (sys !== match.judge_system) {
-      db.prepare('UPDATE matches SET judge_system = ? WHERE id = ?').run(sys, matchId)
+  // 事务化（Phase 1.0-C）：replaceJudges（删票/删裁判/插裁判）与 UPDATE matches
+  // 必须原子——否则「评决已写而 match.status 仍 planned」或「旧裁判已删新裁判
+  // 未插完」的半状态会残留，需人工修库。
+  const tx = db.transaction((): Match | null => {
+    const match = getMatchRow(matchId)
+    if (!match) return null
+
+    if (data.judges && data.judges.length) {
+      const sys = data.judges[0]?.vote?.judgeSystem ?? ((match.judge_system as MatchJudgeSystem) || 'three_votes')
+      // 显式指定个别裁判评决制度？统一用比赛制度。若 judges[0].vote.judgeSystem 为空，则沿用比赛制度。
+      replaceJudges(matchId, data.judges)
+      if (sys !== match.judge_system) {
+        db.prepare('UPDATE matches SET judge_system = ? WHERE id = ?').run(sys, matchId)
+      }
     }
-  }
 
-  const jRows = listJudgeRows(matchId)
-  const vRows = listVoteRows(matchId)
-  const result = computeResult(matchId, jRows.map(rowToJudge), vRows.map(rowToVote))
+    const jRows = listJudgeRows(matchId)
+    const vRows = listVoteRows(matchId)
+    const result = computeResult(matchId, jRows.map(rowToJudge), vRows.map(rowToVote))
 
-  // 胜负判定：有裁判评决 → 多裁判聚合；无评决（如直接记弃赛）→ 采用显式 winner
-  const finalWinner =
-    vRows.length > 0
-      ? (data.winner === 'abandoned' ? 'abandoned' : result.winner)
-      : data.winner
-  const finalAffScore = data.affScore ?? (vRows.length ? result.affScore : null)
-  const finalNegScore = data.negScore ?? (vRows.length ? result.negScore : null)
-  const finalBestSpeaker = data.bestSpeaker ?? result.bestSpeaker
+    // 胜负判定：有裁判评决 → 多裁判聚合；无评决（如直接记弃赛）→ 采用显式 winner
+    const finalWinner =
+      vRows.length > 0
+        ? (data.winner === 'abandoned' ? 'abandoned' : result.winner)
+        : data.winner
+    const finalAffScore = data.affScore ?? (vRows.length ? result.affScore : null)
+    const finalNegScore = data.negScore ?? (vRows.length ? result.negScore : null)
+    const finalBestSpeaker = data.bestSpeaker ?? result.bestSpeaker
 
-  const now = new Date().toISOString()
-  db.prepare(`
-    UPDATE matches SET
-      winner = ?, aff_score = ?, neg_score = ?, best_speaker = ?, notes = ?,
-      status = 'resulted', updated_at = ?
-    WHERE id = ?
-  `).run(
-    finalWinner,
-    finalAffScore,
-    finalNegScore,
-    finalBestSpeaker,
-    data.notes ?? null,
-    now,
-    matchId
-  )
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE matches SET
+        winner = ?, aff_score = ?, neg_score = ?, best_speaker = ?, notes = ?,
+        status = 'resulted', updated_at = ?
+      WHERE id = ?
+    `).run(
+      finalWinner,
+      finalAffScore,
+      finalNegScore,
+      finalBestSpeaker,
+      data.notes ?? null,
+      now,
+      matchId
+    )
 
-  const r = getMatchRow(matchId)
-  return r ? hydrate(rowToMatch(r)) : null
+    const r = getMatchRow(matchId)
+    return r ? hydrate(rowToMatch(r)) : null
+  })
+
+  return tx()
 }
 
 /** 保存 AI 评审（不回写人工赛果） */
