@@ -25,7 +25,9 @@ describe('security: assertNotSensitivePath', () => {
     expect(() => assertNotSensitivePath(undefined as unknown as string)).toThrow()
   })
 
-  it('Windows：系统目录及其子路径拒绝', () => {
+  // Windows 专属语义用例（SystemRoot/ProgramFiles 与反斜杠注入）：
+  // 仅 Windows 执行，Linux 上这些路径语义不成立（CI Run 8 失败教训）
+  it.skipIf(!isWin)('Windows：系统目录及其子路径拒绝', () => {
     const winRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows'
     expect(() => assertNotSensitivePath(resolve(winRoot, 'system32', 'config', 'sam'))).toThrow()
     const pf = process.env.ProgramFiles ?? 'C:\\Program Files'
@@ -39,7 +41,7 @@ describe('security: assertNotSensitivePath', () => {
     expect(() => assertNotSensitivePath(resolve(__dirname, 'fixture.json'))).not.toThrow()
   })
 
-  it('Windows：相对路径注入 ..\\..\\ 经 resolve 归一后按真实位置判定', () => {
+  it.skipIf(!isWin)('Windows：相对路径注入 ..\\..\\ 经 resolve 归一后按真实位置判定', () => {
     // 从当前 cwd 构造「相对逃逸到系统目录」的路径：resolve 后必然落在黑名单内
     const winRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows'
     const rel = relative(process.cwd(), resolve(winRoot, 'system32', 'drivers'))
