@@ -7,7 +7,8 @@
 
 import { app } from 'electron'
 import { promises as fs } from 'fs'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, join, resolve as resolvePath } from 'path'
+import type { BoundRecording } from '../../shared/types'
 import { auditRepo } from '../db/repository/audit.repo'
 import { RECORDING_SEGMENT_KEY, RECORDING_FORMAT_KEY, resolveSegmentMode, resolveRecordingFormat, uniqueRecordingFileName, type RecordingSegmentMode, type RecordingFormat } from '../../shared/match-recording'
 
@@ -173,11 +174,60 @@ export async function recordingFileExists(filePath: string): Promise<boolean> {
   }
 }
 
-/** 删除一份录音 */
+/**
+ * 删除一份录音文件（basename 锁定到录音目录）。
+ *
+ * Phase 1.2-fix：真实返回删除结果（不再吞错恒返 true）：
+ * - true：文件已删除，或本就不存在（幂等）
+ * - false：实际删除失败（权限不足/文件占用等），调用方可感知
+ * 注意：当前 UI 的「移除」走 bind remove（仅解绑元数据），本函数为
+ * 预留的文件删除能力（RECORDING_DELETE 通道），不被现有 UI 调用。
+ */
 export async function deleteRecording(fileName: string): Promise<boolean> {
   const dir = await recordingsDir()
-  const filePath = join(dir, basename(fileName))
-  const exists = await fs.rm(filePath, { force: true }).then(() => true).catch(() => true)
-  void exists
-  return true
+  try {
+    await fs.rm(join(dir, basename(fileName)), { force: true })
+    return true
+  } catch (e) {
+    console.warn('[recording] delete failed:', fileName, e)
+    return false
+  }
+}
+
+/**
+ * Phase 1.2-fix：绑定写入前的文件归位——把 recordingsDir 之外的录音文件
+ * 拷入录音目录（basename 唯一化），并统一改写 filePath 为 basename。
+ *
+ * 背景：Phase 1.0-B 起读取端 basename 锁定后，绑定外部目录文件将无法
+ * 读取/转写；本函数在 bind 写入时把外部文件「收编」进录音目录，保证
+ * 绑定后立即可播/可转写，并与 M3 的 basename 元数据模型一致。
+ *
+ * 容错：单个文件拷贝失败不阻断绑定（保留原 filePath，由 exists 门控
+ * 提示缺失），由调用方决定是否提示用户。
+ */
+export async function ensureRecordingsInDir(
+  recordings: BoundRecording[]
+): Promise<BoundRecording[]> {
+  const dir = await recordingsDir()
+  const out: BoundRecording[] = []
+  for (const r of recordings) {
+    const fp = r.filePath ?? ''
+    const base = basename(fp)
+    // 纯 basename（无分隔符）：已是目录内相对引用，原样保留
+    const isBare = !fp.includes('/') && !fp.includes('\\')
+    let finalBase = base
+    try {
+      if (!isBare && resolvePath(fp) !== join(dir, base)) {
+        // 外部文件：拷入录音目录（同名自动追加时间戳后缀）
+        const candidates = (await fs.readdir(dir)).filter((f) => !f.startsWith('.'))
+        finalBase = uniqueRecordingFileName(base, candidates)
+        await fs.copyFile(fp, join(dir, finalBase))
+      }
+    } catch (e) {
+      console.warn('[recording] copy external recording failed (keep original path):', fp, e)
+      finalBase = fp
+    }
+    out.push({ ...r, filePath: finalBase })
+  }
+  return out
 }

@@ -15,7 +15,8 @@ import {
   recordingFileExists,
   recordingsDir,
   getConfiguredRecordingDir,
-  dataRootDir
+  dataRootDir,
+  ensureRecordingsInDir
 } from '../services/recording-storage'
 
 /** 把跨进程传来的数据安全转成 Node Buffer（兼容 ArrayBuffer / Uint8Array / Buffer） */
@@ -167,7 +168,11 @@ export function registerRecordingIpc(): void {
         if (!match) {
           return { success: false, error: `未找到比赛：${action.matchId}` }
         }
-        const next = applyBindAction(match.recordings ?? null, action)
+        let next = applyBindAction(match.recordings ?? null, action)
+        // Phase 1.2-fix：外部文件在绑定写入前拷入录音目录（basename 统一）
+        if (next && next.length > 0) {
+          next = await ensureRecordingsInDir(next)
+        }
         const updated = matchRepo.update(match.id, { recordings: next })
         return { success: true, data: updated?.recordings ?? null }
       } catch (e) {
@@ -178,7 +183,7 @@ export function registerRecordingIpc(): void {
 }
 
 /** 依据一场景的当前录音列表，应用一次绑定操作，返回新列表。 */
-function applyBindAction(current: BoundRecording[] | null, action: RecordingBindAction): BoundRecording[] | null {
+export function applyBindAction(current: BoundRecording[] | null, action: RecordingBindAction): BoundRecording[] | null {
   const base = current ?? []
   switch (action.kind) {
     case 'add':

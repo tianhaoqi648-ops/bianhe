@@ -163,9 +163,10 @@ export function RecordingBindPanel({
     if (next) setAddOpen(false)
   }
 
-  /** 移除一份录音 */
+  /** 移除一份录音（仅解除绑定，录音文件保留在录音目录内） */
   const handleRemove = async (id: string): Promise<void> => {
-    await runBind({ kind: 'remove', matchId, id })
+    const next = await runBind({ kind: 'remove', matchId, id })
+    if (next !== null) toast.info('已移除绑定（录音文件保留）')
   }
 
   /** 重新选择：替换某份录音的文件（保留其类型与环节归属，仅换 filePath） */
