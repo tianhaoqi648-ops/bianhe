@@ -17,6 +17,7 @@ import type { ToolDefinition } from '@shared/agent-types'
 import { parseFile } from '@main/services/import-engine'
 import { eventRepo } from '@main/db/repository/event.repo'
 import { createEvent as createEventWithDefaultGroup } from '@main/services/event-service'
+import { logEventCreateSnapshot } from '@main/services/undo-service'
 import { getDb } from '@main/db/index'
 
 /** import_event_batch 工具入参（与 parameters schema 对齐） */
@@ -192,6 +193,8 @@ export const importEventBatchTool: ToolDefinition<
         })
         created++
       }
+      // Phase 1.1-fix R3：batch 建赛/建队完成后登记聚合快照（undo 粒度=整个 batch）
+      logEventCreateSnapshot(ev.id)
       return { ev, created }
     })()
 

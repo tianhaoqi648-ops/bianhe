@@ -30,6 +30,10 @@ vi.mock('@main/services/event-service', () => ({
   createEvent: mockCreateEvent
 }))
 
+vi.mock('@main/services/undo-service', () => ({
+  logEventCreateSnapshot: vi.fn(() => 'log-x')
+}))
+
 // 导入被测模块（在 mock 之后）
 import { createEventTool } from '../create-event.tool'
 

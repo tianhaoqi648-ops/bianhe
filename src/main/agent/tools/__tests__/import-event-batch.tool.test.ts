@@ -54,6 +54,10 @@ const { mockGetDb } = vi.hoisted(() => ({
 }))
 
 vi.mock('@main/db/index', () => ({ getDb: mockGetDb }))
+vi.mock('@main/services/undo-service', () => ({
+  logEventCreateSnapshot: vi.fn(() => 'log-x')
+}))
+
 
 // 导入被测模块（在 mock 之后）
 import { importEventBatchTool } from '../import-event-batch.tool'

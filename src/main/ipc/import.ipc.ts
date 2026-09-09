@@ -34,6 +34,7 @@ import { auditRepo } from '../db/repository/audit.repo'
 import { eventRepo } from '../db/repository/event.repo'
 import { drawRepo } from '../db/repository/draw.repo'
 import { createEvent as createEventWithDefaultGroup } from '../services/event-service'
+import { logEventCreateSnapshot } from '../services/undo-service'
 import { getDb } from '../db/index'
 import { addCandidateValue } from '../services/candidate-service'
 import type { CandidateField } from '../../shared/constants'
@@ -570,6 +571,8 @@ export function registerImportIpc(): void {
             end_date: pkg.event.end_date ?? null,
             status: pkg.event.status ?? null
           })
+          // Phase 1.1-fix R3：导入建赛事与 UI/Agent 路径统一接入 undo 体系
+          logEventCreateSnapshot(newEvent.id)
 
           // 3.3 创建分组（先于队伍，teams.group_id 引用 team_groups）
           const groupIdMap = new Map<string, string>()

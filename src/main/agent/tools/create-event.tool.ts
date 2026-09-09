@@ -13,6 +13,7 @@
 
 import type { ToolDefinition } from '@shared/agent-types'
 import { createEvent } from '@main/services/event-service'
+import { logEventCreateSnapshot } from '@main/services/undo-service'
 
 export const createEventTool: ToolDefinition = {
   name: 'create_event',
@@ -55,11 +56,14 @@ export const createEventTool: ToolDefinition = {
     // 3. 构造 EventCreateInput（仅包含 repo 支持的字段）
     //    format / teamCount 为 Agent 语义化输入，不传给 repo
     //    显式传 null 以满足 repo 的严格类型（start_date/end_date/status 非可选）
-    return createEvent({
+    const ev = createEvent({
       name,
       start_date: null,
       end_date: null,
       status: null
     })
+    // Phase 1.1-fix R3：Agent 建赛事与 UI 路径统一接入 undo 体系
+    logEventCreateSnapshot(ev.id)
+    return ev
   }
 }

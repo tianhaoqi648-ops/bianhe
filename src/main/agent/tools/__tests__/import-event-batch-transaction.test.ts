@@ -106,6 +106,10 @@ function ensureDb(): MockDb {
 
 // 依赖 mock：getDb 指向真 SQLite 适配；uuid 固定序列（由用例控制）
 vi.mock('@main/db/index', () => ({ getDb: () => ensureDb() }))
+vi.mock('@main/services/undo-service', () => ({
+  logEventCreateSnapshot: vi.fn(() => 'log-x')
+}))
+
 vi.mock('uuid', () => ({ v4: () => mockUuidV4() }))
 
 vi.mock('@main/services/event-service', () => ({
