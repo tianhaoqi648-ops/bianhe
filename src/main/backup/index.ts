@@ -45,6 +45,20 @@ export interface BackupInfo {
   mtime: string
 }
 
+// ------------------------------------------------------------
+// 备份/恢复操作互斥：保证 backup 与 restore 不交叉执行
+// （restore 会覆盖 db 文件，若与 backup 并发可能产生半写状态）
+// ------------------------------------------------------------
+let opChain: Promise<unknown> = Promise.resolve()
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = opChain.then(fn, fn)
+  opChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 /** 获取备份目录绝对路径（不创建） */
 function getBackupsDir(): string {
   return join(app.getPath('userData'), 'backups')
@@ -117,9 +131,12 @@ export function cleanupOldBackups(): void {
 
 /**
  * 立即执行一次数据库备份：
- * 1. 复制 db 文件到 backups/{YYYYMMDD-HHmmss}.db
+ * 1. 通过 better-sqlite3 在线备份 API（db.backup()）落盘——原子写入且天然包含
+ *    WAL 中已提交但尚未 checkpoint 的事务，避免「拷贝主 .db 丢最近写入」的问题
  * 2. 更新 last-backup.txt 时间戳
  * 3. 调用 cleanupOldBackups
+ *
+ * 内存库（无对应 db 文件）退化为文件拷贝；在线备份失败时回退为拷贝兜底。
  */
 export async function backupDatabase(): Promise<void> {
   const dir = getBackupsDir()
@@ -142,13 +159,30 @@ export async function backupDatabase(): Promise<void> {
   const backupName = `${timestamp}.db`
   const backupPath = join(dir, backupName)
 
-  try {
-    copyFileSync(dbPath, backupPath)
-    console.log('[backup] Backup created:', backupPath)
-  } catch (e) {
-    console.error('[backup] copyFileSync failed:', e)
-    throw e
-  }
+  await serialize(async () => {
+    let usedOnlineBackup = false
+    try {
+      // 延迟导入：避免模块顶层硬依赖 better-sqlite3（Electron ABI）以便单测加载本模块
+      const { getDb } = await import('../db')
+      const database = getDb()
+      if (!database.memory) {
+        await database.backup(backupPath)
+        usedOnlineBackup = true
+        console.log('[backup] Backup created (online backup API):', backupPath)
+      }
+    } catch (e) {
+      console.warn('[backup] online backup failed, fallback to file copy:', e)
+    }
+    if (!usedOnlineBackup) {
+      try {
+        copyFileSync(dbPath, backupPath)
+        console.log('[backup] Backup created (file copy fallback):', backupPath)
+      } catch (e) {
+        console.error('[backup] copyFileSync failed:', e)
+        throw e
+      }
+    }
+  })
 
   try {
     writeFileSync(getLastBackupPath(), new Date().toISOString(), 'utf8')
@@ -163,13 +197,20 @@ export async function backupDatabase(): Promise<void> {
  * 同步执行一次数据库备份（供 schema 升级前自动备份复用）。
  *
  * 与 backupDatabase() 的区别：
- *   - 同步（迁移流程为同步执行，无法 await）
+ *   - 同步（迁移流程为同步执行，无法 await；better-sqlite3 的 db.backup() 为异步 API，
+ *     因此本函数改用「调用方注入 wal_checkpoint + copyFileSync」保证 WAL 数据落盘）
  *   - 返回备份文件名；db 文件不存在时返回 null
  *   - 文件名以 `pre-migration-` 前缀标识「迁移前快照」，便于区分与运维排查
  *
  * 复用现有备份机制：同一 backups 目录、同一保留 7 份清理策略。
+ *
+ * @param opts.beforeCopy 在 copyFileSync 之前执行的回调（调用方在此执行
+ *   `pragma('wal_checkpoint(TRUNCATE)')`，把 WAL 中已提交事务合并进主库文件，
+ *   确保快照包含全部已提交数据）。未提供时退化为纯拷贝（WAL 未合并数据可能缺失）。
  */
-export function backupDatabaseSync(): string | null {
+export function backupDatabaseSync(opts?: {
+  beforeCopy?: () => void
+}): string | null {
   const dbPath = getDbPath()
   if (!existsSync(dbPath)) {
     console.warn('[backup] DB file does not exist, skip schema-migration snapshot:', dbPath)
@@ -190,6 +231,14 @@ export function backupDatabaseSync(): string | null {
   const backupPath = join(dir, backupName)
 
   try {
+    // WAL 安全：先把 WAL 中已提交事务 checkpoint 进主库文件，再拷贝
+    if (opts?.beforeCopy) {
+      try {
+        opts.beforeCopy()
+      } catch (e) {
+        console.warn('[backup] wal_checkpoint before snapshot failed (continue with copy):', e)
+      }
+    }
     copyFileSync(dbPath, backupPath)
     console.log('[backup] Pre-migration snapshot created:', backupPath)
   } catch (e) {
@@ -363,30 +412,78 @@ export async function restoreBackup(filename: string): Promise<void> {
   )
 
   const dbPath = getDbPath()
-  // 先复制到临时文件再 rename，避免覆盖失败导致半写状态
-  const tmp = `${dbPath}.restore-tmp`
-  copyFileSync(src, tmp)
-  try {
-    renameSync(tmp, dbPath)
-  } catch (e) {
-    // rename 跨卷可能失败，回退为直接 copy
-    try {
-      copyFileSync(src, dbPath)
-      unlinkSync(tmp)
-    } catch (e2) {
-      throw e2
-    }
-  }
-  console.log('[backup] Backup restored:', filename, '->', dbPath)
 
-  // governance 1.2：恢复后执行 PRAGMA foreign_key_check，发现孤立引用 → 明确报失败，
-  // 不静默判定恢复成功（文件已覆盖，报错提示用户重建或使用本次备份的完整数据）。
-  const violations = await getRestoredFkViolations(dbPath)
-  if (violations.length > 0) {
-    const detail = violations.slice(0, 5).join('; ')
-    const more = violations.length > 5 ? ` ...等共 ${violations.length} 处` : ''
-    throw new Error(
-      `备份恢复完成，但外键校验失败：存在 ${violations.length} 处孤立引用（${detail}${more}）。数据可能不完整，请谨慎使用。`
-    )
+  // 备份与恢复互斥：避免 restore 覆盖文件与 backup 读取/写入交叉产生半写状态
+  await serialize(async () => {
+    // 先复制到临时文件再 rename，避免覆盖失败导致半写状态
+    const tmp = `${dbPath}.restore-tmp`
+    copyFileSync(src, tmp)
+    try {
+      renameSync(tmp, dbPath)
+    } catch (e) {
+      // rename 跨卷可能失败，回退为直接 copy
+      try {
+        copyFileSync(src, dbPath)
+        unlinkSync(tmp)
+      } catch (e2) {
+        throw e2
+      }
+    }
+    console.log('[backup] Backup restored:', filename, '->', dbPath)
+
+    // 恢复后完整性校验 1：PRAGMA integrity_check（页级损坏检测）。
+    // 非 ok → 明确报失败，不把「文件存在/可打开」当作「数据库有效」。
+    const integrity = await getIntegrityCheckResult(dbPath)
+    if (integrity !== null && integrity !== 'ok') {
+      throw new Error(
+        `备份恢复完成，但数据库完整性校验失败（integrity_check: ${integrity}）。备份文件可能已损坏，请勿使用本次恢复的数据。`
+      )
+    }
+
+    // 恢复后完整性校验 2：PRAGMA foreign_key_check（孤立引用检测，governance 1.2）。
+    // 发现 orphan → 明确报失败，不静默判定恢复成功。
+    const violations = await getRestoredFkViolations(dbPath)
+    if (violations.length > 0) {
+      const detail = violations.slice(0, 5).join('; ')
+      const more = violations.length > 5 ? ` ...等共 ${violations.length} 处` : ''
+      throw new Error(
+        `备份恢复完成，但外键校验失败：存在 ${violations.length} 处孤立引用（${detail}${more}）。数据可能不完整，请谨慎使用。`
+      )
+    }
+  })
+}
+
+/**
+ * 对指定 .db 文件执行 PRAGMA integrity_check，返回结果字符串。
+ *
+ * 返回 'ok' 表示页级结构完整；其他值（或首个错误行）表示损坏。
+ * 无法打开/读取时返回 null（与 getRestoredFkViolations 的容错口径一致，
+ * 由调用方决定 null 是否放行——因文件级损坏多伴随打开失败，此处不重复报错）。
+ */
+async function getIntegrityCheckResult(filePath: string): Promise<string | null> {
+  let d: Database.Database | null = null
+  try {
+    const mod = (await import('better-sqlite3')) as {
+      default?: new (path: string, opts?: Record<string, unknown>) => Database.Database
+    }
+    const DbCtor = mod.default
+    if (!DbCtor) return null
+    d = new DbCtor(filePath, { readonly: true, fileMustExist: true })
+    const rows = d.pragma('integrity_check') as unknown
+    if (Array.isArray(rows) && rows.length > 0) {
+      const first = rows[0] as { integrity_check?: string }
+      return first?.integrity_check ?? String(rows[0])
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    if (d) {
+      try {
+        d.close()
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }

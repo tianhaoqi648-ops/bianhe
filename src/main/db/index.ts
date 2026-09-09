@@ -175,7 +175,17 @@ function configureAndSeed(database: Database.Database): void {
   const preMigVersion = getDbSchemaVersion(database)
   if (!database.memory && preMigVersion > 0 && preMigVersion < SCHEMA_VERSION) {
     try {
-      const snapshot = backupDatabaseSync()
+      const snapshot = backupDatabaseSync({
+        // WAL 安全：拷贝前把 WAL 中已提交事务 checkpoint 进主库文件，
+        // 确保迁移前快照包含全部已提交数据（否则快照可能缺最近写入）
+        beforeCopy: () => {
+          try {
+            database.pragma('wal_checkpoint(TRUNCATE)')
+          } catch (e) {
+            console.warn('[db] wal_checkpoint before snapshot failed:', e)
+          }
+        }
+      })
       if (!snapshot) {
         throw new Error('schema 升级前自动备份未生成快照，已中止迁移以免无备份改动结构')
       }
