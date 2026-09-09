@@ -30,8 +30,12 @@ describe('security: assertNotSensitivePath', () => {
   it.skipIf(!isWin)('Windows：系统目录及其子路径拒绝', () => {
     const winRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows'
     expect(() => assertNotSensitivePath(resolve(winRoot, 'system32', 'config', 'sam'))).toThrow()
-    const pf = process.env.ProgramFiles ?? 'C:\\Program Files'
-    expect(() => assertNotSensitivePath(resolve(pf, 'SomeApp', 'file.txt'))).toThrow()
+    // ProgramFiles：实现与测试同源读取 env——该变量缺失时（如精简 shell），
+    // 黑名单同样不含该根，两侧行为一致，断言按环境存在性跳过
+    const pf = process.env.ProgramFiles
+    if (pf) {
+      expect(() => assertNotSensitivePath(resolve(pf, 'SomeApp', 'file.txt'))).toThrow()
+    }
   })
 
   it('Windows：用户正常位置放行（Desktop / Downloads / 临时目录 / 项目目录）', () => {
