@@ -128,6 +128,7 @@ vi.mock('electron', () => ({ app: h.mockApp }))
 import { exportBackup, importBackup } from '../backup-service'
 import { matchRepo } from '../../db/repository/match.repo'
 import { readRecordingFile, recordingsDir } from '../recording-storage'
+import { setRecordingActive, isRecordingActive } from '../recording-active'
 import { filenameOf } from '../../../shared/match-recording'
 import { collectMatchRecordingReferences } from '../../../shared/recording-scan'
 import { SUPPORTED_BACKUP_VERSION } from '../../../shared/constants'
@@ -340,8 +341,7 @@ describe('Me3-fix T1-T5：Recording metadata/ref backup→import 往返', () => 
     expect(refs.get('legacy-c.webm')).toEqual(['m1'])
   })
 
-  it('补充：真实 bulkInsert + TABLE_COLUMNS 白名单保留 recording_meta/recording_ref 列（node:sqlite）', async () => {
-    const utilsActual = await vi.importActual<typeof import('../../db/repository/utils')>(
+  it('补充：真实 bulkInsert + TABLE_COLUMNS 白名单保留 recording_meta/recording_ref 列（node:sqlite）', async () => {    const utilsActual = await vi.importActual<typeof import('../../db/repository/utils')>(
       '../../db/repository/utils'
     )
     // 白名单锁定：两列必须存在于 matches 允许列（防未来误删）
@@ -382,5 +382,45 @@ describe('Me3-fix T1-T5：Recording metadata/ref backup→import 往返', () => 
     expect(
       collectMatchRecordingReferences([inserted as unknown as Record<string, unknown>]).has('a.webm')
     ).toBe(true)
+  })
+})
+
+describe('Me3-fix Lifecycle Gate：录音中结构化 import 守卫', () => {
+  it('T10：录音进行中 → importBackup 拒绝且 DB 零写入（clear_rebuild 不清任何表）', () => {
+    vi.mocked(matchRepo.findAllForBackup).mockReturnValue({
+      matches: [],
+      match_judges: [],
+      match_judge_votes: []
+    })
+    const pkg = exportBackup({ categories: ['match_records'] })
+    tmpJson = writeTempJson(pkg)
+    setRecordingActive(true)
+    try {
+      expect(() =>
+        importBackup({ filePath: tmpJson!, strategy: 'clear_rebuild', categories: ['match_records'] })
+      ).toThrow('当前正在录音')
+      // DB 零写入：clearTable / bulkInsert 均未被调用
+      expect(h.mockClearTable).not.toHaveBeenCalled()
+      expect(h.mockBulkInsert).not.toHaveBeenCalled()
+    } finally {
+      setRecordingActive(false)
+    }
+    expect(isRecordingActive()).toBe(false)
+  })
+
+  it('T10b：非录音状态 → importBackup 行为不变（clear_rebuild 正常清表重建）', () => {
+    vi.mocked(matchRepo.findAllForBackup).mockReturnValue({
+      matches: [makeRow({ recording_meta: JSON.stringify([{ id: 'r', kind: 'whole', filePath: 'a.webm', markers: [] }]) })],
+      match_judges: [],
+      match_judge_votes: []
+    })
+    const pkg = exportBackup({ categories: ['match_records'] })
+    tmpJson = writeTempJson(pkg)
+    h.mockBulkInsert.mockReturnValue(1)
+    importBackup({ filePath: tmpJson, strategy: 'clear_rebuild', categories: ['match_records'] })
+    // 反向清空顺序 + matches 行含 recording_meta 原样
+    const cleared = h.mockClearTable.mock.calls.map((c) => c[0])
+    expect(cleared).toEqual(['match_judge_votes', 'match_judges', 'matches'])
+    expect(lastMatchesRows()[0].recording_meta).toContain('a.webm')
   })
 })

@@ -11,6 +11,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs'
 import { dirname } from 'path'
+import { isRecordingActive } from './recording-active'
 import { getDb } from '../db/index'
 import { topicRepo } from '../db/repository/topic.repo'
 import { eventRepo } from '../db/repository/event.repo'
@@ -268,6 +269,13 @@ export function previewImport(filePath: string): BackupPreviewResult {
  * @returns { inserted, skipped, overwritten, bellFilesRestored }
  */
 export function importBackup(params: BackupImportParams): BackupImportResult {
+  // Me3-fix Lifecycle Gate：录音进行中禁止结构化导入。
+  // clear_rebuild 会清空 matches（含当前正在录音的 match 行）——录音停止
+  // 流程的 matchAPI.update(matchId) 将影响 0 行，刚落盘的录音永久无引用。
+  // 与文件级 restoreBackup 的录音守卫同语义（fail-safe：DB 不发生导入）。
+  if (isRecordingActive()) {
+    throw new Error('当前正在录音，请先停止录音后再导入备份。')
+  }
   const raw = readBackupFile(params.filePath)
   // P4 修复：JSON.parse 包裹 try/catch，提供友好错误提示
   let pkg: BackupPackage
