@@ -2313,7 +2313,8 @@ export default function Settings() {
       </Row>
 
       <Alert
-        message="备份文件包含完整数据，建议在做重大操作前先备份"
+        message="备份包含数据库数据，但不包含录音音频文件"
+        description="需要迁移录音时，请另外保留 recordings 录音目录。建议在做重大操作前先备份数据。"
         type="info"
         style={{ marginTop: spacing.md }}
       />
@@ -2339,6 +2340,7 @@ export default function Settings() {
         </Space>
         <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
           自动备份为数据库文件级别（.db），每 24 小时自动触发一次，保留最近 7 份。与上方「一键备份」相互独立。
+          备份均为纯数据库数据，不包含录音音频文件。
         </Text>
       </Card>
     </div>

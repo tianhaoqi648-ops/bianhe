@@ -223,6 +223,9 @@ export default function BackupManageModal({ open, onClose }: Props) {
           提示：应用启动时会自动备份（距上次备份超过 24 小时）。可在"数据管理"中点击"立即备份"手动创建。
         </Text>
       )}
+      <Text type="secondary" style={{ display: 'block', marginTop: 12, fontSize: 12 }}>
+        注意：备份与恢复仅针对数据库数据，不包含录音音频文件。恢复后如有录音缺失，可在「录音维护」中查看。
+      </Text>
     </Modal>
   )
 }

@@ -229,7 +229,7 @@ export default function BackupImportModal({ open, onClose }: Props) {
       >
         <Alert
           message="从备份文件恢复数据"
-          description="选择 .json 备份文件，预览内容后选择冲突策略并导入。"
+          description="选择 .json 备份文件，预览内容后选择冲突策略并导入。注意：恢复不包含录音音频文件；恢复后如有录音缺失，可在「录音维护」中查看。"
           type="info"
           showIcon
           style={{ marginBottom: spacing.md }}

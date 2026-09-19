@@ -105,7 +105,7 @@ export default function BackupExportModal({ open, onClose }: Props) {
     >
       <Alert
         message="选择要备份的数据类别"
-        description="勾选需要备份的类别，将打包为单一 JSON 文件。可用于迁移到其他设备或恢复数据。"
+        description="勾选需要备份的类别，将打包为单一 JSON 文件。可用于迁移到其他设备或恢复数据。注意：备份不包含录音音频文件，迁移录音请另行保留 recordings 录音目录。"
         type="info"
         showIcon
         style={{ marginBottom: spacing.md }}
