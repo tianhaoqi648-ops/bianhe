@@ -5,8 +5,9 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { basename } from 'path'
 import { IPC_CHANNELS } from '../../shared/types'
-import type { ApiResponse, RecordingSaveResult, RecordingDirInfo, RecordingBindAction, BoundRecording } from '../../shared/types'
+import type { ApiResponse, RecordingSaveResult, RecordingDirInfo, RecordingBindAction, BoundRecording, RecordingScanReport } from '../../shared/types'
 import { matchRepo } from '../db/repository/match.repo'
+import { scanRecordingDirectories } from '../services/recording-scan-service'
 import {
   saveRecording,
   listRecordings,
@@ -180,6 +181,16 @@ export function registerRecordingIpc(): void {
       }
     }
   )
+
+  // 录音维护：只读孤儿扫描（发现异常 ≠ 删除异常——本通道无任何删除行为）
+  ipcMain.handle(IPC_CHANNELS.RECORDING_SCAN, async (): Promise<ApiResponse<RecordingScanReport>> => {
+    try {
+      const report = await scanRecordingDirectories()
+      return { success: true, data: report }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
 }
 
 /** 依据一场景的当前录音列表，应用一次绑定操作，返回新列表。 */

@@ -84,6 +84,7 @@ import type {
   RecordingSaveResult,
   BoundRecording,
   RecordingBindAction,
+  RecordingScanReport,
   SttRequest,
   SttSegment,
   SttEngineStatus,
@@ -492,6 +493,8 @@ export interface RecordingAPI {
   listForMatch: (matchId: string) => Promise<ApiResponse<BoundRecording[] | null>>
   /** 多录音模型：对一场比赛的录音列表做 增/删/换/整组 绑定（add/remove/replace/set） */
   bind: (action: RecordingBindAction) => Promise<ApiResponse<BoundRecording[] | null>>
+  /** Me1 录音维护：只读孤儿扫描（发现异常 ≠ 删除异常——无任何删除行为） */
+  scan: () => Promise<ApiResponse<RecordingScanReport>>
 }
 
 export interface SttAPI {

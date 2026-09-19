@@ -1346,6 +1346,7 @@ export const IPC_CHANNELS = {
   RECORDING_EXISTS: 'recording:exists',
   RECORDING_LIST_FOR_MATCH: 'recording:listForMatch',
   RECORDING_BIND: 'recording:bind',
+  RECORDING_SCAN: 'recording:scan',
   BELL_ASSET_LIST: 'bell:list',
   BELL_ASSET_UPLOAD: 'bell:upload',
   BELL_ASSET_DELETE: 'bell:delete',
@@ -1996,3 +1997,13 @@ export interface UpdateStatusPayload {
   progress?: UpdateProgress
   error?: string
 }
+
+// Phase 1.3-fix Me1：录音维护扫描报告类型（实现见 src/shared/recording-scan.ts）
+export type {
+  RecordingScanClassification,
+  RecordingScanReasonCode,
+  RecordingScanRootType,
+  RecordingScanItem,
+  RecordingScanRootReport,
+  RecordingScanReport
+} from './recording-scan'
