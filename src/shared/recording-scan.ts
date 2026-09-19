@@ -2,7 +2,8 @@
 // recording-scan.ts — 录音孤儿扫描：分类纯函数与类型（Phase 1.3-fix Me1）
 //
 // 核心原则：发现异常 ≠ 删除异常。
-//   - UNREFERENCED ≠ ORPHAN（自由练习/待重绑/换根窗口均属前者）
+//   - UNREFERENCED ≠ ORPHAN（0 引用一律保守判 UNREFERENCED——系统无 provenance
+//     区分异常遗留与解绑/待重绑/换根窗口，ORPHAN 为保留态不自动产生）
 //   - MISSING ≠ ORPHAN（DB 有引用文件缺失 = Ghost Reference）
 //   - UNKNOWN ≠ SAFE TO DELETE
 //
@@ -28,7 +29,7 @@ export type RecordingScanReasonCode =
   | 'REFERENCED_BY_UNDO'
   | 'SHARED_BY_MATCHES'
   | 'FREE_PRACTICE'
-  | 'ORPHAN_NO_REFERENCE'
+  | 'NO_KNOWN_REFERENCE'
   | 'GHOST_REFERENCE_FILE_MISSING'
   | 'UNSUPPORTED_EXTENSION'
   | 'STAT_FAILED'
@@ -187,7 +188,15 @@ export function collectUndoRecordingReferences(
   return refs
 }
 
-/** 单文件分类（0 引用文件：依据 basename 前缀与扩展白名单区分 UNREFERENCED/ORPHAN/UNKNOWN）。 */
+/**
+ * 单文件分类（0 引用文件——保守语义）。
+ *
+ * 系统当前不存在任何可区分「异常遗留」与「合法零引用」的 provenance：
+ * Unbind = detach only（解绑后引用必然归零）、match 删除 CASCADE（meta 随删文件留盘）、
+ * 换根窗口（旧根文件全部失联）——三者产生完全相同的磁盘/DB 状态。
+ * 因此 0 引用一律判 UNREFERENCED（默认安全分类）；ORPHAN 枚举保留但
+ * 扫描器**不自动产生**（未来需额外溯源证据源才可启用）。
+ */
 function classifyUnreferencedFile(entry: RecordingFileEntry): {
   classification: RecordingScanClassification
   reasonCode: RecordingScanReasonCode
@@ -209,17 +218,18 @@ function classifyUnreferencedFile(entry: RecordingFileEntry): {
     }
   }
   return {
-    classification: 'ORPHAN',
-    reasonCode: 'ORPHAN_NO_REFERENCE',
+    classification: 'UNREFERENCED',
+    reasonCode: 'NO_KNOWN_REFERENCE',
     reasonText:
-      '文件存在于录音目录，但未发现任何 Match、recording_ref 或 undo 快照引用。可能是历史遗留、手动放入或换根前产物，请人工确认'
+      '当前未发现有效业务引用，但不能仅据此判断为孤儿（可能是解绑、待重绑或历史遗留），建议人工确认'
   }
 }
 
 /**
  * 纯函数分类：文件系统条目 + 引用集合 → 扫描报告条目。
  * - 引用数 ≥2 → SHARED；=1 → REFERENCED
- * - 0 引用 → classifyUnreferencedFile（UNREFERENCED/ORPHAN/UNKNOWN）
+ * - 0 引用 → classifyUnreferencedFile（一律 UNREFERENCED/UNKNOWN——保守默认，
+ *   扫描器不自动判 ORPHAN：无 provenance 区分异常遗留与合法零引用）
  * - 引用侧（refs 中存在但 files 无）→ MISSING（Ghost Reference）
  */
 export function classifyRecordings(
@@ -287,7 +297,7 @@ export function classifyRecordings(
   return sortScanItems(items)
 }
 
-/** 维护报告排序：MISSING → ORPHAN → UNKNOWN → SHARED → REFERENCED → UNREFERENCED。 */
+/** 维护报告排序：MISSING → ORPHAN（保留态，当前不自动产生）→ UNKNOWN → SHARED → REFERENCED → UNREFERENCED。 */
 export function sortScanItems(items: RecordingScanItem[]): RecordingScanItem[] {
   return [...items].sort((a, b) => {
     const rank = (c: RecordingScanClassification) => CLASSIFICATION_ORDER.indexOf(c)

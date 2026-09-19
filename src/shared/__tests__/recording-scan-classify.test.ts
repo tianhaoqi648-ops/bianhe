@@ -75,21 +75,22 @@ describe('Me1 分类：UNREFERENCED 语义（T3/T5——不与 ORPHAN 混淆）'
   })
 })
 
-describe('Me1 分类：ORPHAN（T6/T7/T12）', () => {
-  it('T6：match 删除后（引用消失）→ ORPHAN（ORPHAN_NO_REFERENCE）', () => {
-    // match-<id8>- 前缀（非 untracked）且零引用：曾有 match，现引用已随 CASCADE 消失
+describe('Me1 分类：零引用保守分类（T6/T7/T12——扫描器不自动判 ORPHAN）', () => {
+  it('T6：match 删除后（引用消失）→ UNREFERENCED（NO_KNOWN_REFERENCE），不判 ORPHAN', () => {
+    // match-<id8>- 前缀（非 untracked）且零引用：曾有 match，现引用已随 CASCADE 消失——
+    // 但与「手动解绑」「待重绑」磁盘/DB 状态完全相同，无 provenance 证明异常遗留
     const items = classifyRecordings(
       [file('match-14791eda-1787136941628.webm')],
       new Map(),
       EMPTY_UNDO,
       'CURRENT'
     )
-    expect(items[0].classification).toBe('ORPHAN')
-    expect(items[0].reasonCode).toBe('ORPHAN_NO_REFERENCE')
+    expect(items[0].classification).toBe('UNREFERENCED')
+    expect(items[0].reasonCode).toBe('NO_KNOWN_REFERENCE')
     expect(items[0].reasonText).toContain('人工确认')
   })
 
-  it('T7：event 删除后多文件同判 ORPHAN（数量不引发误删——分类器纯函数无副作用）', () => {
+  it('T7：event 删除后多文件同判 UNREFERENCED（数量不引发误删——分类器纯函数无副作用）', () => {
     const files = [
       file('match-14791eda-1787136941628.webm'),
       file('match-14791eda-1787192567201.webm'),
@@ -98,17 +99,33 @@ describe('Me1 分类：ORPHAN（T6/T7/T12）', () => {
     const items = classifyRecordings(files, new Map(), EMPTY_UNDO, 'CURRENT')
     expect(items).toHaveLength(3)
     for (const i of items) {
-      expect(i.classification).toBe('ORPHAN')
-      expect(i.reasonCode).toBe('ORPHAN_NO_REFERENCE')
+      expect(i.classification).toBe('UNREFERENCED')
+      expect(i.reasonCode).toBe('NO_KNOWN_REFERENCE')
     }
   })
 
-  it('T12：orphan.webm（非 match 前缀零引用）→ ORPHAN；分类器无删除副作用', () => {
+  it('T12/Case 1&3：零引用白名单音频（含 unbind 后普通 basename）→ UNREFERENCED（NO_KNOWN_REFERENCE）保守默认；分类器无删除副作用', () => {
     const items = classifyRecordings([file('orphan.webm')], new Map(), EMPTY_UNDO, 'CURRENT')
-    expect(items[0].classification).toBe('ORPHAN')
+    expect(items[0].classification).toBe('UNREFERENCED')
+    expect(items[0].reasonCode).toBe('NO_KNOWN_REFERENCE')
     // 纯函数性质：重复调用结果一致，无状态变更
     const again = classifyRecordings([file('orphan.webm')], new Map(), EMPTY_UNDO, 'CURRENT')
     expect(again).toEqual(items)
+  })
+
+  it('Case 4：confirmed ORPHAN 无自动判定——任意 0 引用输入均不产生 ORPHAN（保留态）', () => {
+    // 当前系统无任何 provenance 证明「必然异常遗留」，
+    // 故不存在 confirmed orphan 测试；此用例固化「不自动判 ORPHAN」不变量
+    const candidates = [
+      'orphan.webm',
+      'match-14791eda-1787136941628.webm',
+      'a.wav',
+      'match-untracke-1789000000000.webm'
+    ]
+    for (const basename of candidates) {
+      const items = classifyRecordings([file(basename)], new Map(), EMPTY_UNDO, 'CURRENT')
+      expect(items[0].classification).not.toBe('ORPHAN')
+    }
   })
 })
 
@@ -193,7 +210,7 @@ describe('Me1 分类：身份与过滤（T10/T11）', () => {
     const webm = items.find((i) => i.basename === 'a.webm')!
     const wav = items.find((i) => i.basename === 'a.wav')!
     expect(webm.classification).toBe('REFERENCED')
-    expect(wav.classification).toBe('ORPHAN') // a.wav 零引用，独立判定
+    expect(wav.classification).toBe('UNREFERENCED') // a.wav 零引用，独立判定（保守默认）
   })
 
   it('T11a：隐藏文件与非白名单扩展 → UNKNOWN（UNSUPPORTED_EXTENSION）', () => {
@@ -213,12 +230,12 @@ describe('Me1 分类：身份与过滤（T10/T11）', () => {
     const exts = ['wav', 'webm', 'm4a', 'mp3', 'flac', 'mp4']
     const files = exts.map((e) => file(`sample-${e}.${e}`))
     const items = classifyRecordings(files, new Map(), EMPTY_UNDO, 'CURRENT')
-    for (const i of items) expect(i.classification).toBe('ORPHAN')
+    for (const i of items) expect(i.classification).toBe('UNREFERENCED')
   })
 })
 
 describe('Me1 排序与汇总', () => {
-  it('排序：MISSING → ORPHAN → UNKNOWN → SHARED → REFERENCED → UNREFERENCED', () => {
+  it('排序：MISSING → UNKNOWN → SHARED → REFERENCED → UNREFERENCED（ORPHAN 不自动产生）', () => {
     const refs = new Map([
       ['ref.webm', ['m-1', 'm-2']],
       ['ok.webm', ['m-3']],
@@ -236,11 +253,11 @@ describe('Me1 排序与汇总', () => {
     const items = classifyRecordings(files, refs, EMPTY_UNDO, 'CURRENT')
     expect(classNames(items)).toEqual([
       'MISSING', // missing.webm（引用侧）
-      'ORPHAN', // orphan.webm（零引用）
       'UNKNOWN', // weird.txt（非白名单）
       'SHARED', // ref.webm（双引用）
       'REFERENCED', // ok.webm（单引用）
-      'UNREFERENCED' // match-untracke-（自由练习）
+      'UNREFERENCED', // match-untracke-（自由练习）
+      'UNREFERENCED' // orphan.webm（零引用保守默认）
     ])
   })
 
@@ -259,8 +276,8 @@ describe('Me1 排序与汇总', () => {
     expect(summary).toEqual({
       REFERENCED: 0,
       SHARED: 1,
-      UNREFERENCED: 0,
-      ORPHAN: 1,
+      UNREFERENCED: 1,
+      ORPHAN: 0,
       MISSING: 1,
       UNKNOWN: 1
     })

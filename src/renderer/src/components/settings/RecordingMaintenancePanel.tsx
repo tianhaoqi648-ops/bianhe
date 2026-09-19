@@ -37,12 +37,12 @@ const CLASSIFICATION_META: Record<
   UNREFERENCED: {
     color: 'default',
     label: '未引用',
-    description: '当前没有比赛引用该文件，但不能安全判定为孤儿——可能是自由练习录音或待重新绑定的文件。'
+    description: '当前没有发现有效业务引用，但不能仅据此判断为孤儿——可能是自由练习、解绑后保留、待重绑或历史遗留文件。'
   },
   ORPHAN: {
     color: 'orange',
     label: '孤儿',
-    description: '文件存在，但当前没有发现任何有效业务引用（可能是历史遗留、手动放入或换根前产物）。请人工确认后再决定处理方式。'
+    description: '保留状态：当前扫描器不会自动判定孤儿（需要额外溯源证据）。零引用文件一律按「未引用」呈现。'
   },
   MISSING: {
     color: 'red',
@@ -208,16 +208,13 @@ export function RecordingMaintenancePanel(): JSX.Element {
               状态说明：
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              · 孤儿：文件存在，但当前没有发现有效业务引用（含 ExclamationCircleOutlined 标记的条目需人工确认）。
+              · 未引用：当前没有发现有效业务引用，但不能仅据此判断为孤儿（可能是自由练习、解绑后保留、待重绑或历史遗留），建议人工确认。
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
               · 缺失：数据库存在引用，但录音文件不存在（换机/换根后音频未迁移）。
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              · 未引用：当前没有比赛引用，但不能安全判定为孤儿（可能是自由练习或待重绑文件）。
-            </Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              <ExclamationCircleOutlined /> 本报告为只读维护信息，应用不会自动删除任何录音文件。
+              <ExclamationCircleOutlined /> 本报告为只读维护信息，应用不会自动删除任何录音文件；零引用文件也请先人工确认再手动处理。
             </Text>
           </Space>
         )}

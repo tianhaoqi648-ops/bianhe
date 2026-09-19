@@ -164,7 +164,7 @@ afterEach(() => {
 
 describe('Me1：scanRecordingDirectories（真 FS 双根 + 真库引用）', () => {
   it('双根扫描：CURRENT 与 LEGACY 文件分别归类（同 basename 不合并）', async () => {
-    // LEGACY 根（userData/recordings）：历史遗留孤儿
+    // LEGACY 根（userData/recordings）：历史遗留零引用文件（保守判 UNREFERENCED）
     fs.writeFileSync(path.join(tmpUserData, 'recordings', 'legacy-orphan.webm'), Buffer.from('x'))
     // CURRENT 根（configured）：被引用文件
     fs.writeFileSync(path.join(currentRoot, 'bound.webm'), Buffer.from('x'))
@@ -178,7 +178,8 @@ describe('Me1：scanRecordingDirectories（真 FS 双根 + 真库引用）', () 
     expect(report.roots).toHaveLength(2)
     const legacyReport = report.roots.find((r) => r.rootType === 'LEGACY')!
     const currentReport = report.roots.find((r) => r.rootType === 'CURRENT')!
-    expect(legacyReport.items[0].classification).toBe('ORPHAN')
+    expect(legacyReport.items[0].classification).toBe('UNREFERENCED')
+    expect(legacyReport.items[0].reasonCode).toBe('NO_KNOWN_REFERENCE')
     expect(legacyReport.items[0].basename).toBe('legacy-orphan.webm')
     expect(currentReport.items[0].classification).toBe('REFERENCED')
     expect(currentReport.items[0].referencedBy).toEqual(['m-1'])
