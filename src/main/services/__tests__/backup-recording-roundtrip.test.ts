@@ -261,13 +261,14 @@ describe('Me3-fix T1-T5：Recording metadata/ref backup→import 往返', () => 
     fs.writeFileSync(path.join(dir, 'b.webm'), Buffer.from('audio-b'))
     // meta 侧：basename 归一后命中当前根（不读旧绝对路径）
     expect((await readRecordingFile('/old/root/recordings/b.webm'))!.toString('utf8')).toBe('audio-b')
-    // ref 侧（Windows 路径）平台感知：
+    // ref 侧（Windows 路径）：filenameOf 为双分隔符全平台归一（match-recording.ts
+    // 的 lastIndexOf('/') 与 lastIndexOf('\\') 取最大）——任意平台均提取 basename
+    expect(filenameOf('C:\\OldRoot\\recordings\\b.webm')).toBe('b.webm')
+    // readRecordingFile 用 path.basename（平台分隔符语义，与 filenameOf 不同）：
+    // Windows 上命中；POSIX 上 Windows 路径为字面文件名 → 不存在 → null（锁定不逃逸）
     if (isWin) {
-      expect(filenameOf('C:\\OldRoot\\recordings\\b.webm')).toBe('b.webm')
       expect((await readRecordingFile('C:\\OldRoot\\recordings\\b.webm'))!.toString('utf8')).toBe('audio-b')
     } else {
-      // POSIX：反斜杠非分隔符 → 保留为字面文件名（锁定语义，不逃逸，文件不存在 → null）
-      expect(filenameOf('C:\\OldRoot\\recordings\\b.webm')).toBe('C:\\OldRoot\\recordings\\b.webm')
       expect(await readRecordingFile('C:\\OldRoot\\recordings\\b.webm')).toBeNull()
     }
     // 当前根不存在该文件名变体时不产生任意路径读取
@@ -319,12 +320,8 @@ describe('Me3-fix T1-T5：Recording metadata/ref backup→import 往返', () => 
       })
     )
     expect(lastMatchesRows()[0].recording_ref).toBe('D:\\Old\\recordings\\ref-abs.webm')
-    // 归一语义平台感知：Windows 上提取 basename；POSIX 保留字面名（不逃逸）
-    if (isWin) {
-      expect(filenameOf('D:\\Old\\recordings\\ref-abs.webm')).toBe('ref-abs.webm')
-    } else {
-      expect(filenameOf('D:\\Old\\recordings\\ref-abs.webm')).toBe('D:\\Old\\recordings\\ref-abs.webm')
-    }
+    // filenameOf 双分隔符全平台归一（与 T2 同理）——任意平台均提取 basename
+    expect(filenameOf('D:\\Old\\recordings\\ref-abs.webm')).toBe('ref-abs.webm')
   })
 
   it('T5：meta + ref 同时存在——两者独立原样往返（source of truth = recording_meta）', () => {
