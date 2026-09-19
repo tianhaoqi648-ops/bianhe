@@ -202,8 +202,10 @@ export async function deleteRecording(fileName: string): Promise<boolean> {
  * 读取/转写；本函数在 bind 写入时把外部文件「收编」进录音目录，保证
  * 绑定后立即可播/可转写，并与 M3 的 basename 元数据模型一致。
  *
- * 容错：单个文件拷贝失败不阻断绑定（保留原 filePath，由 exists 门控
- * 提示缺失），由调用方决定是否提示用户。
+ * 失败语义（Pre-Push Gate 修正）：拷贝失败时抛错——由 bind handler
+ * 返回 {success:false}，**不创建新的 Recording 引用**（否则 M3 归一
+ * 会把原绝对路径压缩成当前根下必不存在的 basename，形成静默死引用）。
+ * 原外部文件保持不变，recordingsDir 不留半成品（copyFile 原子）。
  */
 export async function ensureRecordingsInDir(
   recordings: BoundRecording[]
@@ -224,8 +226,9 @@ export async function ensureRecordingsInDir(
         await fs.copyFile(fp, join(dir, finalBase))
       }
     } catch (e) {
-      console.warn('[recording] copy external recording failed (keep original path):', fp, e)
-      finalBase = fp
+      throw new Error(
+        `录音文件导入失败（${base}）：${e instanceof Error ? e.message : String(e)}`
+      )
     }
     out.push({ ...r, filePath: finalBase })
   }
