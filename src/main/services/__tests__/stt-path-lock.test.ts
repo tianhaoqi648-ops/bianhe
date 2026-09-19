@@ -67,7 +67,10 @@ function recordingsDir(): string {
 function assertLockedInsideRecordingsDir(resolved: string): void {
   const rel = path.relative(recordingsDir(), path.resolve(resolved))
   expect(rel).not.toBe('')
-  expect(rel.startsWith('..')).toBe(false)
+  // 严格父目录判断：Linux 上 Windows 穿越串的字面名（如 ..\..\a.webm）
+  // 本身以 '..' 字符开头，但不是父目录遍历——只有 rel 恰为 '..' 或
+  // 以 '..' + 分隔符开头才是真正逃逸
+  expect(rel === '..' || rel.startsWith('..' + path.sep)).toBe(false)
   expect(path.isAbsolute(rel)).toBe(false)
 }
 
