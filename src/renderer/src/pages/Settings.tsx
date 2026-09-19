@@ -29,6 +29,7 @@ import {
   theme
 } from 'antd';
 import BrandSpin from '../components/common/BrandSpin';
+import { RecordingMaintenancePanel } from '../components/settings/RecordingMaintenancePanel';
 import AccentCard from '../components/common/AccentCard';
 import PageHeader from '../components/common/PageHeader';
 import {
@@ -1595,6 +1596,9 @@ export default function Settings() {
           </div>
         </Space>
       </Card>
+
+      {/* 录音维护（Me1：只读孤儿报告，无任何删除行为） */}
+      <RecordingMaintenancePanel />
 
       {/* AI 转写（录音转文字） */}
       <Card
