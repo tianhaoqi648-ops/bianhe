@@ -61,9 +61,12 @@ describe('Me3-fix T9：backup:restore 录音守卫（真 IPC → 真 restoreBack
     vi.restoreAllMocks()
   })
 
-  function restoreHandler(): (filename: string) => Promise<{ success: boolean; error?: string }> {
+  function restoreHandler(): (
+    _event: unknown,
+    filename: string
+  ) => Promise<{ success: boolean; error?: string }> {
     const handler = h.handleCalls.get(IPC_CHANNELS.BACKUP_RESTORE) as
-      | ((filename: string) => Promise<{ success: boolean; error?: string }>)
+      | ((event: unknown, filename: string) => Promise<{ success: boolean; error?: string }>)
       | undefined
     expect(handler, 'BACKUP_RESTORE handler 未注册').toBeTruthy()
     return handler!
