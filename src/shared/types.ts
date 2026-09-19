@@ -1347,6 +1347,7 @@ export const IPC_CHANNELS = {
   RECORDING_LIST_FOR_MATCH: 'recording:listForMatch',
   RECORDING_BIND: 'recording:bind',
   RECORDING_SCAN: 'recording:scan',
+  RECORDING_ACTIVE: 'recording:setActive',
   BELL_ASSET_LIST: 'bell:list',
   BELL_ASSET_UPLOAD: 'bell:upload',
   BELL_ASSET_DELETE: 'bell:delete',

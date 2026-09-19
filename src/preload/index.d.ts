@@ -495,6 +495,8 @@ export interface RecordingAPI {
   bind: (action: RecordingBindAction) => Promise<ApiResponse<BoundRecording[] | null>>
   /** Me1 录音维护：只读孤儿扫描（发现异常 ≠ 删除异常——无任何删除行为） */
   scan: () => Promise<ApiResponse<RecordingScanReport>>
+  /** Me3-fix：通知主进程录音会话活跃状态（restoreBackup 据此拒绝录音中恢复） */
+  setActive: (active: boolean) => Promise<ApiResponse<boolean>>
 }
 
 export interface SttAPI {

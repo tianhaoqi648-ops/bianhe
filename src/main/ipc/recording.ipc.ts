@@ -8,6 +8,7 @@ import { IPC_CHANNELS } from '../../shared/types'
 import type { ApiResponse, RecordingSaveResult, RecordingDirInfo, RecordingBindAction, BoundRecording, RecordingScanReport } from '../../shared/types'
 import { matchRepo } from '../db/repository/match.repo'
 import { scanRecordingDirectories } from '../services/recording-scan-service'
+import { setRecordingActive } from '../services/recording-active'
 import {
   saveRecording,
   listRecordings,
@@ -190,6 +191,16 @@ export function registerRecordingIpc(): void {
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
+  })
+
+  // 录音会话活跃状态通知（Me3-fix）：restoreBackup 据此拒绝录音进行中的恢复。
+  // 会话级——分段切片不翻转；标志存主进程内存，应用重启自动归零。
+  ipcMain.handle(IPC_CHANNELS.RECORDING_ACTIVE, (_e, active: unknown): ApiResponse<boolean> => {
+    if (typeof active !== 'boolean') {
+      return { success: false, error: '参数 active 必须为布尔值' }
+    }
+    setRecordingActive(active)
+    return { success: true, data: active }
   })
 }
 

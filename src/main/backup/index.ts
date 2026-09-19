@@ -19,6 +19,7 @@
 
 import { app } from 'electron'
 import { join } from 'path'
+import { isRecordingActive } from '../services/recording-active'
 import type Database from 'better-sqlite3'
 import {
   copyFileSync,
@@ -397,6 +398,13 @@ export async function restoreBackup(filename: string): Promise<void> {
   const src = join(getBackupsDir(), filename)
   if (!existsSync(src)) {
     throw new Error(`Backup not found: ${filename}`)
+  }
+
+  // Me3-fix：录音进行中禁止恢复——恢复以 tmp+rename 替换 db 文件，而当前
+  // 连接仍持有旧文件句柄，恢复后录音停止触发的新绑定写入会落在旧文件上，
+  // 重启即丢失。在任何文件操作之前直接拒绝（fail-safe：DB 不发生 restore）。
+  if (isRecordingActive()) {
+    throw new Error('当前正在录音，请先停止录音后再恢复备份。')
   }
 
   // 恢复前校验：备份文件的 schema 版本不得高于当前应用支持的版本，

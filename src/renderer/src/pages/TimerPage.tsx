@@ -342,6 +342,8 @@ export default function TimerPage() {
     }
     recSessionStartMsRef.current = Date.now()
     setRecOn(true)
+    // Me3-fix：通知主进程录音会话活跃（restoreBackup 据此拒绝录音中恢复）
+    void window.recordingAPI.setActive(true)
     // 若计时已在某环节进行中，为当前环节立即打一条初始标记
     const curStage = stableFormat.stages[engine.state.currentStageIndex]
     if (curStage && engine.state.status !== 'idle') {
@@ -354,6 +356,8 @@ export default function TimerPage() {
   const stopRecordingSession = async () => {
     recSessionRef.current = false
     setRecOn(false)
+    // Me3-fix：会话结束，解除主进程录音活跃标志
+    void window.recordingAPI.setActive(false)
     const matchId = matchIdRef.current
     const markers = markersRef.current
     const isSplit = recSegmentModeRef.current === 'split'

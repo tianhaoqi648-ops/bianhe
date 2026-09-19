@@ -27,6 +27,7 @@ import {
   deleteBackup,
   restoreBackup
 } from '../../backup'
+import { setRecordingActive, isRecordingActive } from '../recording-active'
 
 let tmpUserData: string
 
@@ -205,6 +206,52 @@ describe('backup 自动备份模块（Task 5.5）', () => {
       await restoreBackup('backup-0.db')
       const dbContent = fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')
       expect(dbContent).toBe('backup-content')
+    })
+  })
+
+  // ============================================================
+  // restoreBackup 录音守卫（Me3-fix T6-T8）
+  // ============================================================
+  describe('restoreBackup 录音守卫（Me3-fix）', () => {
+    it('T6：录音进行中 → restore 被拒绝，DB 与备份文件均不发生任何变化', async () => {
+      writeBackupFiles(1)
+      fs.writeFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'backup-content')
+      fs.writeFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'current-db')
+      setRecordingActive(true)
+      await expect(restoreBackup('backup-0.db')).rejects.toThrow('当前正在录音')
+      // DB 未被替换
+      expect(fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')).toBe('current-db')
+      // 备份文件原样保留
+      expect(fs.readFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'utf8')).toBe(
+        'backup-content'
+      )
+      // flag 保持活跃（录音不受拒绝影响）
+      expect(isRecordingActive()).toBe(true)
+    })
+
+    it('T7：非录音状态 → restore 正常执行（原有行为不变）', async () => {
+      writeBackupFiles(1)
+      fs.writeFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'new-content')
+      fs.writeFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'old-db')
+      setRecordingActive(false)
+      await restoreBackup('backup-0.db')
+      expect(fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')).toBe('new-content')
+      expect(isRecordingActive()).toBe(false)
+    })
+
+    it('T8：拒绝后无半恢复状态——无 restore-tmp 残留、录音状态无损', async () => {
+      writeBackupFiles(1)
+      fs.writeFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'backup-content')
+      fs.writeFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'current-db')
+      setRecordingActive(true)
+      await expect(restoreBackup('backup-0.db')).rejects.toThrow('当前正在录音')
+      // 无临时文件残留（guard 在任何 fs 操作之前抛出）
+      const leftovers = fs.readdirSync(tmpUserData).filter((f) => f.includes('restore-tmp'))
+      expect(leftovers).toEqual([])
+      expect(fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')).toBe('current-db')
+      // 录音状态不变（守卫不触碰录音生命周期）
+      expect(isRecordingActive()).toBe(true)
+      setRecordingActive(false)
     })
   })
 })

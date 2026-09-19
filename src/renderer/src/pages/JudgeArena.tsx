@@ -1358,6 +1358,8 @@ export default function JudgeArena(): JSX.Element {
     // 正在转写或在录音中 → 停止并转文字
     if (liveMic.recording) {
       const payload = await liveMic.stop()
+      // Me3-fix：录音结束，解除主进程录音活跃标志
+      void window.recordingAPI.setActive(false)
       if (!payload || payload.data.byteLength === 0) {
         toast.warning('未录到有效录音，请重试')
         return
@@ -1407,6 +1409,8 @@ export default function JudgeArena(): JSX.Element {
       setError(liveMic.error)
       return
     }
+    // Me3-fix：通知主进程录音会话活跃（restoreBackup 据此拒绝录音中恢复）
+    if (ok) void window.recordingAPI.setActive(true)
   }
 
   /** 下一轮 / 推进到下一环节：把本轮回应追加进历史，再让对手按新环节发言 */

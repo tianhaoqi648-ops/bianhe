@@ -639,7 +639,8 @@ const recordingAPI = {
   exists: (filePath: string) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.RECORDING_EXISTS, filePath),
   listForMatch: (matchId: string) => invoke<ApiResponse<BoundRecording[] | null>>(IPC_CHANNELS.RECORDING_LIST_FOR_MATCH, matchId),
   bind: (action: RecordingBindAction) => invoke<ApiResponse<BoundRecording[] | null>>(IPC_CHANNELS.RECORDING_BIND, action),
-  scan: () => invoke<ApiResponse<RecordingScanReport>>(IPC_CHANNELS.RECORDING_SCAN)
+  scan: () => invoke<ApiResponse<RecordingScanReport>>(IPC_CHANNELS.RECORDING_SCAN),
+  setActive: (active: boolean) => invoke<ApiResponse<boolean>>(IPC_CHANNELS.RECORDING_ACTIVE, active)
 }
 
 // ============================================================
