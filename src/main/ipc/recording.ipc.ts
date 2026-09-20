@@ -8,7 +8,7 @@ import { IPC_CHANNELS } from '../../shared/types'
 import type { ApiResponse, RecordingSaveResult, RecordingDirInfo, RecordingBindAction, BoundRecording, RecordingScanReport } from '../../shared/types'
 import { matchRepo } from '../db/repository/match.repo'
 import { scanRecordingDirectories } from '../services/recording-scan-service'
-import { setRecordingActive } from '../services/recording-active'
+import { setRecordingActive, isRestoreInProgress } from '../services/recording-active'
 import {
   saveRecording,
   listRecordings,
@@ -195,9 +195,15 @@ export function registerRecordingIpc(): void {
 
   // 录音会话活跃状态通知（Me3-fix）：restoreBackup 据此拒绝录音进行中的恢复。
   // 会话级——分段切片不翻转；标志存主进程内存，应用重启自动归零。
+  // P5-012：备份恢复 critical section 期间拒绝录音启动（双向互斥的录音侧）——
+  // restore 与录音并存会让恢复后的录音停止写入落在旧 db 文件上。停止录音
+  //（active=false）永远放行；标志为内存态，restore 失败/进程重启均自动释放。
   ipcMain.handle(IPC_CHANNELS.RECORDING_ACTIVE, (_e, active: unknown): ApiResponse<boolean> => {
     if (typeof active !== 'boolean') {
       return { success: false, error: '参数 active 必须为布尔值' }
+    }
+    if (active && isRestoreInProgress()) {
+      return { success: false, error: '备份恢复正在进行中，请在恢复完成后再开始录音。' }
     }
     setRecordingActive(active)
     return { success: true, data: active }

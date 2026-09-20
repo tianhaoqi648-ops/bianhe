@@ -21,3 +21,28 @@ export function setRecordingActive(value: boolean): void {
 export function isRecordingActive(): boolean {
   return active
 }
+
+// ------------------------------------------------------------
+// P5-012：restore critical section 标志
+//
+// restoreBackup 在 serialize 回调入口置位、finally 释放（所有失败路径
+// 均释放，不会永久阻塞录音）。RECORDING_ACTIVE handler 据此拒绝
+// restore 进行中的录音启动，保证「恢复 critical section」与「录音
+// 会话启动」互斥（两个 critical section 不可能重叠）。
+//
+// 内存态：应用重启必然归零——进程在 critical section 内崩溃时，
+// 重启后本标志自动清除，无需 startup cleanup；与 active 同为
+// fail-safe 方向（宁可让录音等几秒，也不冒恢复丢数据风险）。
+// ------------------------------------------------------------
+
+let restoreInProgress = false
+
+/** restoreBackup 进入/退出 critical section 时调用 */
+export function setRestoreInProgress(value: boolean): void {
+  restoreInProgress = value
+}
+
+/** RECORDING_ACTIVE handler 守卫读取 */
+export function isRestoreInProgress(): boolean {
+  return restoreInProgress
+}

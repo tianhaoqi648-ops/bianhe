@@ -19,7 +19,10 @@
 
 import { app } from 'electron'
 import { join } from 'path'
-import { isRecordingActive } from '../services/recording-active'
+import {
+  isRecordingActive,
+  setRestoreInProgress
+} from '../services/recording-active'
 import type Database from 'better-sqlite3'
 import {
   copyFileSync,
@@ -437,84 +440,100 @@ export async function restoreBackup(filename: string): Promise<void> {
 
   // 备份与恢复互斥：避免 restore 覆盖文件与 backup 读取/写入交叉产生半写状态
   await serialize(async () => {
-    // ── P5-003：WAL 安全 ── 当前连接持有的 WAL 先 checkpoint 进主库并截断。
+    // ── P5-012：critical section ── 在任何 await 之前置位 restore 进行中标志，
+    // 随后复核录音状态：关闭「初始检查 → 进入 serialize」之间的 TOCTOU 窗口
+    //（serialize 只保证 backup↔restore 互斥；recording start 不经过 opChain，
+    // 无法共享锁，故以 flag + RECORDING_ACTIVE handler 守卫实现双向互斥）。
+    // finally 保证任何失败路径（复核/验证/swap/filesystem）都释放标志，
+    // restore 失败不会导致录音永久无法开始。标志为内存态，进程崩溃重启后自动归零。
+    setRestoreInProgress(true)
     try {
-      const { getDb } = await import('../db')
-      const database = getDb()
-      if (!database.memory) {
-        database.pragma('wal_checkpoint(TRUNCATE)')
-      }
-    } catch (e) {
-      // 非致命：WAL 未启用/内存库/连接未初始化时继续（与 backupDatabaseSync 容错口径一致）
-      console.warn('[backup] wal_checkpoint before restore failed (continue with restore):', e)
-    }
-
-    // ── P5-010：先验证后替换 ──
-    const tmp = `${dbPath}.restore-tmp`
-    const oldBackup = `${dbPath}.restore-old`
-    copyFileSync(src, tmp)
-    try {
-      // 1) 对候选恢复文件完成三项验证，任一不过 → 抛错（正式库未被触碰）
-      await verifyRestoreCandidate(tmp)
-
-      // 2) 旧库回退副本（checkpoint 后的旧主库文件已含全部已提交数据）
-      let hasOldBackup = false
-      if (existsSync(dbPath)) {
-        copyFileSync(dbPath, oldBackup)
-        hasOldBackup = true
+      if (isRecordingActive()) {
+        throw new Error('当前正在录音，请先停止录音后再恢复备份。')
       }
 
-      // 3) 替换正式库；失败时还原回退副本，active 必须保持旧库
-      let swapped = false
+      // ── P5-003：WAL 安全 ── 当前连接持有的 WAL 先 checkpoint 进主库并截断。
       try {
-        try {
-          renameSync(tmp, dbPath)
-        } catch {
-          // Windows 上目标被当前连接占用时 rename 可能失败，回退为覆盖拷贝
-          copyFileSync(tmp, dbPath)
-          unlinkSync(tmp)
+        const { getDb } = await import('../db')
+        const database = getDb()
+        if (!database.memory) {
+          database.pragma('wal_checkpoint(TRUNCATE)')
         }
-        swapped = true
-        console.log('[backup] Backup restored:', filename, '->', dbPath)
-      } catch (swapErr) {
-        if (hasOldBackup) {
+      } catch (e) {
+        // 非致命：WAL 未启用/内存库/连接未初始化时继续（与 backupDatabaseSync 容错口径一致）
+        console.warn('[backup] wal_checkpoint before restore failed (continue with restore):', e)
+      }
+
+      // ── P5-010：先验证后替换 ──
+      const tmp = `${dbPath}.restore-tmp`
+      const oldBackup = `${dbPath}.restore-old`
+      copyFileSync(src, tmp)
+      try {
+        // 1) 对候选恢复文件完成三项验证，任一不过 → 抛错（正式库未被触碰）
+        await verifyRestoreCandidate(tmp)
+
+        // 2) 旧库回退副本（checkpoint 后的旧主库文件已含全部已提交数据）
+        let hasOldBackup = false
+        if (existsSync(dbPath)) {
+          copyFileSync(dbPath, oldBackup)
+          hasOldBackup = true
+        }
+
+        // 3) 替换正式库；失败时还原回退副本，active 必须保持旧库
+        let swapped = false
+        try {
           try {
-            copyFileSync(oldBackup, dbPath)
-            console.warn('[backup] Swap failed, old database restored from rollback copy')
-            // 还原成功 → 回退副本冗余，一并清理
+            renameSync(tmp, dbPath)
+          } catch {
+            // Windows 上目标被当前连接占用时 rename 可能失败，回退为覆盖拷贝
+            copyFileSync(tmp, dbPath)
+            unlinkSync(tmp)
+          }
+          swapped = true
+          console.log('[backup] Backup restored:', filename, '->', dbPath)
+        } catch (swapErr) {
+          if (hasOldBackup) {
             try {
-              unlinkSync(oldBackup)
-            } catch {
-              /* ignore */
+              copyFileSync(oldBackup, dbPath)
+              console.warn('[backup] Swap failed, old database restored from rollback copy')
+              // 还原成功 → 回退副本冗余，一并清理
+              try {
+                unlinkSync(oldBackup)
+              } catch {
+                /* ignore */
+              }
+            } catch (rollbackErr) {
+              // 还原也失败：保留回退副本作为最后兜底，交由用户/运维处理
+              console.error(
+                '[backup] CRITICAL: swap failed AND rollback failed, rollback copy kept at',
+                oldBackup,
+                rollbackErr
+              )
+              throw swapErr
             }
-          } catch (rollbackErr) {
-            // 还原也失败：保留回退副本作为最后兜底，交由用户/运维处理
-            console.error(
-              '[backup] CRITICAL: swap failed AND rollback failed, rollback copy kept at',
-              oldBackup,
-              rollbackErr
-            )
-            throw swapErr
+          }
+          throw swapErr
+        }
+
+        // 4) 成功 cleanup：回退副本删除（tmp 已被 rename 消耗 / 回退分支已 unlink）
+        if (swapped && hasOldBackup) {
+          try {
+            unlinkSync(oldBackup)
+          } catch (e) {
+            console.warn('[backup] Failed to remove rollback copy:', e)
           }
         }
-        throw swapErr
-      }
-
-      // 4) 成功 cleanup：回退副本删除（tmp 已被 rename 消耗 / 回退分支已 unlink）
-      if (swapped && hasOldBackup) {
+      } finally {
+        // 兜底清理：任何失败路径下 tmp 不得残留（成功路径已被 rename 消耗）
         try {
-          unlinkSync(oldBackup)
-        } catch (e) {
-          console.warn('[backup] Failed to remove rollback copy:', e)
+          if (existsSync(tmp)) unlinkSync(tmp)
+        } catch {
+          /* ignore */
         }
       }
     } finally {
-      // 兜底清理：任何失败路径下 tmp 不得残留（成功路径已被 rename 消耗）
-      try {
-        if (existsSync(tmp)) unlinkSync(tmp)
-      } catch {
-        /* ignore */
-      }
+      // P5-012：退出 critical section——成功与全部失败路径均释放
+      setRestoreInProgress(false)
     }
   })
 }
