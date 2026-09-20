@@ -685,6 +685,10 @@ function setResult(matchId: string, data: MatchSetResultInput): Match | null {
     const finalBestSpeaker = data.bestSpeaker ?? result.bestSpeaker
 
     const now = new Date().toISOString()
+    // P5-008：notes 未提供（undefined）时保留原值——「未修改备注」与「清空备注」
+    // 是两个语义。match.notes 来自事务内已读取的原始行（无额外查询）；
+    // 显式传入的 notes（string/null）按类型定义语义写入。
+    const finalNotes = data.notes !== undefined ? data.notes : match.notes
     db.prepare(`
       UPDATE matches SET
         winner = ?, aff_score = ?, neg_score = ?, best_speaker = ?, notes = ?,
@@ -695,7 +699,7 @@ function setResult(matchId: string, data: MatchSetResultInput): Match | null {
       finalAffScore,
       finalNegScore,
       finalBestSpeaker,
-      data.notes ?? null,
+      finalNotes,
       now,
       matchId
     )
