@@ -28,7 +28,7 @@ import {
   loadTagDisplayConfig
 } from '../utils/tagDisplay';
 import { useToast } from '../hooks/useToast';
-import { spacing } from '../styles/tokens';
+import { spacing, colorPrimary, modalWidth} from '../styles/tokens';
 
 const { Text } = Typography;
 
@@ -297,13 +297,13 @@ export default function TagDisplaySettingsModal({
     <Modal
       title={
         <Space>
-          <TagsOutlined style={{ color: '#1677ff' }} />
+          <TagsOutlined style={{ color: colorPrimary }} />
           <span>标签显示配置</span>
         </Space>
       }
       open={open}
       onCancel={onClose}
-      width={720}
+      width={modalWidth.md}
       destroyOnHidden
       maskClosable={!saving}
       okText="保存"

@@ -60,7 +60,7 @@ function FlippingCard({ size }: { size: number }) {
     fontSize: size * 0.55,
     fontWeight: 700,
     fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
-    boxShadow: `0 ${Math.max(2, size / 12)}px ${Math.max(4, size / 6)}px rgba(22, 119, 255, 0.3)`,
+    boxShadow: `0 ${Math.max(2, size / 12)}px ${Math.max(4, size / 6)}px ${colorPrimary}4D`,
     // 3D 翻转动画：1.2s 一周期，匀速循环
     animation: 'brand-spin-flip 1.2s ease-in-out infinite',
     transformStyle: 'preserve-3d'

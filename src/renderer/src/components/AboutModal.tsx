@@ -8,6 +8,7 @@
 // - 底部链接：反馈邮箱 / GitHub 仓库
 // ============================================================
 
+import { colorPrimary, colorPurple, modalWidth } from '../styles/tokens'
 import { Modal, Typography, Divider, Space } from 'antd'
 import {
   MailOutlined,
@@ -52,7 +53,7 @@ export default function AboutModal({ open, onClose, ...rest }: AboutModalProps) 
       onCancel={onClose}
       footer={null}
       centered
-      width={440}
+      width={modalWidth.sm}
       {...rest}
     >
       {/* 顶部 Logo 区：渐变圆形 + 「辩」字 + 应用名 */}
@@ -69,7 +70,7 @@ export default function AboutModal({ open, onClose, ...rest }: AboutModalProps) 
             width: 72,
             height: 72,
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)',
+            background: `linear-gradient(135deg, ${colorPrimary} 0%, ${colorPurple} 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -77,7 +78,7 @@ export default function AboutModal({ open, onClose, ...rest }: AboutModalProps) 
             fontSize: 36,
             fontWeight: 700,
             fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
-            boxShadow: '0 8px 20px rgba(22, 119, 255, 0.3)'
+            boxShadow: `0 8px 20px ${colorPrimary}4D`
           }}
         >
           辩
@@ -113,14 +114,14 @@ export default function AboutModal({ open, onClose, ...rest }: AboutModalProps) 
       {/* 底部：反馈与仓库链接 */}
       <Space direction="vertical" size="small" style={{ width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <MailOutlined style={{ marginRight: 8, color: '#1677ff' }} />
+          <MailOutlined style={{ marginRight: 8, color: colorPrimary }} />
           <Text type="secondary" style={{ marginRight: 4 }}>反馈建议：</Text>
           <Link href={`mailto:${APP_META.feedbackEmail}`}>
             {APP_META.feedbackEmail}
           </Link>
         </div>
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <GithubOutlined style={{ marginRight: 8, color: '#722ed1' }} />
+          <GithubOutlined style={{ marginRight: 8, color: colorPurple }} />
           <Text type="secondary" style={{ marginRight: 4 }}>源码仓库：</Text>
           <Link href={APP_META.githubUrl} target="_blank" rel="noreferrer">
             {APP_META.githubUrl.replace('https://', '')}

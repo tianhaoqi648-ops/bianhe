@@ -5,6 +5,7 @@
 // 发现异常 ≠ 删除异常——本面板【无任何删除/清理/修复操作】，
 // 仅展示状态、引用数与建议，供用户人工判断。
 // ============================================================
+import { colorPrimary } from '../../styles/tokens'
 import { useState } from 'react';
 import { Button, Card, List, Space, Statistic, Tag, Typography, Alert } from 'antd';
 import {
@@ -89,7 +90,7 @@ export function RecordingMaintenancePanel(): JSX.Element {
       size="small"
       title={
         <Space>
-          <FileSearchOutlined style={{ color: '#1677ff' }} />
+          <FileSearchOutlined style={{ color: colorPrimary }} />
           <span>录音维护（只读扫描）</span>
         </Space>
       }

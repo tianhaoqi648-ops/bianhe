@@ -100,7 +100,7 @@ import {
   emptyStateStyle,
   cardStyle
 } from '../styles/shared';
-import { spacing, colorGold, fontSize, radius } from '../styles/tokens';
+import { spacing, colorGold, fontSize, radius, modalWidth} from '../styles/tokens';
 import { useHotkeys, useHotkeyScope } from '../hooks/useHotkeys';
 import { useToast } from '../hooks/useToast';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -2096,7 +2096,7 @@ export default function TopicLibrary() {
         open={columnConfigOpen}
         onCancel={() => setColumnConfigOpen(false)}
         footer={null}
-        width={280}
+        width={modalWidth.sm}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm, padding: `${spacing.sm} 0` }}>
           {CONFIGURABLE_COLUMNS.map((col) => (

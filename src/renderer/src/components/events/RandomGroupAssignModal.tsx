@@ -32,7 +32,7 @@ import { useEventStore } from '../../stores/eventStore';
 import { useToast } from '../../hooks/useToast';
 import type { RandomAssignGroupResult } from '../../../../shared/types';
 import { primaryButtonStyle } from '../../styles/shared';
-import { spacing, fontSize } from '../../styles/tokens';
+import { spacing, fontSize, modalWidth} from '../../styles/tokens';
 
 const { Text } = Typography;
 
@@ -176,7 +176,7 @@ export default function RandomGroupAssignModal({
       title="随机分组"
       open={open}
       onCancel={onCancel}
-      width={680}
+      width={modalWidth.md}
       destroyOnHidden
       footer={
         <Space>

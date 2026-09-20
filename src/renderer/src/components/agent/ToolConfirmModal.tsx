@@ -24,6 +24,7 @@
 // - 当 pendingConfirm 变化（新事件到达）时重置本地编辑态，避免上次编辑残留
 // ============================================================
 
+import { modalWidth } from '../../styles/tokens'
 import React, { useState, useEffect, useMemo } from 'react'
 import { Modal, Input, Button, Typography, Alert, theme } from 'antd'
 import { EditOutlined, CheckOutlined } from '@ant-design/icons'
@@ -213,7 +214,7 @@ export function ToolConfirmModal(_props: ToolConfirmModalProps): JSX.Element {
       // 不允许键盘 ESC 关闭（与 maskClosable 语义一致）
       keyboard={false}
       destroyOnHidden
-      width={520}
+      width={modalWidth.sm}
     >
       {pendingConfirm && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

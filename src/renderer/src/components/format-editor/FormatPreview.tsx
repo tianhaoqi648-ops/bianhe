@@ -15,7 +15,7 @@ import type {
   TimerTheme
 } from '../../../../shared/debate-formats/types'
 import { formatTime } from '../../utils/timer-bells'
-import { spacing, fontSize, radius } from '../../styles/tokens'
+import { spacing, fontSize, radius, colorAff} from '../../styles/tokens'
 
 const { Text, Title } = Typography
 
@@ -33,7 +33,7 @@ interface FormatPreviewProps {
 export default function FormatPreview({ format, currentStageIndex, theme }: FormatPreviewProps) {
   const stage: StageDef | undefined = format.stages[currentStageIndex]
   const t = theme ?? {
-    affColor: '#1677ff',
+    affColor: colorAff,
     negColor: '#ff4d4f',
     affLabel: '正方',
     negLabel: '反方',

@@ -13,6 +13,7 @@
 //   - bell-asset.ipc.ts 暂无 rename handler，故不实现重命名功能。
 // ============================================================
 
+import { colorPrimary } from '../styles/tokens'
 import { useEffect, useState, useCallback } from 'react'
 import { Table, Button, Space, Popconfirm, Upload, Tag, Tooltip, Typography, Alert } from 'antd'
 import type { UploadProps } from 'antd'
@@ -191,7 +192,7 @@ export default function BellManager() {
       ellipsis: true,
       render: (name: string, record: BellAsset) => (
         <Space>
-          <SoundOutlined style={{ color: '#1677ff' }} />
+          <SoundOutlined style={{ color: colorPrimary }} />
           <Text strong>{name}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {formatSize(record.fileSize)}
@@ -237,7 +238,7 @@ export default function BellManager() {
                   ) : active ? (
                     <PauseOutlined style={{ color: '#ff4d4f' }} />
                   ) : (
-                    <SoundOutlined style={{ color: '#1677ff' }} />
+                    <SoundOutlined style={{ color: colorPrimary }} />
                   )
                 }
                 onClick={() => void handlePlay(record.id)}

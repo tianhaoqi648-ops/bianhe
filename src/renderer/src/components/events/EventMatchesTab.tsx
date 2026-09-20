@@ -7,6 +7,7 @@
 // 无顶层「比赛工作台」菜单（本页是赛事内唯一入口）。
 // ============================================================
 
+import { colorAff, modalWidth} from '../../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -361,7 +362,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
             title="查看评委明细"
             onClick={() => setVerdictFor(m)}
           >
-            <Text strong style={{ color: m.winner === 'aff' ? '#1677ff' : m.winner === 'neg' ? '#ff4d4f' : undefined }}>
+            <Text strong style={{ color: m.winner === 'aff' ? colorAff : m.winner === 'neg' ? '#ff4d4f' : undefined }}>
               {WINNER_META[m.winner]}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -516,7 +517,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         open={!!markerFor}
         onCancel={() => setMarkerFor(null)}
         footer={null}
-        width={520}
+        width={modalWidth.sm}
       >
         {markerFor?.recordingMeta && (
           <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -572,7 +573,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         open={!!aiReviewFor}
         onCancel={() => setAiReviewFor(null)}
         footer={null}
-        width={640}
+        width={modalWidth.md}
       >
         {aiReviewFor?.aiReview && <AiReviewDetail match={aiReviewFor} />}
       </Modal>
@@ -583,7 +584,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         open={!!verdictFor}
         onCancel={() => setVerdictFor(null)}
         footer={null}
-        width={720}
+        width={modalWidth.md}
       >
         {verdictFor && <MatchVerdictCard match={verdictFor} onClose={() => setVerdictFor(null)} />}
       </Modal>
@@ -593,7 +594,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         title="赛程导入变更预览"
         open={importOpen}
         onCancel={() => setImportOpen(false)}
-        width={760}
+        width={modalWidth.lg}
         okText="确认应用"
         okButtonProps={{ danger: true }}
         confirmLoading={applying}
@@ -664,7 +665,7 @@ function DiffTable({
 }) {
   return (
     <div>
-      <Text strong style={{ color: color === 'red' ? '#ff4d4f' : color === 'blue' ? '#1677ff' : undefined }}>
+      <Text strong style={{ color: color === 'red' ? '#ff4d4f' : color === 'blue' ? colorAff : undefined }}>
         {title}
       </Text>
       <Table
@@ -708,7 +709,7 @@ function AiReviewDetail({ match }: { match: Match }) {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
       <div>
-        <Text strong style={{ color: r.winner === 'aff' ? '#1677ff' : r.winner === 'neg' ? '#ff4d4f' : undefined }}>
+        <Text strong style={{ color: r.winner === 'aff' ? colorAff : r.winner === 'neg' ? '#ff4d4f' : undefined }}>
           {r.winner === 'aff' ? '正方胜' : r.winner === 'neg' ? '反方胜' : '平局/未定'}
         </Text>
         <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
@@ -761,7 +762,7 @@ function AiReviewDetail({ match }: { match: Match }) {
             {r.stageVerdicts.map((sv, i) => (
               <div key={`${sv.stage}-${i}`}>
                 <Tag>{sv.stage}</Tag>
-                <Text strong style={{ color: sv.winner === 'aff' ? '#1677ff' : '#ff4d4f' }}>
+                <Text strong style={{ color: sv.winner === 'aff' ? colorAff : '#ff4d4f' }}>
                 {sv.winner === 'aff' ? '正' : '反'}
                 </Text>
                 <Text type="secondary" style={{ marginLeft: 6 }}>

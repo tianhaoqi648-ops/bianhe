@@ -20,7 +20,7 @@ import {
   ReloadOutlined
 } from '@ant-design/icons';
 import BrandSpin from '../common/BrandSpin';
-import { spacing } from '../../styles/tokens';
+import { spacing, colorPrimary, modalWidth} from '../../styles/tokens';
 import { primaryButtonStyle } from '../../styles/shared';
 import { useToast } from '../../hooks/useToast';
 import type {
@@ -199,7 +199,7 @@ export default function ImportEventModal({ open, onClose, onSuccess }: ImportEve
         return (
           <div style={{ textAlign: 'center', padding: `${spacing.xl} 0` }}>
             <UploadOutlined
-              style={{ fontSize: 48, color: '#1677ff', marginBottom: spacing.lg }}
+              style={{ fontSize: 48, color: colorPrimary, marginBottom: spacing.lg }}
             />
             <div style={{ marginBottom: spacing.sm }}>
               <Text strong>选择要导入的赛事包文件</Text>
@@ -237,7 +237,7 @@ export default function ImportEventModal({ open, onClose, onSuccess }: ImportEve
                 borderRadius: 4
               }}
             >
-              <FileTextOutlined style={{ color: '#1677ff' }} />
+              <FileTextOutlined style={{ color: colorPrimary }} />
               <Text strong ellipsis style={{ flex: 1 }}>
                 {fileName}
               </Text>
@@ -427,7 +427,7 @@ export default function ImportEventModal({ open, onClose, onSuccess }: ImportEve
       open={open}
       onCancel={handleClose}
       footer={renderFooter()}
-      width={560}
+      width={modalWidth.md}
       destroyOnHidden
       maskClosable={false}
     >

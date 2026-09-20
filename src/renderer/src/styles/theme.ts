@@ -9,20 +9,19 @@ import { theme as antdTheme, type ThemeConfig } from 'antd'
 import {
   fontFamily,
   colorPrimary,
-  colorGold,
-  colorPurple
+  colorGold
 } from './tokens'
 
 /**
  * 三色映射共享 token：
- * - colorPrimary：主色（蓝）保持 #1677ff
+ * - colorPrimary：主色（蓝）#1466e0（饱和度较 antd 默认降 10%，见 tokens.ts）
  * - colorInfo：赛事工作区强调色（金）
- * - colorSuccess：比赛工具区强调色（紫）
+ * - colorSuccess：语义成功色（Phase 4 B1 解除品牌紫挪用，回归 antd 默认绿，
+ *   亮/暗主题由算法自动派生）；比赛工具区品牌紫改由 tokens.colorPurple 直引
  */
 const sharedColorTokens = {
   colorPrimary,
   colorInfo: colorGold,
-  colorSuccess: colorPurple,
   colorWarning: '#faad14',
   colorError: '#ff4d4f'
 } as const
@@ -59,9 +58,9 @@ export const lightTheme: ThemeConfig = {
       siderBg: 'transparent'
     },
     Menu: {
-      itemSelectedBg: '#1677ff',
+      itemSelectedBg: colorPrimary,
       itemSelectedColor: '#fff',
-      itemHoverBg: 'rgba(22, 119, 255, 0.08)',
+      itemHoverBg: `${colorPrimary}14`,
       itemBorderRadius: 6,
       itemMarginInline: 8
     },
@@ -74,8 +73,8 @@ export const lightTheme: ThemeConfig = {
       controlHeightLG: 40,
       // primary 按钮文字稍粗，配合渐变背景增强视觉层级
       fontWeight: 500,
-      // primary 按钮蓝色投影（与 CSS 中 .ant-btn-primary 的 box-shadow 保持一致风格）
-      primaryShadow: '0 2px 6px rgba(22, 119, 255, 0.3)'
+      // primary 按钮蓝色投影（与 CSS 中 .ant-btn-primary 的 box-shadow 保持一致风格，派生自 colorPrimary）
+      primaryShadow: `0 2px 6px ${colorPrimary}4D`,
     },
     Table: {
       headerBg: '#fafafa',
@@ -87,9 +86,9 @@ export const lightTheme: ThemeConfig = {
       contentFontSize: 24
     },
     Tabs: {
-      itemActiveColor: '#1677ff',
-      itemSelectedColor: '#1677ff',
-      inkBarColor: '#1677ff'
+      itemActiveColor: colorPrimary,
+      itemSelectedColor: colorPrimary,
+      inkBarColor: colorPrimary
     },
     Modal: {
       borderRadiusLG: 12
@@ -139,9 +138,9 @@ export const darkTheme: ThemeConfig = {
       siderBg: 'transparent'
     },
     Menu: {
-      itemSelectedBg: '#1677ff',
+      itemSelectedBg: colorPrimary,
       itemSelectedColor: '#fff',
-      itemHoverBg: 'rgba(22, 119, 255, 0.16)',
+      itemHoverBg: `${colorPrimary}29`,
       itemBorderRadius: 6,
       itemMarginInline: 8
     },
@@ -155,7 +154,7 @@ export const darkTheme: ThemeConfig = {
       // primary 按钮文字稍粗，与亮色保持一致
       fontWeight: 500,
       // 暗色下投影稍强（透明度 0.4），保证深底可见性
-      primaryShadow: '0 2px 6px rgba(22, 119, 255, 0.4)'
+      primaryShadow: `0 2px 6px ${colorPrimary}66`,
     },
     Table: {
       headerBg: '#1a2236',
@@ -167,6 +166,7 @@ export const darkTheme: ThemeConfig = {
       contentFontSize: 24
     },
     Tabs: {
+      // 暗色下用品牌蓝亮调（#4096ff 为 colorPrimary 的暗底 companion，Phase 4 B1 决策保留）
       itemActiveColor: '#4096ff',
       itemSelectedColor: '#4096ff',
       inkBarColor: '#4096ff'

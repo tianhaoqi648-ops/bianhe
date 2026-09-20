@@ -26,7 +26,7 @@ import { CloudDownloadOutlined, FileOutlined, WarningOutlined } from '@ant-desig
 import { BACKUP_CATEGORIES, SUPPORTED_BACKUP_VERSION } from '../../../../shared/constants'
 import type { BackupCategory, BackupImportStrategy, BackupPreviewResult } from '../../../../shared/types'
 import { useToast } from '../../hooks/useToast'
-import { spacing } from '../../styles/tokens'
+import { spacing, modalWidth} from '../../styles/tokens'
 import { version as APP_VERSION } from '../../../../../package.json'
 import { useTopicStore } from '../../stores/topicStore'
 import { useEventStore } from '../../stores/eventStore'
@@ -211,7 +211,7 @@ export default function BackupImportModal({ open, onClose }: Props) {
         }
         open={open}
         onCancel={handleModalClose}
-        width={720}
+        width={modalWidth.md}
         footer={
           <Space>
             <Button onClick={handleModalClose}>取消</Button>

@@ -9,6 +9,7 @@
 // 无 judges/votes 时显示「暂无评委明细」。
 // ============================================================
 
+import { colorAff } from '../../styles/tokens'
 import { useMemo } from 'react'
 import { Alert, Card, Divider, Empty, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -61,7 +62,7 @@ export default function MatchVerdictCard({ match, onClose }: { match: Match; onC
         const v = r.vote
         if (!isThree || !v?.impressionVote) return <Text type="secondary">—</Text>
         return (
-          <Text style={{ color: v.impressionVote === 'aff' ? '#1677ff' : '#ff4d4f' }}>
+          <Text style={{ color: v.impressionVote === 'aff' ? colorAff : '#ff4d4f' }}>
             {SIDE_TEXT[v.impressionVote]}
           </Text>
         )
@@ -76,7 +77,7 @@ export default function MatchVerdictCard({ match, onClose }: { match: Match; onC
         if (v?.affTotal == null || v.negTotal == null) return <Text type="secondary">—</Text>
         return (
           <Text>
-            <Text style={{ color: '#1677ff' }} strong>{fmt(v.affTotal)}</Text>
+            <Text style={{ color: colorAff }} strong>{fmt(v.affTotal)}</Text>
             <Text type="secondary">:</Text>
             <Text style={{ color: '#ff4d4f' }} strong>{fmt(v.negTotal)}</Text>
           </Text>
@@ -91,7 +92,7 @@ export default function MatchVerdictCard({ match, onClose }: { match: Match; onC
         const v = r.vote
         if (!isThree || !v?.decisionVote) return <Text type="secondary">—</Text>
         return (
-          <Text style={{ color: v.decisionVote === 'aff' ? '#1677ff' : '#ff4d4f' }}>
+          <Text style={{ color: v.decisionVote === 'aff' ? colorAff : '#ff4d4f' }}>
             {SIDE_TEXT[v.decisionVote]}
           </Text>
         )
@@ -117,7 +118,7 @@ export default function MatchVerdictCard({ match, onClose }: { match: Match; onC
       {/* 顶部胜负牌 */}
       <Card size="small">
         <Space style={{ width: '100%', justifyContent: 'space-between' }} wrap>
-          <Text strong style={{ fontSize: 16, color: winner === 'aff' ? '#1677ff' : winner === 'neg' ? '#999' : undefined }}>
+          <Text strong style={{ fontSize: 16, color: winner === 'aff' ? colorAff : winner === 'neg' ? '#999' : undefined }}>
             {match.teamAffName || '正方'}
           </Text>
           <Text type="secondary">vs</Text>
@@ -175,7 +176,7 @@ export default function MatchVerdictCard({ match, onClose }: { match: Match; onC
                 },
                 {
                   title: '正方', dataIndex: 'aff', key: 'aff', width: 80,
-                  render: (vv) => <Text strong style={{ color: '#1677ff' }}>{fmt(vv)}</Text>
+                  render: (vv) => <Text strong style={{ color: colorAff }}>{fmt(vv)}</Text>
                 },
                 {
                   title: '反方', dataIndex: 'neg', key: 'neg', width: 80,

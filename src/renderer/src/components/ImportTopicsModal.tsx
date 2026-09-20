@@ -32,7 +32,7 @@ import type {
 } from '../../../shared/types';
 import type { CandidateField } from '../../../shared/constants';
 import { SYSTEM_FIELD_DEFINITIONS } from '../../../shared/field-definitions';
-import { spacing } from '../styles/tokens';
+import { spacing, colorPrimary, modalWidth} from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
 import { useToast } from '../hooks/useToast';
 import ImportFormatGuide from './import/ImportFormatGuide';
@@ -363,7 +363,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
   const fileName = filePath ? filePath.split(/[\\/]/).pop() : '';
   const fileIcon =
     fileType === 'docx' ? (
-      <FileTextOutlined style={{ color: '#1677ff' }} />
+      <FileTextOutlined style={{ color: colorPrimary }} />
     ) : (
       <FileExcelOutlined style={{ color: '#52c41a' }} />
     );
@@ -447,7 +447,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         return (
           <div style={{ textAlign: 'center', padding: `${spacing.xxxl} 0` }}>
             <UploadOutlined
-              style={{ fontSize: 48, color: '#1677ff', marginBottom: spacing.lg }}
+              style={{ fontSize: 48, color: colorPrimary, marginBottom: spacing.lg }}
             />
             <div style={{ marginBottom: spacing.sm }}>
               <Text strong>选择要导入的文件</Text>
@@ -709,7 +709,7 @@ export default function ImportTopicsModal({ open, onClose, onSuccess }: ImportTo
         title="导入辩题"
         open={open}
         onCancel={handleClose}
-        width={820}
+        width={modalWidth.lg}
         footer={footerButtons()}
         destroyOnHidden
         maskClosable={false}

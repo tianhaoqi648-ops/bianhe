@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -240,7 +241,7 @@ export default function EventBankConfigModal({
           </Text>
         </Space>
       }
-      width={600}
+      width={modalWidth.md}
       open={open}
       onCancel={onClose}
       onOk={handleSave}

@@ -29,7 +29,7 @@ import {
   STATUS_OPTIONS
 } from './FilterPanel'
 import { useToast } from '../hooks/useToast'
-import { spacing } from '../styles/tokens'
+import { spacing, modalWidth} from '../styles/tokens'
 
 const { Text } = Typography
 
@@ -223,7 +223,7 @@ export default function BatchEditModal({
         title="批量编辑辩题"
         open={open}
         onCancel={onClose}
-        width={680}
+        width={modalWidth.md}
         destroyOnHidden
         footer={
           <Space>

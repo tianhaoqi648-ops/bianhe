@@ -9,7 +9,7 @@ import type { StageSide, TimerState, TimerTheme } from '../../../shared/types'
 import type { TimerMatchup } from '../stores/timerStore'
 import { formatTime } from '../utils/timer-bells'
 import TeamAvatar from './TeamAvatar'
-import { spacing, radius, fontSize } from '../styles/tokens'
+import { spacing, radius, fontSize, colorAff} from '../styles/tokens'
 
 const { Title, Text } = Typography
 
@@ -31,7 +31,7 @@ interface TimerDisplayProps {
 const DEFAULT_THEME: TimerTheme = {
   affLabel: '正方',
   negLabel: '反方',
-  affColor: '#1677ff',
+  affColor: colorAff,
   negColor: '#ff4d4f',
   accentColor: '#faad14'
 }

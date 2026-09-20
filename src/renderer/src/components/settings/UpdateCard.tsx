@@ -24,7 +24,7 @@ import { version } from '../../../../../package.json'
 import { useUpdater } from '../../hooks/useUpdater'
 import { useToast } from '../../hooks/useToast'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { spacing } from '../../styles/tokens'
+import { spacing, colorPrimary} from '../../styles/tokens'
 
 const { Text, Link } = Typography
 
@@ -266,7 +266,7 @@ export default function UpdateCard(): JSX.Element {
       size="small"
       title={
         <Space>
-          <CloudSyncOutlined style={{ color: '#1677ff' }} />
+          <CloudSyncOutlined style={{ color: colorPrimary }} />
           <span>应用更新</span>
         </Space>
       }

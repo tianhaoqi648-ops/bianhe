@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -564,7 +565,7 @@ export default function EventWizardModal({
       title={isEdit ? '编辑赛事' : '新建赛事向导'}
       open={open}
       onCancel={handleClose}
-      width={720}
+      width={modalWidth.lg}
       destroyOnHidden
       maskClosable={!creating}
       okText={isEdit ? '保存' : '创建'}

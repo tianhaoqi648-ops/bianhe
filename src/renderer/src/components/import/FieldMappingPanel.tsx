@@ -10,6 +10,7 @@
 // 选 create 时同步调 onCreateField 持久化到 DB，避免重复创建。
 // ============================================================
 
+import { colorPrimary } from '../../styles/tokens'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { Card, Select, Input, Radio, Space, Typography, Alert, Divider, Tag } from 'antd'
 import { LinkOutlined } from '@ant-design/icons'
@@ -135,7 +136,7 @@ export default function FieldMappingPanel({
     <Card size="small" style={{ marginBottom: 12 }}>
       <Space style={{ marginBottom: 8, justifyContent: 'space-between', width: '100%' }}>
         <Title level={5} style={{ margin: 0 }}>
-          <LinkOutlined style={{ marginRight: 6, color: '#1677ff' }} />
+          <LinkOutlined style={{ marginRight: 6, color: colorPrimary }} />
           字段映射
         </Title>
         <Text type="secondary" style={{ fontSize: 12 }}>

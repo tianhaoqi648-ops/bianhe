@@ -5,6 +5,7 @@
 // 克隆时 stages 重新生成 uuid，名称后缀 "(模板副本)"，模板本身不变。
 // ============================================================
 
+import { modalWidth } from '../../styles/tokens'
 import { useState, useMemo } from 'react'
 import type { CSSProperties, ComponentType } from 'react'
 import { Modal, Row, Col, Card, Button, Typography, Tag, Space, theme as antdTheme, Tooltip } from 'antd'
@@ -126,7 +127,7 @@ export default function FormatTemplateModal({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={920}
+      width={modalWidth.lg}
       destroyOnHidden
     >
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>

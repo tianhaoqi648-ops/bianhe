@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { Modal, Form, Input, Select, Button, Space } from 'antd';
 import type { InputRef } from 'antd';
 import { useEffect, useRef } from 'react';
@@ -103,7 +104,7 @@ export default function TeamEditModal({
       onCancel={onCancel}
       okText="保存"
       cancelText="取消"
-      width={420}
+      width={modalWidth.sm}
       destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
       footer={customFooter}

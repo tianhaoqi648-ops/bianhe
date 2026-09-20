@@ -88,7 +88,7 @@ import {
   selectedStyle,
   pageContainerStyle
 } from '../styles/shared';
-import { spacing, shadow, transition, radius, fontSize } from '../styles/tokens';
+import { spacing, shadow, transition, radius, fontSize, modalWidth} from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 // P4-18 修复：提取公共常量到 shared/difficulty-presets.ts，避免与 EventWizardModal 重复定义
 import { DIFFICULTY_PRESETS } from '../../../shared/difficulty-presets';
@@ -1863,7 +1863,7 @@ export default function EventManage() {
         footer={
           <Button onClick={() => setPresetModalOpen(false)}>关闭</Button>
         }
-        width={520}
+        width={modalWidth.sm}
       >
         <Alert
           message="应用预设将清空当前赛事的所有轮次并按预设重建"

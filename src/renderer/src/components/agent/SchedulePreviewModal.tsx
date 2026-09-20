@@ -23,6 +23,7 @@
 // - TBD/轮空 用 Tag 区分颜色（TBD=橙色 processing，轮空=灰色 default）
 // ============================================================
 
+import { modalWidth } from '../../styles/tokens'
 import React from 'react'
 import { Modal, Card, Typography, Tag, Empty, Space, theme } from 'antd'
 import { CalendarOutlined, TrophyOutlined } from '@ant-design/icons'
@@ -175,7 +176,7 @@ export function SchedulePreviewModal(): JSX.Element {
       open={open}
       onCancel={clearPendingSchedulePreview}
       footer={null}
-      width={720}
+      width={modalWidth.md}
       styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
     >
       {open ? (

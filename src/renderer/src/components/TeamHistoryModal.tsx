@@ -15,7 +15,7 @@ import EmptyState from './common/EmptyState';
 import type { ColumnsType } from 'antd/es/table';
 import type { Team, TeamHistory, Topic } from '../../../shared/types';
 import { useToast } from '../hooks/useToast';
-import { spacing, radius, gray } from '../styles/tokens';
+import { spacing, radius, gray, modalWidth} from '../styles/tokens';
 
 const { Text } = Typography;
 
@@ -159,7 +159,7 @@ export default function TeamHistoryModal({
         open={open}
         onCancel={onClose}
         footer={null}
-        width={760}
+        width={modalWidth.md}
         destroyOnHidden
       >
         {/* 添加历史 */}

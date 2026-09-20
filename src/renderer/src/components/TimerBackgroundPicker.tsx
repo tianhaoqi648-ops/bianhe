@@ -26,7 +26,7 @@ import {
 } from '../../../shared/timer-backgrounds'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useToast } from '../hooks/useToast'
-import { spacing, radius, shadow } from '../styles/tokens'
+import { spacing, radius, shadow, modalWidth} from '../styles/tokens'
 
 const { Text } = Typography
 
@@ -321,7 +321,7 @@ export default function TimerBackgroundPicker({
       }
       open={open}
       onCancel={handleCancel}
-      width={560}
+      width={modalWidth.md}
       destroyOnHidden
       maskClosable={!saving && !uploading}
       centered

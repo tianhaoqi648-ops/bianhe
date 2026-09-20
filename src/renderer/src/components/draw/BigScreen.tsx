@@ -350,8 +350,8 @@ export default function BigScreen({
                       style={{
                         padding: 'clamp(4px, 0.5vh, 8px) clamp(8px, 1vw, 16px)',
                         borderRadius: radius.xxl,
-                        background: t.color ? 'rgba(22,119,255,0.2)' : 'rgba(255,255,255,0.1)',
-                        border: `1px solid ${t.color ? 'rgba(22,119,255,0.4)' : 'rgba(255,255,255,0.2)'}`,
+                        background: t.color ? 'rgba(20,102,224,0.2)' : 'rgba(255,255,255,0.1)',
+                        border: `1px solid ${t.color ? 'rgba(20,102,224,0.4)' : 'rgba(255,255,255,0.2)'}`,
                         color: 'rgba(255,255,255,0.9)'
                       }}
                     >

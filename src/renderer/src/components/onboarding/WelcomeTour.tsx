@@ -5,6 +5,7 @@
 // 每步切换时自动导航到对应路由；跳过或完成后标记 onboardingCompleted=true。
 // ============================================================
 
+import { colorPrimary } from '../../styles/tokens'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Tour } from 'antd';
 import { useNavigate } from 'react-router-dom';
@@ -137,7 +138,7 @@ export default function WelcomeTour({ open, onClose }: WelcomeTourProps) {
       onChange={handleChange}
       onClose={handleClose}
       indicatorsRender={(step, total) => (
-        <span style={{ color: '#1677ff', fontSize: 13 }}>
+        <span style={{ color: colorPrimary, fontSize: 13 }}>
           {step + 1} / {total}
         </span>
       )}

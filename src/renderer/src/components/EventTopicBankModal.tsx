@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -406,7 +407,7 @@ export default function EventTopicBankModal({
           )}
         </Space>
       }
-      width={860}
+      width={modalWidth.lg}
       open={open}
       onCancel={onClose}
       footer={
@@ -711,7 +712,7 @@ export default function EventTopicBankModal({
             知道了
           </Button>
         }
-        width={520}
+        width={modalWidth.sm}
       >
         <Alert
           type="warning"

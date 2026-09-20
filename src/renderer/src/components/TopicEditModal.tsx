@@ -14,7 +14,7 @@ import {
   SOURCE_TYPE_OPTIONS
 } from './FilterPanel';
 import { useToast } from '../hooks/useToast';
-import { spacing } from '../styles/tokens';
+import { spacing, modalWidth} from '../styles/tokens';
 import { primaryButtonStyle } from '../styles/shared';
 
 /**
@@ -164,7 +164,7 @@ export default function TopicEditModal({
         cancelText="取消"
         okButtonProps={{ size: 'middle', style: primaryButtonStyle }}
         cancelButtonProps={{ size: 'middle' }}
-        width={560}
+        width={modalWidth.md}
         destroyOnHidden
       >
         <Form

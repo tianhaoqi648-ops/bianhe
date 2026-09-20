@@ -24,7 +24,7 @@ import dayjs from 'dayjs'
 import type { BatchEditHistory } from '../../../shared/types'
 import { useBatchEditStore } from '../stores/batchEditStore'
 import { useToast } from '../hooks/useToast'
-import { spacing } from '../styles/tokens'
+import { spacing, modalWidth} from '../styles/tokens'
 
 const { Text } = Typography
 
@@ -156,7 +156,7 @@ export default function BatchEditHistoryModal({
         }
         open={open}
         onCancel={onClose}
-        width={820}
+        width={modalWidth.lg}
         footer={
           <Button size="middle" onClick={onClose}>
             关闭

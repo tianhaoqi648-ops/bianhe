@@ -16,7 +16,7 @@ import {
   type EffectivePreset
 } from '../utils/hotkey-config'
 import { useSettingsStore } from '../stores/settingsStore'
-import { spacing } from '../styles/tokens'
+import { spacing, modalWidth} from '../styles/tokens'
 
 const { Text } = Typography
 
@@ -130,7 +130,7 @@ export default function HotkeyHelpModal({ open, onClose }: HotkeyHelpModalProps)
       open={open}
       onCancel={onClose}
       footer={null}
-      width={520}
+      width={modalWidth.sm}
       centered
     >
       <div style={{ maxHeight: 480, overflowY: 'auto', paddingRight: spacing.xs }}>

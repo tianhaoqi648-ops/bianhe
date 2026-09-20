@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { Modal, Form, Input, InputNumber, Select, Switch, Typography } from 'antd';
 import { useEffect } from 'react';
 import type {
@@ -82,7 +83,7 @@ export default function RoundEditModal({
       onCancel={onCancel}
       okText="保存"
       cancelText="取消"
-      width={520}
+      width={modalWidth.sm}
       destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
     >

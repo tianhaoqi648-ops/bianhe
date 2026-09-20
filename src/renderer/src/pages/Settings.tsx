@@ -82,7 +82,7 @@ import BackupExportModal from '../components/settings/BackupExportModal';
 import BackupImportModal from '../components/settings/BackupImportModal';
 import UpdateCard from '../components/settings/UpdateCard';
 import { statCardStyle, cardStyle } from '../styles/shared';
-import { spacing, fontSize, radius } from '../styles/tokens';
+import { spacing, fontSize, radius, colorPrimary, modalWidth} from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 import type {
   ExportFormat,
@@ -1306,7 +1306,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <SafetyCertificateOutlined style={{ color: '#1677ff' }} />
+            <SafetyCertificateOutlined style={{ color: colorPrimary }} />
             <span>去重设置</span>
           </Space>
         }
@@ -1318,7 +1318,7 @@ export default function Settings() {
             type="inner"
             title={
               <Space>
-                <SafetyCertificateOutlined style={{ color: '#1677ff' }} />
+                <SafetyCertificateOutlined style={{ color: colorPrimary }} />
                 <span>文本匹配层</span>
                 <Tag color="blue">必选</Tag>
               </Space>
@@ -1471,7 +1471,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <BellOutlined style={{ color: '#1677ff' }} />
+            <BellOutlined style={{ color: colorPrimary }} />
             <span>铃声管理</span>
           </Space>
         }
@@ -1484,7 +1484,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <BellOutlined style={{ color: '#1677ff' }} />
+            <BellOutlined style={{ color: colorPrimary }} />
             <span>计时器铃声库与超时语音</span>
           </Space>
         }
@@ -1538,7 +1538,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <AudioOutlined style={{ color: '#1677ff' }} />
+            <AudioOutlined style={{ color: colorPrimary }} />
             <span>录音存放位置</span>
           </Space>
         }
@@ -1605,7 +1605,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <AudioOutlined style={{ color: '#1677ff' }} />
+            <AudioOutlined style={{ color: colorPrimary }} />
             <span>AI 转写（录音转文字）</span>
           </Space>
         }
@@ -1910,7 +1910,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <FolderOpenOutlined style={{ color: '#1677ff' }} />
+            <FolderOpenOutlined style={{ color: colorPrimary }} />
             <span>转写数据目录</span>
           </Space>
         }
@@ -1984,7 +1984,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <BulbOutlined style={{ color: '#1677ff' }} />
+            <BulbOutlined style={{ color: colorPrimary }} />
             <span>主题</span>
           </Space>
         }
@@ -2032,11 +2032,11 @@ export default function Settings() {
       {/* 题库统计 */}
       <Row gutter={[spacing.lg, spacing.lg]} style={{ marginBottom: spacing.md }}>
         <Col xs={12} sm={12} md={6}>
-          <Card size="small" style={statCardStyle('#1677ff')}>
+          <Card size="small" style={statCardStyle(colorPrimary)}>
             <Statistic
               title="题库总数"
               value={topicStats.total}
-              prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
+              prefix={<DatabaseOutlined style={{ color: colorPrimary }} />}
             />
           </Card>
         </Col>
@@ -2080,7 +2080,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <SafetyCertificateOutlined style={{ color: '#1677ff' }} />
+            <SafetyCertificateOutlined style={{ color: colorPrimary }} />
             <span>官方题库</span>
           </Space>
         }
@@ -2118,7 +2118,7 @@ export default function Settings() {
             size="small"
             title={
               <Space>
-                <DownloadOutlined style={{ color: '#1677ff' }} />
+                <DownloadOutlined style={{ color: colorPrimary }} />
                 <span>数据导出</span>
               </Space>
             }
@@ -2178,7 +2178,7 @@ export default function Settings() {
             size="small"
             title={
               <Space>
-                <UploadOutlined style={{ color: '#1677ff' }} />
+                <UploadOutlined style={{ color: colorPrimary }} />
                 <span>数据导入</span>
               </Space>
             }
@@ -2224,7 +2224,7 @@ export default function Settings() {
             size="small"
             title={
               <Space>
-                <TagsOutlined style={{ color: '#1677ff' }} />
+                <TagsOutlined style={{ color: colorPrimary }} />
                 <span>标签显示配置</span>
               </Space>
             }
@@ -2376,7 +2376,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <MailOutlined style={{ color: '#1677ff' }} />
+            <MailOutlined style={{ color: colorPrimary }} />
             <span>反馈与支持</span>
           </Space>
         }
@@ -2400,7 +2400,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <RocketOutlined style={{ color: '#1677ff' }} />
+            <RocketOutlined style={{ color: colorPrimary }} />
             <span>新手引导</span>
           </Space>
         }
@@ -2436,7 +2436,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <InfoCircleOutlined style={{ color: '#1677ff' }} />
+            <InfoCircleOutlined style={{ color: colorPrimary }} />
             <span>关于应用</span>
           </Space>
         }
@@ -2468,7 +2468,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <RobotOutlined style={{ color: '#1677ff' }} />
+            <RobotOutlined style={{ color: colorPrimary }} />
             <span>LLM 配置</span>
           </Space>
         }
@@ -2556,7 +2556,7 @@ export default function Settings() {
         size="small"
         title={
           <Space>
-            <SafetyCertificateOutlined style={{ color: '#1677ff' }} />
+            <SafetyCertificateOutlined style={{ color: colorPrimary }} />
             <span>工具确认规则</span>
             <Tooltip title="配置 Agent 调用工具时是否需要人工确认">
               <InfoCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
@@ -2756,7 +2756,7 @@ export default function Settings() {
             }}
             cancelText="取消"
             onOk={handleConfirmReset}
-            width={560}
+            width={modalWidth.sm}
           >
             <Alert
               type="warning"
@@ -2841,7 +2841,7 @@ export default function Settings() {
             okButtonProps={{ danger: true }}
             cancelText="取消"
             onOk={handleSecondaryConfirm}
-            width={520}
+            width={modalWidth.sm}
           >
             <Alert
               type="error"

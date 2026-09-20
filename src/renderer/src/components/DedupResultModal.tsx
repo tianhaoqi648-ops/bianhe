@@ -29,7 +29,7 @@ import type {
   DuplicateGroup,
   Topic
 } from '../../../shared/types';
-import { spacing } from '../styles/tokens';
+import { spacing, colorPrimary, modalWidth} from '../styles/tokens';
 import { useSettingsStore } from '../stores/settingsStore';
 import { loadTagDisplayConfig } from '../utils/tagDisplay';
 import { useToast } from '../hooks/useToast';
@@ -250,7 +250,7 @@ export default function DedupResultModal({
         title="去重检查"
         open={open}
         onCancel={onClose}
-        width={920}
+        width={modalWidth.lg}
         footer={
           <Space>
             <Button size="middle" onClick={onClose}>
@@ -333,7 +333,7 @@ export default function DedupResultModal({
                   <Statistic
                     title="重复组数"
                     value={result.groups.length}
-                    prefix={<WarningOutlined style={{ color: '#1677ff' }} />}
+                    prefix={<WarningOutlined style={{ color: colorPrimary }} />}
                   />
                 </Card>
               </Col>

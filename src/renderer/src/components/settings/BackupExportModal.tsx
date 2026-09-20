@@ -11,7 +11,7 @@ import { CloudUploadOutlined } from '@ant-design/icons'
 import { BACKUP_CATEGORIES, DEFAULT_BACKUP_CATEGORIES } from '../../../../shared/constants'
 import type { BackupCategory } from '../../../../shared/types'
 import { useToast } from '../../hooks/useToast'
-import { spacing } from '../../styles/tokens'
+import { spacing, modalWidth} from '../../styles/tokens'
 
 const { Text } = Typography
 
@@ -88,7 +88,7 @@ export default function BackupExportModal({ open, onClose }: Props) {
       }
       open={open}
       onCancel={onClose}
-      width={720}
+      width={modalWidth.md}
       footer={
         <Space>
           <Button onClick={onClose}>取消</Button>

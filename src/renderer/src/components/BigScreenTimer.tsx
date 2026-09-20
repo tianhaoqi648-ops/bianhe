@@ -31,7 +31,7 @@ import { formatTime } from '../utils/timer-bells'
 import { collectBellsForPreview } from '../utils/bell-preview-collector'
 import { HOTKEY_PRESETS, formatCombo } from '../utils/hotkey-presets'
 import { kbdStyle } from '../styles/shared'
-import { fontSize, radius, colorGold, colorGoldLight } from '../styles/tokens'
+import { fontSize, radius, colorGold, colorGoldLight, colorAff} from '../styles/tokens'
 import { motionClass } from '../styles/motion'
 
 const { Text } = Typography
@@ -78,7 +78,7 @@ export interface BigScreenTimerProps {
 const DEFAULT_THEME: TimerTheme = {
   affLabel: '正方',
   negLabel: '反方',
-  affColor: '#1677ff',
+  affColor: colorAff,
   negColor: '#ff4d4f',
   accentColor: '#faad14'
 }

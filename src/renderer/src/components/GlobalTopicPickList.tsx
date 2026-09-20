@@ -9,6 +9,7 @@
 // 筛选基于传入的完整候选集做，父组件负责先剔除已在目标组的题。
 // ============================================================
 
+import { colorPrimary } from '../styles/tokens'
 import { useEffect, useMemo, useState } from 'react';
 import {
   List,
@@ -289,8 +290,8 @@ export default function GlobalTopicPickList({
                   cursor: 'pointer',
                   padding: '8px 12px',
                   borderRadius: 6,
-                  border: selectedRow ? '1px solid #1677ff' : undefined,
-                  background: selectedRow ? 'rgba(22,119,255,0.05)' : undefined
+                  border: selectedRow ? `1px solid ${colorPrimary}` : undefined,
+                  background: selectedRow ? 'rgba(20,102,224,0.05)' : undefined
                 }}
               >
                 <Space wrap size={4} style={{ width: '100%' }}>

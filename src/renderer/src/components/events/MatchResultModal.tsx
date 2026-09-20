@@ -10,6 +10,7 @@
 //   - 实时预览按 shared/match-result.computeMatchResult 计算胜负（与主进程同口径）
 // ============================================================
 
+import { modalWidth } from '../../styles/tokens'
 import { useEffect, useMemo, useState } from 'react'
 import { AutoComplete, Button, Card, Divider, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
@@ -191,7 +192,7 @@ export default function MatchResultModal({ match, speakerOptions, onClose, onSav
   return (
     <Modal
       title={`亮牌：${match?.teamAffName ?? '正方'} vs ${match?.teamNegName ?? '反方'}`}
-      width={680}
+      width={modalWidth.lg}
       open={!!match}
       onCancel={onClose}
       onOk={() => void handleSubmit()}

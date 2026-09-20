@@ -15,7 +15,7 @@ import EmptyState from './common/EmptyState';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import type { ImportBatch } from '../../../shared/types';
-import { spacing } from '../styles/tokens';
+import { spacing, colorPrimary, modalWidth} from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 
 const { Text } = Typography;
@@ -138,7 +138,7 @@ export default function ImportHistoryModal({
           <Badge
             count={count}
             showZero
-            color={count === 0 ? '#d9d9d9' : '#1677ff'}
+            color={count === 0 ? '#d9d9d9' : colorPrimary}
             overflowCount={9999}
             style={{ fontSize: 12 }}
           />
@@ -195,7 +195,7 @@ export default function ImportHistoryModal({
         }
         open={open}
         onCancel={onClose}
-        width={820}
+        width={modalWidth.lg}
         footer={
           <Button size="middle" onClick={onClose}>
             关闭

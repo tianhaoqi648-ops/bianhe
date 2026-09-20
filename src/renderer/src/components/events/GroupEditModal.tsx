@@ -1,3 +1,4 @@
+import { modalWidth } from '../../styles/tokens'
 import { Modal, Form, Input, InputNumber } from 'antd';
 import { useEffect } from 'react';
 import type {
@@ -73,7 +74,7 @@ export default function GroupEditModal({
       onCancel={onCancel}
       okText="保存"
       cancelText="取消"
-      width={480}
+      width={modalWidth.sm}
       destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
     >

@@ -8,6 +8,7 @@
 // 队徽图片经 badgeAPI.getDataUrl 即时拉取 dataUrl 渲染。
 // ============================================================
 
+import { colorPrimary, modalWidth } from '../../styles/tokens'
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Empty, Input, Modal, Space, Spin, Upload, Tag } from 'antd'
 import { UploadOutlined, CheckOutlined } from '@ant-design/icons'
@@ -109,7 +110,7 @@ export default function BadgePickerModal({
       title="选择队徽"
       open={open}
       onCancel={onClose}
-      width={560}
+      width={modalWidth.md}
       footer={[
         <Button key="clear" danger onClick={() => onSaved(null)}>
           不设队徽
@@ -150,14 +151,14 @@ export default function BadgePickerModal({
                   style={{
                     width: 84,
                     padding: 8,
-                    border: selected ? '2px solid #1677ff' : '1px solid #f0f0f0',
+                    border: selected ? `2px solid ${colorPrimary}` : '1px solid #f0f0f0',
                     borderRadius: 8,
                     textAlign: 'center',
                     cursor: 'pointer'
                   }}
                 >
                   <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {selected && <CheckOutlined style={{ color: '#1677ff' }} />}
+                    {selected && <CheckOutlined style={{ color: colorPrimary }} />}
                     <BadgeThumb id={b.id} />
                   </div>
                   <div style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

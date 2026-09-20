@@ -10,6 +10,7 @@
 // 通知父级刷新本场录音列表与存在性。纯展示 + IPC，不含评审逻辑。
 // ============================================================
 
+import { modalWidth } from '../../styles/tokens'
 import { useCallback, useState } from 'react'
 import {
   Button,
@@ -281,7 +282,7 @@ export function RecordingBindPanel({
         onOk={() => void handleAdd()}
         okText="选择文件并绑定"
         confirmLoading={bindBusy}
-        width={420}
+        width={modalWidth.sm}
       >
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
           <div>

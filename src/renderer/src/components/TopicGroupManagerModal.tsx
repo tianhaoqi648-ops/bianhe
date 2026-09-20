@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -243,7 +244,7 @@ export default function TopicGroupManagerModal({
     <>
       <Modal
         title="题组管理（题库）"
-        width={900}
+        width={modalWidth.lg}
         open={open}
         onCancel={onClose}
         footer={null}
@@ -286,7 +287,7 @@ export default function TopicGroupManagerModal({
                         cursor: 'pointer',
                         padding: '8px 6px',
                         borderRadius: 6,
-                        background: selected ? 'rgba(22,119,255,0.08)' : 'transparent'
+                        background: selected ? 'rgba(20,102,224,0.08)' : 'transparent'
                       }}
                       onClick={() => setActiveGroupId(g.id)}
                     >

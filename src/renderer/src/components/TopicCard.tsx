@@ -101,7 +101,7 @@ export default function TopicCard({
         borderColor: selected ? token.colorPrimary : token.colorBorderSecondary,
         borderWidth: selected ? 1 : 1,
         boxShadow: selected
-          ? '0 4px 12px rgba(22,119,255,0.15)'
+          ? '0 4px 12px rgba(20,102,224,0.15)'
           : undefined,
         opacity: isBlacklisted ? 0.6 : 1,
         overflow: 'hidden'

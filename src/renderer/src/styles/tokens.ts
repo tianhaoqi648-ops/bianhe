@@ -168,6 +168,17 @@ export const colorGoldLight = '#ffd666'
 /** 比赛工具区强调色 — 饱和度较 antd 默认降低约 10% */
 export const colorPurple = '#6625b9'
 
+/**
+ * 正方语义色（辩论「正方=蓝」约定）——豁免于品牌主色（Phase 4 B1 决策）：
+ * 与 MatchVerdictCard/TimerDisplay/replay-html 等正方色消费点共用；
+ * 归一至品牌主色需同步 src/core DEFAULT_TIMER_THEME 与 golden fixture，留待独立批次。
+ */
+export const colorAff = '#1677ff'
+
+/** Modal 三档宽度（Phase 3 D7：Small 480 / Medium 640 / Large 880；
+ *  运行时上限由 index.css `.ant-modal { max-width: calc(100vw - 48px) }` 兜底） */
+export const modalWidth = { sm: 480, md: 640, lg: 880 } as const
+
 /** 三色组合对象（便于循环遍历） */
 export const colorSystem = {
   primary: colorPrimary,

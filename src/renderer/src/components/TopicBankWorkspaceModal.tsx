@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -376,7 +377,7 @@ export default function TopicBankWorkspaceModal({
           )}
         </Space>
       }
-      width={880}
+      width={modalWidth.lg}
       open={open}
       onCancel={onClose}
       footer={

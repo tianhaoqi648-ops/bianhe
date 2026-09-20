@@ -944,7 +944,7 @@ export default function History() {
             style={{ background: token.colorBgContainer, ...cardStyle }}
             title={
               <Space>
-                <HistoryOutlined style={{ color: '#1677ff' }} />
+                <HistoryOutlined style={{ color: colorPrimary }} />
                 <Text strong>历史记录</Text>
               </Space>
             }

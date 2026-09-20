@@ -1,3 +1,4 @@
+import { modalWidth } from '../styles/tokens'
 import { Modal, Form, Input, Select, DatePicker, Switch, Tooltip, theme } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import { useEffect } from 'react';
@@ -79,7 +80,7 @@ export default function EventEditModal({
       onCancel={onCancel}
       okText="保存"
       cancelText="取消"
-      width={520}
+      width={modalWidth.sm}
       destroyOnHidden
       okButtonProps={{ style: primaryButtonStyle }}
     >

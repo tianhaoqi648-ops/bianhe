@@ -8,6 +8,7 @@
 // 数据源为全局辩题库 topicStore.items（与全局题库页同源）。
 // ============================================================
 
+import { modalWidth, colorPrimary} from '../../styles/tokens'
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
@@ -192,7 +193,7 @@ export default function TopicPickModal({
           <span>为该场配辩题</span>
         </Space>
       }
-      width={680}
+      width={modalWidth.md}
       open={open}
       onCancel={onClose}
       onOk={() => void handleConfirm()}
@@ -378,8 +379,8 @@ export default function TopicPickModal({
                     cursor: 'pointer',
                     padding: '8px 12px',
                     borderRadius: 6,
-                    border: selected ? '1px solid #1677ff' : undefined,
-                    background: selected ? 'rgba(22,119,255,0.05)' : undefined
+                    border: selected ? `1px solid ${colorPrimary}` : undefined,
+                    background: selected ? 'rgba(20,102,224,0.05)' : undefined
                   }}
                 >
                   <Space wrap size={4} style={{ width: '100%' }}>

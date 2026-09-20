@@ -12,16 +12,16 @@ body {
  * 与 theme.ts 中 components.Button.primaryShadow 风格保持一致。
  * ============================================================ */
 .ant-btn-primary {
-  background: linear-gradient(135deg, #1677ff, #4096ff) !important;
+  background: linear-gradient(135deg, #1466e0, #4096ff) !important;
   border: none !important;
-  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.3) !important;
+  box-shadow: 0 2px 6px rgba(20, 102, 224, 0.3) !important;
   transition: all 0.2s ease;
 }
 
 /* hover 态：渐变方向反转 + 投影加深 + 微上移 */
 .ant-btn-primary:hover:not(:disabled):not(.ant-btn-loading) {
-  background: linear-gradient(135deg, #4096ff, #1677ff) !important;
-  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.4) !important;
+  background: linear-gradient(135deg, #4096ff, #1466e0) !important;
+  box-shadow: 0 4px 12px rgba(20, 102, 224, 0.4) !important;
   transform: translateY(-1px);
 }
 
@@ -34,7 +34,7 @@ body {
 .ant-btn-primary:disabled,
 .ant-btn-primary.ant-btn-disabled,
 .ant-btn-primary.ant-btn-loading {
-  background: rgba(22, 119, 255, 0.5) !important;
+  background: rgba(20, 102, 224, 0.5) !important;
   box-shadow: none !important;
   transform: none !important;
   cursor: not-allowed;
@@ -42,11 +42,11 @@ body {
 
 /* 暗色模式适配：投影稍强（透明度 0.4），保证深底可见性 */
 [data-theme='dark'] .ant-btn-primary {
-  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.4) !important;
+  box-shadow: 0 2px 6px rgba(20, 102, 224, 0.4) !important;
 }
 
 [data-theme='dark'] .ant-btn-primary:hover:not(:disabled):not(.ant-btn-loading) {
-  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.5) !important;
+  box-shadow: 0 4px 12px rgba(20, 102, 224, 0.5) !important;
 }
 
 /* ============================================================
@@ -248,7 +248,14 @@ body {
  * 使用 antd CSS 变量 --ant-color-primary 适配亮/暗主题
  * ============================================================ */
 .dimension-icon-btn:focus-visible {
-  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline: 2px solid var(--ant-color-primary, #1466e0);
   outline-offset: 2px;
 }
 
+/* ============================================================
+   Modal viewport 上限（Phase 4 B1 / UI-005）：小窗口防溢出。
+   width 档位（480/640/880）来自 tokens.modalWidth，此处统一兜底。
+   ============================================================ */
+.ant-modal {
+  max-width: calc(100vw - 48px);
+}

@@ -22,7 +22,7 @@ export interface DonutChartDatum {
   label: string
   /** 分段数值 */
   value: number
-  /** 分段颜色（CSS 颜色字符串，如 '#1677ff'） */
+  /** 分段颜色（CSS 颜色字符串，如 '#1466e0'） */
   color: string
 }
 

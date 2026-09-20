@@ -7,6 +7,7 @@
 //   - "删除"按钮：直接删除 + 刷新列表
 // ============================================================
 
+import { modalWidth } from '../styles/tokens'
 import { useEffect, useState, useCallback } from 'react'
 import { Modal, Table, Button, Space, Popconfirm, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -206,7 +207,7 @@ export default function BackupManageModal({ open, onClose }: Props) {
           <Button onClick={onClose}>关闭</Button>
         </Space>
       }
-      width={680}
+      width={modalWidth.md}
     >
       <Table<BackupInfo>
         columns={columns}

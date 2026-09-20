@@ -6,6 +6,7 @@
 // 播放统一走 useSoundManager.playBell，内置音与自定义音均可试听。
 // ============================================================
 
+import { modalWidth } from '../styles/tokens'
 import { useEffect, useRef, useState } from 'react'
 import { Modal, Button, Space, Typography, Tag, Tooltip, Divider } from 'antd'
 import { SoundOutlined, StopOutlined, BellOutlined } from '@ant-design/icons'
@@ -141,7 +142,7 @@ export default function BellPreviewModal({ open, onClose, format }: BellPreviewM
         </Space>
       }
       footer={null}
-      width={640}
+      width={modalWidth.md}
       destroyOnHidden
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Typography, Progress } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import type { DrawResult, Team } from '../../../../shared/types';
-import { gradient, shadow, colorGold } from '../../styles/tokens';
+import { gradient, shadow, colorGold, colorPrimary, colorPurple} from '../../styles/tokens';
 import { duration, easing } from '../../styles/motion';
 import { kbdStyle } from '../../styles/shared';
 import RevealAnimation, { type RevealMode } from './RevealAnimation';
@@ -447,7 +447,7 @@ export default function DrawAnimation({
         <Progress
           percent={75}
           status="active"
-          strokeColor={{ from: '#1677ff', to: '#722ed1' }}
+          strokeColor={{ from: colorPrimary, to: colorPurple }}
           trailColor="rgba(255, 255, 255, 0.1)"
           showInfo={false}
         />

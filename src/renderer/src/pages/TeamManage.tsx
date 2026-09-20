@@ -52,7 +52,7 @@ import {
   primaryButtonStyle,
   pageContainerStyle
 } from '../styles/shared';
-import { spacing, transition, fontSize } from '../styles/tokens';
+import { spacing, transition, fontSize, modalWidth} from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 
 const { Content } = Layout;
@@ -800,7 +800,7 @@ export default function TeamManage() {
         onOk={handleBatchImport}
         okText="导入"
         cancelText="取消"
-        width={520}
+        width={modalWidth.sm}
         destroyOnHidden
         okButtonProps={{ style: primaryButtonStyle, loading: batchImporting }}
       >

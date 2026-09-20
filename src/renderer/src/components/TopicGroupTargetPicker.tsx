@@ -1,3 +1,4 @@
+import { colorPrimary } from '../styles/tokens'
 import { useEffect, useState } from 'react';
 import {
   Modal,
@@ -108,15 +109,15 @@ export default function TopicGroupTargetPicker({
                 alignItems: 'center',
                 gap: 8,
                 padding: '8px 10px',
-                border: `1px solid ${selected.includes(g.id) ? '#1677ff' : 'rgba(128,128,128,0.2)'}`,
+                border: `1px solid ${selected.includes(g.id) ? colorPrimary : 'rgba(128,128,128,0.2)'}`,
                 borderRadius: 6,
                 cursor: 'pointer',
                 background: selected.includes(g.id)
-                  ? 'rgba(22,119,255,0.06)'
+                  ? 'rgba(20,102,224,0.06)'
                   : 'transparent'
               }}
             >
-              <FolderOutlined style={{ color: '#1677ff' }} />
+              <FolderOutlined style={{ color: colorPrimary }} />
               <span>{g.name}</span>
               {g.isDefault && <Tag color="gold">默认题库</Tag>}
             </div>
