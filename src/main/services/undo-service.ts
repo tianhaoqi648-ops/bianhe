@@ -28,6 +28,7 @@ import type {
   Event,
   Round,
   Team,
+  TeamGroup,
   DrawResult,
   DrawSessionDetail,
   CustomField,
@@ -546,6 +547,33 @@ function applyEventReverse(
       }
       break
     }
+    case 'team_group': {
+      // P5-001：分组撤销（此前缺分支 → unsupported 抛错 → undo 栈卡死）
+      if (action === 'create') {
+        const afterGroup = after as TeamGroup | null
+        if (afterGroup) {
+          eventRepo.deleteGroup(afterGroup.id)
+          return 1
+        }
+        break
+      }
+      if (action === 'update' && before) {
+        const beforeGroup = before as TeamGroup
+        eventRepo.updateGroup(beforeGroup.id, {
+          name: beforeGroup.name,
+          sort_order: beforeGroup.sort_order
+        })
+        return 1
+      }
+      if (action === 'delete' && before) {
+        const snap = toGroupSnapshot(before)
+        recreateGroupWithId(snap.group)
+        // 恢复删除时被 SET NULL 的队伍归属（旧格式 log 无 teams 数据，跳过）
+        for (const t of snap.teams) eventRepo.assignTeamToGroup(t.id, t.group_id)
+        return 1
+      }
+      break
+    }
   }
   throw new Error(`[undo] event: unsupported action ${action} for ${targetType}`)
 }
@@ -645,6 +673,27 @@ function applyEventForward(
       }
       break
     }
+    case 'team_group': {
+      // P5-001：分组重做（与 reverse 对称，保证 undo→redo 闭环）
+      if (action === 'create' && after) {
+        recreateGroupWithId(after as TeamGroup)
+        return 1
+      }
+      if (action === 'update' && after) {
+        const afterGroup = after as TeamGroup
+        eventRepo.updateGroup(afterGroup.id, {
+          name: afterGroup.name,
+          sort_order: afterGroup.sort_order
+        })
+        return 1
+      }
+      if (action === 'delete' && before) {
+        // 重放删除：SET NULL 行为由 FK 重新触发，与首次删除一致
+        eventRepo.deleteGroup(toGroupSnapshot(before).group.id)
+        return 1
+      }
+      break
+    }
   }
   throw new Error(`[undo] event: unsupported action ${action} for ${targetType}`)
 }
@@ -690,6 +739,46 @@ function recreateTeamWithId(team: Team): void {
     INSERT INTO teams (id, name, event_id, group_id)
     VALUES (?, ?, ?, ?)
   `).run(team.id, team.name, team.event_id, team.group_id ?? null)
+}
+
+// P5-001：team_group 撤销支持（此前缺分支导致 undo 栈被卡死，见审计报告）
+
+/**
+ * 删除分组的撤销快照（P5-001 新格式）：
+ * 删除分组会使 teams.group_id 经 ON DELETE SET NULL 置空，
+ * 因此除组行外还必须快照受影响队伍的归属，撤销时才能恢复实际业务状态。
+ */
+interface TeamGroupDeleteSnapshot {
+  group: TeamGroup
+  teams: Array<{ id: string; group_id: string | null }>
+}
+
+/**
+ * 兼容两种 team_group undo payload 形状：
+ * - 新格式（P5-001 修复后）：{ group, teams } 删除快照
+ * - 旧格式（修复前遗留 log）：plain TeamGroup 行（无关联数据，仅能恢复组本身）
+ */
+function toGroupSnapshot(before: unknown): TeamGroupDeleteSnapshot {
+  if (
+    typeof before === 'object' &&
+    before !== null &&
+    'group' in before &&
+    'teams' in before
+  ) {
+    return before as TeamGroupDeleteSnapshot
+  }
+  return { group: before as TeamGroup, teams: [] }
+}
+
+/**
+ * 按原 id 重建 team_group 行（id/event_id/name/sort_order/created_at 全量原值）。
+ */
+function recreateGroupWithId(group: TeamGroup): void {
+  const db = getDb()
+  db.prepare(`
+    INSERT INTO team_groups (id, event_id, name, sort_order, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(group.id, group.event_id, group.name, group.sort_order ?? 0, group.created_at)
 }
 
 // ============================================================

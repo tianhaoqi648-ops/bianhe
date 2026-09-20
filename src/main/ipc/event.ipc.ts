@@ -304,7 +304,17 @@ export function registerEventIpc(): void {
         targetType: 'team_group',
         targetId: id,
         label: `删除分组 ${before?.name ?? id.slice(0, 8)}`,
-        getBefore: () => before,
+        // P5-001：删除分组会使 teams.group_id 经 ON DELETE SET NULL 置空，
+        // 快照需一并记录受影响队伍的归属，撤销时才能恢复实际业务状态
+        getBefore: () => {
+          if (!before) return null
+          return {
+            group: before,
+            teams: eventRepo
+              .listTeamsByEvent(before.event_id, { group_id: before.id })
+              .map((t) => ({ id: t.id, group_id: t.group_id }))
+          }
+        },
         execute: () => eventRepo.deleteGroup(id),
         getAfter: () => null
       })
