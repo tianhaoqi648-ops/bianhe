@@ -1022,23 +1022,46 @@ function recreateDrawSessionWithId(result: Pick<DrawResult, 'session'>): void {
     session.operator,
     session.settings ? JSON.stringify(session.settings) : null
   )
-  // 重建 items（draw_session_items 表字段：id, session_id, topic_id, team_a_id, team_b_id, stance_a, stance_b）
+  // P5-002 修复：按 draw_session_items 真实 schema（14 列）全量重建。
+  // 此前仅写 7 列，丢失 topic_title / team_a_name / team_b_name / team_ids /
+  // team_stances / team_names / group_id——multi_team/group 会话 undo/redo 后
+  // team_ids 为 null，confirm 流程读不到队伍、topic 标题快照永久丢失。
+  // 序列化规则与 draw.repo createSession 保持一致：数组非空 → JSON 字符串，
+  // 否则 null（payload 缺失/旧格式字段经 ?? 兜底为 null，不抛错）。
   const items = session.items
   if (items && items.length > 0) {
     const stmt = db.prepare(`
       INSERT INTO draw_session_items (
-        id, session_id, topic_id, team_a_id, team_b_id, stance_a, stance_b
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        id, session_id, topic_id, team_a_id, team_b_id, stance_a, stance_b,
+        topic_title, team_a_name, team_b_name, team_ids, team_stances, team_names, group_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const item of items) {
+      const teamIdsStr =
+        item.team_ids && item.team_ids.length > 0 ? JSON.stringify(item.team_ids) : null
+      const teamStancesStr =
+        item.team_stances && item.team_stances.length > 0
+          ? JSON.stringify(item.team_stances)
+          : null
+      const teamNamesStr =
+        item.team_names && item.team_names.length > 0
+          ? JSON.stringify(item.team_names)
+          : null
       stmt.run(
         item.id,
         item.session_id,
-        item.topic_id,
-        item.team_a_id,
-        item.team_b_id,
-        item.stance_a,
-        item.stance_b
+        item.topic_id ?? null,
+        item.team_a_id ?? null,
+        item.team_b_id ?? null,
+        item.stance_a ?? null,
+        item.stance_b ?? null,
+        item.topic_title ?? null,
+        item.team_a_name ?? null,
+        item.team_b_name ?? null,
+        teamIdsStr,
+        teamStancesStr,
+        teamNamesStr,
+        item.group_id ?? null
       )
     }
   }
