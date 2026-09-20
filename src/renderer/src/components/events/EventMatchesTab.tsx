@@ -455,7 +455,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
       />
 
       {/* 新建对阵 */}
-      <Modal title="新建比赛" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => createForm.submit()} confirmLoading={creating}>
+      <Modal title="新建比赛" open={createOpen} onCancel={() => { setCreateOpen(false); createForm.resetFields() }} onOk={() => createForm.submit()} confirmLoading={creating}>
         <Form form={createForm} layout="vertical" onFinish={handleCreate}>
           <Form.Item name="round" label="轮次">
             <Select

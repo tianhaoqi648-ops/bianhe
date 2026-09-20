@@ -1560,6 +1560,7 @@ export default function TimerPage() {
                       matchup={matchup}
                       graceRemainingMs={graceRemainingMs}
                       isFreeDebate={!!currentStage?.isFreeDebate}
+                      recording={recOn}
                     />
 
                     {/* 每队总时长池（后手）：展示双方池剩余，当前 pool 环节高亮扣除方 */}
@@ -1658,7 +1659,9 @@ export default function TimerPage() {
         <KbdHint kbd="F" description="进入大屏">
           <Button icon={<FullscreenOutlined />} onClick={(e) => { e.currentTarget.blur(); handleOpenBigScreen() }}>大屏</Button>
         </KbdHint>
-        <Button icon={<ExpandOutlined />} onClick={(e) => { e.currentTarget.blur(); setImmersive(true) }}>沉浸</Button>
+        <KbdHint kbd="Esc" description="沉浸模式下退出">
+          <Button icon={<ExpandOutlined />} onClick={(e) => { e.currentTarget.blur(); setImmersive(true) }}>沉浸</Button>
+        </KbdHint>
       </div>
 
       {/* Task 20：历史会话 Drawer（响应式宽度：移动端 100%，桌面端 640） */}

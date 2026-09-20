@@ -451,7 +451,15 @@ function EventBindingSelects({
           onChange={(v) => onMatchChange(v)}
           options={matchList.map((m) => ({ value: m.id, label: `${m.teamAffName ?? '正方'} vs ${m.teamNegName ?? '反方'}` }))} />
       </div>
-      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', color: token.colorTextSecondary, marginBottom: 4 }}>
+      <Typography.Text
+        strong={!!boundMatch}
+        style={{
+          fontSize: 12,
+          display: 'block',
+          marginBottom: 4,
+          color: boundMatch ? token.colorSuccess : token.colorWarning
+        }}
+      >
         {boundMatch ? `已绑定比赛：${boundMatch.teamAffName ?? '正方'} vs ${boundMatch.teamNegName ?? '反方'}` : '未绑定赛事/比赛，结果仅就地查看'}
       </Typography.Text>
     </div>
@@ -1622,7 +1630,10 @@ export default function JudgeArena(): JSX.Element {
 
       <Tabs
         activeKey={activeRole}
-        onChange={(k) => setActiveRole(k as DebaterRole)}
+        onChange={(k) => {
+          setActiveRole(k as DebaterRole)
+          setError(null)
+        }}
         items={ROLE_TABS.map((t) => ({
           key: t.key,
           label: (

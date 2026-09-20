@@ -250,7 +250,7 @@ export default function EventBankConfigModal({
       cancelText="取消"
       confirmLoading={saving}
       okButtonProps={{ disabled: !canSave }}
-      destroyOnClose
+      destroyOnHidden
     >
       <Spin spinning={loading}>
         {boundGroups.length === 0 ? (

@@ -762,7 +762,7 @@ export default function EventTopicBankModal({
       <Modal
         title="新建辩题（写入全局题库并加入所选绑定题库）"
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={() => { setCreateOpen(false); setCreateForm({ ...EMPTY_CREATE }); }}
         onOk={handleCreateOk}
         okText="新建并加入题库"
         cancelText="取消"

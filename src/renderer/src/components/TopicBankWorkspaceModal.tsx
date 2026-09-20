@@ -674,7 +674,7 @@ export default function TopicBankWorkspaceModal({
       <Modal
         title="新建辩题（写入全局题库并加入本库）"
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={() => { setCreateOpen(false); setCreateForm({ ...EMPTY_CREATE }); }}
         onOk={() => void handleCreateOk()}
         okText="新建并加入本库"
         cancelText="取消"

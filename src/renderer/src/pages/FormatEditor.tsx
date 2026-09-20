@@ -405,6 +405,7 @@ export default function FormatEditor() {
         onClose={() => setPreviewOpen(false)}
         width={480}
         placement="right"
+        destroyOnHidden
       >
         {selectedFormat && editingStages.length > 0 ? (
           <FormatPreview

@@ -4,7 +4,8 @@
 // 队名首字圆形头像 fallback + 当前发言方高亮 + 30s 预警 + 超时红色 + 宽限期警告
 // ============================================================
 
-import { Typography, Space } from 'antd'
+import { Typography, Space, Tag } from 'antd'
+import { AudioOutlined } from '@ant-design/icons'
 import type { StageSide, TimerState, TimerTheme } from '../../../shared/types'
 import type { TimerMatchup } from '../stores/timerStore'
 import { formatTime } from '../utils/timer-bells'
@@ -26,6 +27,8 @@ interface TimerDisplayProps {
   graceRemainingMs?: number
   /** 当前环节是否为自由辩论（决定是否显示双计时器并列 UI） */
   isFreeDebate?: boolean
+  /** 录音进行中——常驻 Badge 展示（B5：录音状态滚动可见） */
+  recording?: boolean
 }
 
 const DEFAULT_THEME: TimerTheme = {
@@ -48,7 +51,8 @@ export default function TimerDisplay({
   matchup,
   currentSide,
   graceRemainingMs,
-  isFreeDebate
+  isFreeDebate,
+  recording
 }: TimerDisplayProps) {
   const t = theme ?? DEFAULT_THEME
   const side: StageSide = currentSide ?? state.currentSide
@@ -221,14 +225,24 @@ export default function TimerDisplay({
           </Text>
         )}
         <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+          {recording ? (
+            <Tag color="error" icon={<AudioOutlined />} style={{ marginRight: 8 }}>
+              录音中
+            </Tag>
+          ) : null}
           状态：
-          {state.status === 'running'
-            ? '计时中'
-            : state.status === 'paused'
-              ? '已暂停'
-              : state.status === 'finished'
-                ? '已结束'
-                : '待开始'}
+          <Text
+            type={state.status === 'paused' ? 'warning' : state.status === 'finished' ? 'danger' : 'secondary'}
+            strong={state.status !== 'idle'}
+          >
+            {state.status === 'running'
+              ? '计时中'
+              : state.status === 'paused'
+                ? '已暂停'
+                : state.status === 'finished'
+                  ? '已结束'
+                  : '待开始'}
+          </Text>
         </Text>
       </div>
     </div>
