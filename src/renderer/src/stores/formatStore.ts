@@ -41,7 +41,26 @@ export const useFormatStore = create<FormatStoreState>((set, get) => ({
     try {
       const res = await window.formatAPI.list();
       if (res.success && res.data) {
-        set({ formats: res.data, loading: false });
+        // P5-020：IPC 全量替换会让所有 formatData 变成新对象引用，useTimerEngine
+        // 的 useEffect([format]) 会把进行中的计时误重置（undo/redo 刷新、进出赛制
+        // 编辑器等路径均可触达）。按 id 保留「内容未变化」项的旧引用，仅内容真正
+        // 变化（或新增）的赛制使用新引用。
+        set((s) => {
+          const prevById = new Map(s.formats.map((f) => [f.id, f]));
+          const merged = res.data!.map((next) => {
+            const prev = prevById.get(next.id);
+            if (!prev) return next;
+            if (
+              prev.name === next.name &&
+              prev.description === next.description &&
+              JSON.stringify(prev.formatData) === JSON.stringify(next.formatData)
+            ) {
+              return prev;
+            }
+            return next;
+          });
+          return { formats: merged, loading: false };
+        });
       } else {
         set({ loading: false, error: res.error ?? '加载失败' });
       }

@@ -305,15 +305,43 @@ export const timerSessionRepo = {
       endedAt: null,
       pauseCount: 0
     }
-    getDb().prepare(`
-      INSERT INTO timer_records
-        (id, session_id, stage_index, stage_name, side, duration_ms, actual_ms, started_at, ended_at, pause_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id, record.sessionId, record.stageIndex, record.stageName, record.side,
-      record.durationMs, record.actualMs, record.startedAt, record.endedAt, record.pauseCount
-    )
-    return record
+    try {
+      getDb().prepare(`
+        INSERT INTO timer_records
+          (id, session_id, stage_index, stage_name, side, duration_ms, actual_ms, started_at, ended_at, pause_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.id, record.sessionId, record.stageIndex, record.stageName, record.side,
+        record.durationMs, record.actualMs, record.startedAt, record.endedAt, record.pauseCount
+      )
+      return record
+    } catch (e) {
+    // P5-019：重跑环节（prevStage 回退后再次开始）会命中 (session_id, stage_index)
+    // 唯一索引。此前冲突被调用方 catch{} 静默吞掉，随后 finishRecord 会覆盖首跑
+    // 记录——历史被静默改写。此处显式把既有记录重置为「进行中」（保留「每
+    // (session, stage) 一条、显示最新结果」的既有语义），本次重跑正常走
+    // finishRecord 更新同一行；非唯一冲突错误原样抛出。
+    if (
+      e instanceof Error &&
+      /UNIQUE constraint failed/i.test(`${e.message}`)
+    ) {
+      getDb().prepare(`
+        UPDATE timer_records
+        SET stage_name = ?, side = ?, duration_ms = ?, actual_ms = NULL,
+            started_at = ?, ended_at = NULL, pause_count = 0
+        WHERE rowid = (
+          SELECT rowid FROM timer_records
+          WHERE session_id = ? AND stage_index = ?
+          ORDER BY started_at DESC LIMIT 1
+        )
+      `).run(
+        opts.stageName, opts.side, opts.durationMs, opts.startedAt,
+        opts.sessionId, opts.stageIndex
+      )
+      return { ...record, id: '' }
+    }
+    throw e
+  }
   },
 
   finishRecord(sessionId: string, stageIndex: number, actualMs: number, endedAt: string, pauseCount: number): void {

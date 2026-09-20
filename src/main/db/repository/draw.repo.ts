@@ -642,11 +642,14 @@ function deleteItem(id: string): boolean {
  */
 function listDrawnTopicIdsByEvent(eventId: string): string[] {
   const db = getDb()
+  // P5-021：排除测试会话（settings.is_test=true，如彩排/试抽）——测试抽取的
+  // 题目不应进入正式抽取的排除集（test draw 不消耗正式题库）。
   const stmt = db.prepare(`
     SELECT DISTINCT dsi.topic_id
     FROM draw_session_items dsi
     JOIN draw_sessions ds ON dsi.session_id = ds.id
     WHERE ds.event_id = ?
+      AND COALESCE(json_extract(ds.settings, '$.is_test'), 0) <> 1
   `)
   const rows = stmt.all(eventId) as Array<{ topic_id: string }>
   return rows.map((r) => r.topic_id)

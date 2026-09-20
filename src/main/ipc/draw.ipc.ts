@@ -39,10 +39,34 @@ function assertNonEmptyString(value: unknown, name: string): asserts value is st
   assertParam(typeof value === 'string' && value.length > 0, `参数 ${name} 必须为非空字符串`)
 }
 
+// ------------------------------------------------------------
+// P5-024：DRAW_EXECUTE 幂等防护（main 层，不依赖 renderer disabled）。
+// 双击/重复派发的同一请求在 TTL 窗口内命中指纹缓存，直接返回首次结果——
+// 不产生第二个 session、第二条 undo/audit。drawTopics 为同步事务，IPC 顺序
+// 处理下第二次请求到达时首次已完成，缓存必然可判定。
+// 两个真正不同的合法抽取（params 不同）不受影响；删除会话时主动失效，
+// 「删除后用相同参数重新抽取」等场景不会被误伤。重抽走 DRAW_REDO 独立通道。
+// ------------------------------------------------------------
+const DRAW_EXEC_TTL_MS = 3000
+let lastDrawExec: { fingerprint: string; at: number; result: unknown } | null = null
+
+function invalidateDrawExecCache(): void {
+  lastDrawExec = null
+}
+
 export function registerDrawIpc(): void {
   // 执行抽取
   ipcMain.handle(IPC_CHANNELS.DRAW_EXECUTE, (_e, params: DrawParams) => {
-    return wrapWithUndo(() => {
+    // P5-024：幂等守卫——TTL 窗口内相同 params 的重复请求返回首次结果
+    const fingerprint = JSON.stringify(params ?? null)
+    if (
+      lastDrawExec &&
+      lastDrawExec.fingerprint === fingerprint &&
+      Date.now() - lastDrawExec.at < DRAW_EXEC_TTL_MS
+    ) {
+      return lastDrawExec.result
+    }
+    const result = wrapWithUndo(() => {
       assertParam(params && typeof params === 'object', '参数 params 必须为对象')
       assertNonEmptyString(params.event_id, 'event_id')
       assertParam(typeof params.topic_count === 'number' && params.topic_count > 0, '参数 topic_count 必须为正整数')
@@ -57,6 +81,11 @@ export function registerDrawIpc(): void {
         getAfter: (result) => result
       })
     })
+    // 仅缓存成功结果——失败（如题数不足）的响应不缓存，用户修正参数后立即重试
+    if ((result as { success?: boolean } | null)?.success === true) {
+      lastDrawExec = { fingerprint, at: Date.now(), result }
+    }
+    return result
   })
 
   // 列出抽取会话
@@ -89,6 +118,8 @@ export function registerDrawIpc(): void {
       // P5-006：已确认会话（结果已计入队伍历史）禁止删除（main 层守卫，不可被 renderer 绕过）
       drawRepo.assertSessionNotConfirmed(id)
       drawRepo.deleteSession(id)
+      // P5-024：删除会话后失效幂等缓存——「删除后用相同参数重新抽取」是合法的新一次抽取
+      invalidateDrawExecCache()
       return { success: true, data: true }
     } catch (e) {
       return {

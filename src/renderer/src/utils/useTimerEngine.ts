@@ -265,7 +265,12 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       if (prev.status !== 'running') return prev
 
       const stage = format.stages[prev.currentStageIndex]
-      if (!stage) return prev
+      if (!stage) {
+        // P5-017：环节定义缺失（如恢复的会话指向已删除的赛制）——停止 rAF
+        // 注册，避免每帧空转；复用 P4-15 的 skipNextRaf 既有机制。
+        skipNextRaf = true
+        return prev
+      }
 
       // Task 7.2：非计时环节跳过 tick 递减，不修改 remainingMs。
       // P4-15：untimed 环节无需 rAF 驱动倒计时，标记 skipNextRaf 以停止下一帧注册，
@@ -514,6 +519,11 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
   useEffect(() => {
     if (state.status === 'running') {
       const stage = format.stages[state.currentStageIndex]
+      if (!stage) {
+        // P5-017：环节定义缺失（赛制被删/空赛制）——不启动 rAF，避免每帧空转
+        stopRaf()
+        return
+      }
       if (stage?.timingMode === 'untimed') {
         // untimed 环节：确保 rAF 已停止，不启动新循环
         stopRaf()
@@ -581,6 +591,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
    */
   const nextStage = useCallback(() => {
     const cur = stateRef.current
+    // P5-018：状态守卫——finished/idle 下切环节会把已结束会话非法复活为 paused
+    if (cur.status !== 'running' && cur.status !== 'paused') return
     const targetIdx = cur.currentStageIndex + 1
     if (targetIdx >= format.stages.length) return
     // P1-3 修复：跳过环节前结束当前环节计时记录
@@ -659,6 +671,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
    */
   const prevStage = useCallback(() => {
     const cur = stateRef.current
+    // P5-018：状态守卫——finished/idle 下回退环节会把已结束会话非法复活为 paused
+    if (cur.status !== 'running' && cur.status !== 'paused') return
     if (cur.currentStageIndex <= 0) return
     const targetIdx = cur.currentStageIndex - 1
     // P1-3 修复：回退环节前结束当前环节计时记录

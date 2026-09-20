@@ -159,6 +159,8 @@ describe('useTimerEngine 交互', () => {
     const { result } = mount()
     await act(async () => {
       result.current.start('s')
+    })
+    await act(async () => {
       result.current.nextStage()
     })
     expect(result.current.state.currentStageIndex).toBe(1)

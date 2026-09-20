@@ -488,6 +488,15 @@ export default function TimerPage() {
       },
       onFinish: () => {
         toast.success('全部环节已完成')
+        // P5-016：会话结束时间落库——finishSession（status=finished + endedAt）
+        // 既有机制此前无调用者，ended_at 永远为 null；此处接线使 History 可追溯
+        // 结束时间。status 由 onStateChange 持久化兜底，此处失败不影响主流程。
+        if (currentSession) {
+          void useTimerStore
+            .getState()
+            .finishSession(currentSession.id, new Date().toISOString())
+            .catch(() => {})
+        }
       },
       onStateChange: (state) => {
         if (!currentSession) return

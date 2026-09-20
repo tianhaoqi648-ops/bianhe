@@ -291,6 +291,21 @@ function collectIds(rows: NameRowInput[], pick: (r: NameRowInput) => string | nu
 }
 
 /**
+ * P5-015 附带清理（resolveNames team_b_name）：team 名称需要同时解析
+ * team_a_id 与 team_b_id——原实现每行仅收 team_a_id（team_b_id 为空时才兜底），
+ * 导致 createMatch/updateMatch 路径 team_b_name 恒为 null。
+ * 仅影响名称解析，不改变 Match identity / stance / upsert 语义。
+ */
+function collectTeamIds(rows: NameRowInput[]): string[] {
+  const set = new Set<string>()
+  for (const r of rows) {
+    if (r.team_a_id) set.add(r.team_a_id)
+    if (r.team_b_id) set.add(r.team_b_id)
+  }
+  return [...set]
+}
+
+/**
  * 批量解析名称快照——消除逐 id SELECT。
  * 对 teams/topics/events/rounds 各发起一次批量 IN 查询取回映射，
  * 在内存按 id 回填。createMatch/updateMatch 通常只传单行，因此此处面向
@@ -298,7 +313,7 @@ function collectIds(rows: NameRowInput[], pick: (r: NameRowInput) => string | nu
  */
 function resolveNamesBatch(rows: NameRowInput[]): ResolvedNames[] {
   const db = getDb()
-  const teamIds = collectIds(rows, (r) => r.team_a_id ?? r.team_b_id)
+  const teamIds = collectTeamIds(rows)
   const topicIds = collectIds(rows, (r) => r.topic_id)
   const eventIds = collectIds(rows, (r) => r.event_id)
   const roundIds = collectIds(rows, (r) => r.round_id)
@@ -511,8 +526,8 @@ function upsertFromDraw(data: {
     const sameOrder = existing.team_a_id === data.teamAffId
     if (!sameOrder) {
       // 换边归位：team_a/team_b 列语义是正方/反方，需连同 name 快照一起刷新。
-      // 注：resolveNames 的 collectIds 每行仅收 team_a 一个 id（既有局限），
-      // 此处直接按 id 查名，避免 team_b_name 落 null。
+      // 注：resolveNamesBatch 现已支持双向收集（P5-015 附带清理），此处保留
+      // 直接按 id 查名的就地实现（语义等价，避免为此改函数签名）。
       const nameOf = (teamId: string | null): string | null =>
         teamId
           ? ((db.prepare('SELECT name FROM teams WHERE id = ?').get(teamId) as { name: string } | undefined)?.name ?? null)
