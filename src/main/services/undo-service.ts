@@ -518,7 +518,13 @@ function applyEventReverse(
         return 1
       }
       if (action === 'delete' && beforeRound) {
-        recreateRoundWithId(beforeRound)
+        // P5-004：新格式 = round 聚合快照（含 CASCADE 关联按原 ID 恢复）；
+        // 旧 plain 单行（历史遗留 log）按旧语义仅恢复主体
+        if (isRoundDeleteSnapshot(beforeRound)) {
+          recreateRoundAggregate(beforeRound)
+        } else {
+          recreateRoundWithId(beforeRound)
+        }
         return 1
       }
       break
@@ -542,7 +548,13 @@ function applyEventReverse(
         return 1
       }
       if (action === 'delete' && beforeTeam) {
-        recreateTeamWithId(beforeTeam)
+        // P5-005：新格式 = team 聚合快照（team_history + group/match/item 归属恢复）；
+        // 旧 plain 单行（历史遗留 log）按旧语义仅恢复主体
+        if (isTeamDeleteSnapshot(beforeTeam)) {
+          recreateTeamDeleteAggregate(beforeTeam)
+        } else {
+          recreateTeamWithId(beforeTeam)
+        }
         return 1
       }
       break
@@ -645,7 +657,11 @@ function applyEventForward(
         return 1
       }
       if (action === 'delete' && beforeRound) {
-        eventRepo.deleteRound(beforeRound.id)
+        // P5-004：重放删除（CASCADE 再次发生）；新旧格式均取 round.id
+        const roundId = isRoundDeleteSnapshot(beforeRound)
+          ? String(beforeRound.round.id)
+          : beforeRound.id
+        eventRepo.deleteRound(roundId)
         return 1
       }
       break
@@ -668,7 +684,12 @@ function applyEventForward(
         return 1
       }
       if (action === 'delete' && beforeTeam) {
-        eventRepo.deleteTeam(beforeTeam.id)
+        // P5-005：重放删除（team_history CASCADE + matches/items SET NULL 由 FK 触发）；
+        // 新旧格式均取 team.id
+        const teamId = isTeamDeleteSnapshot(beforeTeam)
+          ? String(beforeTeam.team.id)
+          : beforeTeam.id
+        eventRepo.deleteTeam(teamId)
         return 1
       }
       break
@@ -874,21 +895,24 @@ function isAggregateSnapshot(obj: unknown): obj is EventAggregateSnapshot {
   return typeof obj === 'object' && obj !== null && 'event' in obj
 }
 
+/** 聚合重建通用辅助：按 SELECT * 原始行动态列插入（键集 = 表实际列，新增列自动跟随） */
+function insertRawRows(table: string, rows: SnapRow[]): void {
+  if (rows.length === 0) return
+  const db = getDb()
+  const cols = Object.keys(rows[0])
+  const stmt = db.prepare(
+    `INSERT INTO ${table} (${cols.map((c) => '"' + c + '"').join(', ')}) VALUES (${cols
+      .map((c) => '@' + c)
+      .join(', ')})`
+  )
+  for (const r of rows) stmt.run(r)
+}
+
 /** 按依赖序重建 event 聚合（全部原 id / 原值） */
 function recreateEventAggregate(snap: EventAggregateSnapshot): void {
-  const db = getDb()
   // 动态列推导：快照行即 SELECT * 的原始行（键集/顺序 = 表实际列），
   // 用 named 参数（@col）原值插入——天然对齐真实表结构，新增列自动跟随。
-  const insertRaw = (table: string, rows: SnapRow[]): void => {
-    if (rows.length === 0) return
-    const cols = Object.keys(rows[0])
-    const stmt = db.prepare(
-      `INSERT INTO ${table} (${cols.map((c) => '"' + c + '"').join(', ')}) VALUES (${cols
-        .map((c) => '@' + c)
-        .join(', ')})`
-    )
-    for (const r of rows) stmt.run(r)
-  }
+  const insertRaw = insertRawRows
 
   insertRaw('events', [snap.event])
   insertRaw('team_groups', snap.teamGroups)
@@ -932,6 +956,153 @@ export function logEventCreateSnapshot(eventId: string): string | null {
     console.warn('[undo] logEventCreateSnapshot failed (undo disabled for this op):', e)
     return null
   }
+}
+
+// ============================================================
+// Round / Team 删除聚合快照（P5-004 + P5-005）
+//
+// ROUND_DELETE 经 FK CASCADE 连带清空：matches（round_id CASCADE，
+// 20260916）/ match_judges / match_judge_votes（随 match CASCADE）/
+// draw_sessions(+items)（round_id CASCADE）/ round_topic_groups。
+// TEAM_DELETE 连带：team_history（CASCADE）+ matches.team_a_id/team_b_id
+// （SET NULL，20260916）+ draw_session_items.team_a_id/team_b_id（SET NULL）。
+// 旧实现仅快照/恢复主体单行 →「伪完整撤销」。本区复用 Event 聚合的
+// SnapRow + insertRawRows 模式做最小聚合修复。
+// timer_sessions 的 event/round/team 引用均为无 FK 裸列（不级联、快照列
+// 兜底显示），与 EVENT_DELETE 同语义「有意排除」。
+// ============================================================
+
+export interface RoundDeleteSnapshot {
+  round: SnapRow
+  matches: SnapRow[]
+  matchJudges: SnapRow[]
+  matchJudgeVotes: SnapRow[]
+  drawSessions: Array<SnapRow & { items: SnapRow[] }>
+  roundTopicGroups: SnapRow[]
+}
+
+/** 采集 round 删除聚合快照（删除前调用；round 不存在时返回 null） */
+export function collectRoundDeleteSnapshot(roundId: string): RoundDeleteSnapshot | null {
+  const db = getDb()
+  const round = db.prepare('SELECT * FROM rounds WHERE id = ?').get(roundId) as
+    | SnapRow
+    | undefined
+  if (!round) return null
+  const matches = db.prepare('SELECT * FROM matches WHERE round_id = ?').all(roundId) as SnapRow[]
+  const matchJudges: SnapRow[] = []
+  const matchJudgeVotes: SnapRow[] = []
+  for (const mid of matches.map((m) => m.id as string)) {
+    matchJudges.push(
+      ...(db.prepare('SELECT * FROM match_judges WHERE match_id = ?').all(mid) as SnapRow[])
+    )
+    matchJudgeVotes.push(
+      ...(db.prepare('SELECT * FROM match_judge_votes WHERE match_id = ?').all(mid) as SnapRow[])
+    )
+  }
+  const drawSessions = (
+    db.prepare('SELECT * FROM draw_sessions WHERE round_id = ? ORDER BY draw_time').all(roundId) as SnapRow[]
+  ).map(
+    (s) =>
+      ({
+        ...s,
+        items: db
+          .prepare('SELECT * FROM draw_session_items WHERE session_id = ?')
+          .all(s.id as string) as SnapRow[]
+      }) as SnapRow & { items: SnapRow[] }
+  )
+  const roundTopicGroups = db
+    .prepare('SELECT * FROM round_topic_groups WHERE round_id = ?')
+    .all(roundId) as SnapRow[]
+  return { round, matches, matchJudges, matchJudgeVotes, drawSessions, roundTopicGroups }
+}
+
+/** 新格式（聚合快照）判定；否则视为历史 plain 单行（round），走旧语义 */
+function isRoundDeleteSnapshot(obj: unknown): obj is RoundDeleteSnapshot {
+  return typeof obj === 'object' && obj !== null && 'round' in obj
+}
+
+/** 按依赖序重建 round 聚合（全部原 id / 原值；round 先于其子表） */
+function recreateRoundAggregate(snap: RoundDeleteSnapshot): void {
+  insertRawRows('rounds', [snap.round])
+  insertRawRows('round_topic_groups', snap.roundTopicGroups)
+  for (const s of snap.drawSessions) {
+    const { items, ...sessionRow } = s
+    void items
+    insertRawRows('draw_sessions', [sessionRow])
+    insertRawRows('draw_session_items', s.items)
+  }
+  insertRawRows('matches', snap.matches)
+  insertRawRows('match_judges', snap.matchJudges)
+  insertRawRows('match_judge_votes', snap.matchJudgeVotes)
+}
+
+export interface TeamDeleteSnapshot {
+  team: SnapRow
+  teamHistory: SnapRow[]
+  /** 删除时 team 作为 team_a_id 的 matches 行 id（SET NULL 待恢复） */
+  matchTeamAIds: string[]
+  /** 删除时 team 作为 team_b_id 的 matches 行 id */
+  matchTeamBIds: string[]
+  /** 删除时 team 作为 team_a_id 的 draw_session_items 行 id */
+  itemTeamAIds: string[]
+  /** 删除时 team 作为 team_b_id 的 draw_session_items 行 id */
+  itemTeamBIds: string[]
+}
+
+/** 采集 team 删除聚合快照（删除前调用；team 不存在时返回 null） */
+export function collectTeamDeleteSnapshot(teamId: string): TeamDeleteSnapshot | null {
+  const db = getDb()
+  const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId) as
+    | SnapRow
+    | undefined
+  if (!team) return null
+  const ids = (sql: string): string[] =>
+    (db.prepare(sql).all(teamId) as Array<{ id: string }>).map((r) => r.id)
+  return {
+    team,
+    teamHistory: db.prepare('SELECT * FROM team_history WHERE team_id = ?').all(teamId) as SnapRow[],
+    matchTeamAIds: ids('SELECT id FROM matches WHERE team_a_id = ?'),
+    matchTeamBIds: ids('SELECT id FROM matches WHERE team_b_id = ?'),
+    itemTeamAIds: ids('SELECT id FROM draw_session_items WHERE team_a_id = ?'),
+    itemTeamBIds: ids('SELECT id FROM draw_session_items WHERE team_b_id = ?')
+  }
+}
+
+/** 新格式（聚合快照）判定；否则视为历史 plain 单行（team），走旧语义 */
+function isTeamDeleteSnapshot(obj: unknown): obj is TeamDeleteSnapshot {
+  return typeof obj === 'object' && obj !== null && 'team' in obj
+}
+
+/**
+ * 重建 team 删除聚合：team 本体（原 ID）+ team_history（原 ID）+
+ * 回填 matches / draw_session_items 中被 SET NULL 的 team 归属。
+ * group 已被删（或跨 event）时 group_id 按 SET NULL 语义置 null，不伪造悬挂引用。
+ */
+function recreateTeamDeleteAggregate(snap: TeamDeleteSnapshot): void {
+  const db = getDb()
+  let groupId = (snap.team.group_id as string | null) ?? null
+  if (groupId) {
+    const g = db
+      .prepare('SELECT id, event_id FROM team_groups WHERE id = ?')
+      .get(groupId) as { id: string; event_id: string } | undefined
+    if (!g || g.event_id !== snap.team.event_id) groupId = null
+  }
+  db.prepare('INSERT INTO teams (id, name, event_id, group_id) VALUES (?, ?, ?, ?)').run(
+    snap.team.id,
+    snap.team.name,
+    snap.team.event_id,
+    groupId
+  )
+  insertRawRows('team_history', snap.teamHistory)
+  const rebind = (table: string, col: 'team_a_id' | 'team_b_id', rowIds: string[]): void => {
+    if (rowIds.length === 0) return
+    const ph = rowIds.map(() => '?').join(', ')
+    db.prepare(`UPDATE ${table} SET ${col} = ? WHERE id IN (${ph})`).run(snap.team.id, ...rowIds)
+  }
+  rebind('matches', 'team_a_id', snap.matchTeamAIds)
+  rebind('matches', 'team_b_id', snap.matchTeamBIds)
+  rebind('draw_session_items', 'team_a_id', snap.itemTeamAIds)
+  rebind('draw_session_items', 'team_b_id', snap.itemTeamBIds)
 }
 
 // ---------- draw 反向操作 ----------

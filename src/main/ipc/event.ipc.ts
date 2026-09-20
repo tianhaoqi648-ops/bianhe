@@ -31,7 +31,12 @@ import type {
 } from '../db/repository/event.repo'
 import { IPC_CHANNELS } from '../../shared/types'
 import type { RandomAssignGroupParams } from '../../shared/types'
-import { withUndoLog, collectEventAggregateSnapshot } from '../services/undo-service'
+import {
+  withUndoLog,
+  collectEventAggregateSnapshot,
+  collectRoundDeleteSnapshot,
+  collectTeamDeleteSnapshot
+} from '../services/undo-service'
 import { wrap, wrapWithUndo } from './utils'
 
 /**
@@ -183,7 +188,10 @@ export function registerEventIpc(): void {
         targetType: 'round',
         targetId: id,
         label: `删除轮次 ${before?.name ?? id.slice(0, 8)}`,
-        getBefore: () => before,
+        // P5-004：删除轮次经 FK CASCADE 连带清空 matches/match_judges/votes/
+        // draw_sessions(+items)/round_topic_groups，快照需完整采集，
+        // 撤销时才能恢复实际业务状态（对照 EVENT_DELETE 聚合先例）
+        getBefore: () => collectRoundDeleteSnapshot(id),
         execute: () => eventRepo.deleteRound(id),
         getAfter: () => null
       })
@@ -246,7 +254,10 @@ export function registerEventIpc(): void {
         targetType: 'team',
         targetId: id,
         label: `删除队伍 ${before?.name ?? id.slice(0, 8)}`,
-        getBefore: () => before,
+        // P5-005：删除队伍连带 team_history（CASCADE）并使 matches /
+        // draw_session_items 的 team_a_id/team_b_id（SET NULL）置空，
+        // 快照需完整采集，撤销时才能恢复实际业务状态
+        getBefore: () => collectTeamDeleteSnapshot(id),
         execute: () => eventRepo.deleteTeam(id),
         getAfter: () => null
       })
