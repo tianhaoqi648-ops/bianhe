@@ -66,6 +66,26 @@ function assertNonEmptyString(value: unknown, name: string): asserts value is st
   assertParam(typeof value === 'string' && value.length > 0, `参数 ${name} 必须为非空字符串`)
 }
 
+// ------------------------------------------------------------
+// P5-013：IMPORT_EXECUTE check-then-act 并发边界。
+// EXECUTE 主体内唯一 await 点是 findDuplicates（异步去重）；existing 快照
+// 拉取与 createMany 之间的窗口可被另一 IMPORT_EXECUTE 的同步写插入——
+// 两个导入都在对方写入前完成 check → 同一批数据绕过去重重复入库。
+// 复用 backup/index.ts 的 opChain 同款最小模式：EXECUTE 主体串行化，
+// check（existing + findDuplicates）与 act（createMany）纳入同一安全边界，
+// 后执行导入的 existing 快照必然包含先执行导入已写入的数据。
+// 仅 EXECUTE 之间互斥：preview / findDuplicates（纯读）不上链。
+// ------------------------------------------------------------
+let importChain: Promise<unknown> = Promise.resolve()
+function serializeImport<T>(fn: () => Promise<T>): Promise<T> {
+  const run = importChain.then(fn, fn)
+  importChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 export function registerImportIpc(): void {
   // 解析文件（parseFile 为 async，需 await）
   ipcMain.handle(
@@ -98,224 +118,228 @@ export function registerImportIpc(): void {
         if (!topics || topics.length === 0) {
           return { success: false, error: '没有可导入的辩题数据' }
         }
-        const duplicateGroups: ImportExecuteResult['duplicateGroups'] = []
-        let imported = 0
-        let duplicates = 0
-        let failed = 0
-        // T2：部分失败/警示收集。主流程不阻断，但反馈给用户（见下方 return）。
-        const warnings: string[] = []
+        // P5-013：主体（createBatch → … → 审计日志）串行化，check 与 act
+        // 之间不存在另一 EXECUTE 的插入窗口（见 serializeImport 注释）。
+        return await serializeImport(async () => {
+          const duplicateGroups: ImportExecuteResult['duplicateGroups'] = []
+          let imported = 0
+          let duplicates = 0
+          let failed = 0
+          // T2：部分失败/警示收集。主流程不阻断，但反馈给用户（见下方 return）。
+          const warnings: string[] = []
 
-        // 1. 创建批次记录（占位，imported_count=0）
-        const batch = importBatchRepo.createBatch({
-          file_name: fileName ?? '未命名文件',
-          total_count: topics.length,
-          imported_count: 0,
-          duplicates_count: 0,
-          failed_count: 0
-        })
+          // 1. 创建批次记录（占位，imported_count=0）
+          const batch = importBatchRepo.createBatch({
+            file_name: fileName ?? '未命名文件',
+            total_count: topics.length,
+            imported_count: 0,
+            duplicates_count: 0,
+            failed_count: 0
+          })
 
-        // 1.5 持久化「加入候选」动作：在 createMany 之前完成，
-        // 这样同一批次内若有多个相同新值，第一次 add 后续自动去重；
-        // 用户重启后仍可在筛选/抽取筛选中看到这些新候选。
-        // try-catch 单独捕获，失败不阻断主流程（仅记录日志）。
-        if (valueMapping) {
-          try {
-            for (const field of Object.keys(valueMapping) as CandidateField[]) {
-              const valueMap = valueMapping[field]
-              if (!valueMap) continue
-              for (const originValue of Object.keys(valueMap)) {
-                const rule = valueMap[originValue]
-                if (rule?.action === 'add') {
-                  addCandidateValue(field, originValue)
+          // 1.5 持久化「加入候选」动作：在 createMany 之前完成，
+          // 这样同一批次内若有多个相同新值，第一次 add 后续自动去重；
+          // 用户重启后仍可在筛选/抽取筛选中看到这些新候选。
+          // try-catch 单独捕获，失败不阻断主流程（仅记录日志）。
+          if (valueMapping) {
+            try {
+              for (const field of Object.keys(valueMapping) as CandidateField[]) {
+                const valueMap = valueMapping[field]
+                if (!valueMap) continue
+                for (const originValue of Object.keys(valueMap)) {
+                  const rule = valueMap[originValue]
+                  if (rule?.action === 'add') {
+                    addCandidateValue(field, originValue)
+                  }
                 }
               }
-            }
-          } catch (e) {
-            console.error('[import.ipc] addCandidateValue failed:', e)
-          }
-        }
-
-        // 2. 拉取全量已有辩题用于去重比对
-        // P3-5: pageSize=100000 作为全量拉取的 workaround（topicRepo 无 listAll 方法）
-        const { items: existing } = topicRepo.listTopics({ page: 1, pageSize: 100000 })
-
-        // 3. 一次性批量构造本次新题的临时 Topic 对象（唯一占位 id）
-        // 替代原 O(n²) 每条单独 findDuplicates 的实现
-        // P3-3/P4-16: weight 使用 t.weight ?? 1.0 兜底，保留用户在导入数据中指定的权重，
-        // 避免硬编码 1.0 覆盖用户输入（影响后续加权抽取的概率分布）
-        const newTopics: Topic[] = topics.map((t, i) => ({
-          id: `__new_${i}__`,
-          title: t.title,
-          type: t.type ?? null,
-          domain: t.domain ?? null,
-          difficulty: t.difficulty ?? null,
-          source: t.source ?? null,
-          source_type: t.source_type ?? null,
-          tags: t.tags ?? null,
-          weight: t.weight ?? 1.0,
-          status: t.status ?? 'active',
-          batch_id: null,
-          created_at: '',
-          updated_at: ''
-        }))
-
-        // 4. 批量去重：新题 + 库内已存在，单次 findDuplicates 调用
-        // 候选集包含所有新题，使新题之间的互相重复也能被检测
-        const allTopics: Topic[] = checkDuplicates ? [...newTopics, ...existing] : []
-        const dupGroups =
-          checkDuplicates && allTopics.length >= 2 ? await findDuplicates(allTopics) : []
-
-        // 构建占位 id → 同组其他成员 id 列表 的映射
-        const groupMembersByTopicId = new Map<string, string[]>()
-        for (const g of dupGroups) {
-          const ids = g.topics.map((p) => p.id)
-          for (const id of ids) {
-            if (!groupMembersByTopicId.has(id)) {
-              groupMembersByTopicId.set(id, [])
-            }
-            for (const otherId of ids) {
-              if (otherId !== id) {
-                groupMembersByTopicId.get(id)!.push(otherId)
-              }
+            } catch (e) {
+              console.error('[import.ipc] addCandidateValue failed:', e)
             }
           }
-        }
 
-        // 占位 id → 已导入新题的真实 id 映射。
-        // Bug 1.2: 跟踪已导入新题的占位 ID，仅把"已导入的同组新题"作为冲突，
-        // 避免新题之间互相加入 conflictIds 导致同组所有新题全部被跳过。
-        const importedPlaceholders = new Set<string>()
+          // 2. 拉取全量已有辩题用于去重比对
+          // P3-5: pageSize=100000 作为全量拉取的 workaround（topicRepo 无 listAll 方法）
+          const { items: existing } = topicRepo.listTopics({ page: 1, pageSize: 100000 })
 
-        // 5. 遍历 topics，跳过重复项，非重复项构造 topicsToImport 并设置 batch_id
-        const topicsToImport: TopicCreateInput[] = []
-        for (let i = 0; i < topics.length; i++) {
-          const t = topics[i]
-          const placeholderId = `__new_${i}__`
-          if (checkDuplicates) {
-            const memberIds = groupMembersByTopicId.get(placeholderId) ?? []
-            const conflictIds: string[] = []
-            for (const mid of memberIds) {
-              if (mid.startsWith('__new_')) {
-                // Bug 1.2: 只把已导入的同组新题视为冲突（避免新题之间互相重复入库）
-                // 第一题入库时同组后续题还未处理 → 不冲突；后续题遇到已入库的同组题 → 冲突
-                if (mid !== placeholderId && importedPlaceholders.has(mid)) {
-                  conflictIds.push(mid)
-                }
-              } else {
-                // 库内已存在题
-                conflictIds.push(mid)
-              }
-            }
-            if (conflictIds.length > 0) {
-              duplicates++
-              duplicateGroups.push({
-                title: t.title,
-                existingIds: conflictIds
-              })
-              continue
-            }
-          }
-          topicsToImport.push({
+          // 3. 一次性批量构造本次新题的临时 Topic 对象（唯一占位 id）
+          // 替代原 O(n²) 每条单独 findDuplicates 的实现
+          // P3-3/P4-16: weight 使用 t.weight ?? 1.0 兜底，保留用户在导入数据中指定的权重，
+          // 避免硬编码 1.0 覆盖用户输入（影响后续加权抽取的概率分布）
+          const newTopics: Topic[] = topics.map((t, i) => ({
+            id: `__new_${i}__`,
             title: t.title,
             type: t.type ?? null,
             domain: t.domain ?? null,
             difficulty: t.difficulty ?? null,
             source: t.source ?? null,
-            // P3-4: source_type 改为 null 兜底，避免硬编码 '自定义' 覆盖用户意图
             source_type: t.source_type ?? null,
             tags: t.tags ?? null,
-            batch_id: batch.id
-          })
-          // Bug 1.2: 标记该占位 ID 已导入，后续同组新题遇到时才视为冲突
-          importedPlaceholders.add(placeholderId)
-        }
+            weight: t.weight ?? 1.0,
+            status: t.status ?? 'active',
+            batch_id: null,
+            created_at: '',
+            updated_at: ''
+          }))
 
-        // 6. 批量插入（事务包装，失败回滚）
-        let createdIds: string[] = []
-        try {
-          const created = topicRepo.createMany(topicsToImport)
-          createdIds = created.map((t) => t.id)
-          imported = created.length
-        } catch (e) {
-          // createMany 内部事务失败会回滚，所有题都不会入库
-          failed = topicsToImport.length
-          console.error('[import.ipc] createMany failed:', e)
-          // Bug P1-6: 清理孤立的占位批次记录，避免残留 failed_count=total_count 的批次
-          try {
-            importBatchRepo.deleteBatch(batch.id)
-          } catch (e2) {
-            console.error('[import.ipc] deleteBatch on createMany failure failed:', e2)
-          }
-        }
+          // 4. 批量去重：新题 + 库内已存在，单次 findDuplicates 调用
+          // 候选集包含所有新题，使新题之间的互相重复也能被检测
+          const allTopics: Topic[] = checkDuplicates ? [...newTopics, ...existing] : []
+          const dupGroups =
+            checkDuplicates && allTopics.length >= 2 ? await findDuplicates(allTopics) : []
 
-        // 6.1 新题关联题组（赛事题库 T2 桥接）：
-        //   - 指定目标题组 groupIds（可多选）→ 新题关联到每个目标题组
-        //   - 未指定 → 新题默认进「默认题库」
-        // T2 修复：失败不阻断主流程（本次批量导入已成功），但把部分失败
-        // 反馈到 warnings / PARTIAL_FAILURE，而非静默仅 console.error。
-        if (imported > 0 && createdIds.length > 0) {
-          try {
-            if (groupIds && groupIds.length > 0) {
-              for (const gid of groupIds) {
-                topicGroupRepo.addTopicsToGroup(gid, createdIds)
+          // 构建占位 id → 同组其他成员 id 列表 的映射
+          const groupMembersByTopicId = new Map<string, string[]>()
+          for (const g of dupGroups) {
+            const ids = g.topics.map((p) => p.id)
+            for (const id of ids) {
+              if (!groupMembersByTopicId.has(id)) {
+                groupMembersByTopicId.set(id, [])
               }
-            } else {
-              topicGroupRepo.ensureTopicsInDefaultGroup(createdIds)
-            }
-          } catch (e) {
-            console.error('[import.ipc] topic group association failed:', e)
-            const reason = e instanceof Error ? e.message : String(e)
-            warnings.push(`辩题已成功导入，但关联题组失败：${reason}`)
-          }
-        }
-
-        // Bug 2.2: 7. 回填批次真实统计（失败不阻断返回，仅记录日志）
-        try {
-          importBatchRepo.updateBatchStats(batch.id, {
-            imported_count: imported,
-            duplicates_count: duplicates,
-            failed_count: failed
-          })
-        } catch (e) {
-          console.error('[import.ipc] updateBatchStats failed:', e)
-        }
-
-        // Bug 2.2: 8. 写入审计日志（失败不阻断返回，仅记录日志）
-        try {
-          auditRepo.addLog({
-            action: 'import',
-            target_type: 'topic',
-            target_id: batch.id,
-            operator: 'renderer',
-            detail: {
-              imported,
-              duplicates,
-              failed,
-              total: topics.length,
-              batchId: batch.id,
-              fileName: batch.file_name
-            }
-          })
-        } catch (e) {
-          console.error('[import.ipc] addLog failed:', e)
-        }
-
-        return {
-          success: true,
-          data: { imported, duplicates, failed, duplicateGroups, batchId: batch.id, warnings },
-          // T2：存在部分失败时透出 PARTIAL_FAILURE（成功导入但题组关联未完全成功）。
-          // success 保持 true——主流程（数据入库）已成功，不阻断 renderer 展示导入结果。
-          ...(warnings.length > 0
-            ? {
-                appError: {
-                  name: 'AppError',
-                  code: 'PARTIAL_FAILURE' as const,
-                  message: warnings.join('；'),
-                  userMessage: warnings.join('；')
+              for (const otherId of ids) {
+                if (otherId !== id) {
+                  groupMembersByTopicId.get(id)!.push(otherId)
                 }
               }
-            : {})
-        }
+            }
+          }
+
+          // 占位 id → 已导入新题的真实 id 映射。
+          // Bug 1.2: 跟踪已导入新题的占位 ID，仅把"已导入的同组新题"作为冲突，
+          // 避免新题之间互相加入 conflictIds 导致同组所有新题全部被跳过。
+          const importedPlaceholders = new Set<string>()
+
+          // 5. 遍历 topics，跳过重复项，非重复项构造 topicsToImport 并设置 batch_id
+          const topicsToImport: TopicCreateInput[] = []
+          for (let i = 0; i < topics.length; i++) {
+            const t = topics[i]
+            const placeholderId = `__new_${i}__`
+            if (checkDuplicates) {
+              const memberIds = groupMembersByTopicId.get(placeholderId) ?? []
+              const conflictIds: string[] = []
+              for (const mid of memberIds) {
+                if (mid.startsWith('__new_')) {
+                  // Bug 1.2: 只把已导入的同组新题视为冲突（避免新题之间互相重复入库）
+                  // 第一题入库时同组后续题还未处理 → 不冲突；后续题遇到已入库的同组题 → 冲突
+                  if (mid !== placeholderId && importedPlaceholders.has(mid)) {
+                    conflictIds.push(mid)
+                  }
+                } else {
+                  // 库内已存在题
+                  conflictIds.push(mid)
+                }
+              }
+              if (conflictIds.length > 0) {
+                duplicates++
+                duplicateGroups.push({
+                  title: t.title,
+                  existingIds: conflictIds
+                })
+                continue
+              }
+            }
+            topicsToImport.push({
+              title: t.title,
+              type: t.type ?? null,
+              domain: t.domain ?? null,
+              difficulty: t.difficulty ?? null,
+              source: t.source ?? null,
+              // P3-4: source_type 改为 null 兜底，避免硬编码 '自定义' 覆盖用户意图
+              source_type: t.source_type ?? null,
+              tags: t.tags ?? null,
+              batch_id: batch.id
+            })
+            // Bug 1.2: 标记该占位 ID 已导入，后续同组新题遇到时才视为冲突
+            importedPlaceholders.add(placeholderId)
+          }
+
+          // 6. 批量插入（事务包装，失败回滚）
+          let createdIds: string[] = []
+          try {
+            const created = topicRepo.createMany(topicsToImport)
+            createdIds = created.map((t) => t.id)
+            imported = created.length
+          } catch (e) {
+            // createMany 内部事务失败会回滚，所有题都不会入库
+            failed = topicsToImport.length
+            console.error('[import.ipc] createMany failed:', e)
+            // Bug P1-6: 清理孤立的占位批次记录，避免残留 failed_count=total_count 的批次
+            try {
+              importBatchRepo.deleteBatch(batch.id)
+            } catch (e2) {
+              console.error('[import.ipc] deleteBatch on createMany failure failed:', e2)
+            }
+          }
+
+          // 6.1 新题关联题组（赛事题库 T2 桥接）：
+          //   - 指定目标题组 groupIds（可多选）→ 新题关联到每个目标题组
+          //   - 未指定 → 新题默认进「默认题库」
+          // T2 修复：失败不阻断主流程（本次批量导入已成功），但把部分失败
+          // 反馈到 warnings / PARTIAL_FAILURE，而非静默仅 console.error。
+          if (imported > 0 && createdIds.length > 0) {
+            try {
+              if (groupIds && groupIds.length > 0) {
+                for (const gid of groupIds) {
+                  topicGroupRepo.addTopicsToGroup(gid, createdIds)
+                }
+              } else {
+                topicGroupRepo.ensureTopicsInDefaultGroup(createdIds)
+              }
+            } catch (e) {
+              console.error('[import.ipc] topic group association failed:', e)
+              const reason = e instanceof Error ? e.message : String(e)
+              warnings.push(`辩题已成功导入，但关联题组失败：${reason}`)
+            }
+          }
+
+          // Bug 2.2: 7. 回填批次真实统计（失败不阻断返回，仅记录日志）
+          try {
+            importBatchRepo.updateBatchStats(batch.id, {
+              imported_count: imported,
+              duplicates_count: duplicates,
+              failed_count: failed
+            })
+          } catch (e) {
+            console.error('[import.ipc] updateBatchStats failed:', e)
+          }
+
+          // Bug 2.2: 8. 写入审计日志（失败不阻断返回，仅记录日志）
+          try {
+            auditRepo.addLog({
+              action: 'import',
+              target_type: 'topic',
+              target_id: batch.id,
+              operator: 'renderer',
+              detail: {
+                imported,
+                duplicates,
+                failed,
+                total: topics.length,
+                batchId: batch.id,
+                fileName: batch.file_name
+              }
+            })
+          } catch (e) {
+            console.error('[import.ipc] addLog failed:', e)
+          }
+
+          return {
+            success: true,
+            data: { imported, duplicates, failed, duplicateGroups, batchId: batch.id, warnings },
+            // T2：存在部分失败时透出 PARTIAL_FAILURE（成功导入但题组关联未完全成功）。
+            // success 保持 true——主流程（数据入库）已成功，不阻断 renderer 展示导入结果。
+            ...(warnings.length > 0
+              ? {
+                  appError: {
+                    name: 'AppError',
+                    code: 'PARTIAL_FAILURE' as const,
+                    message: warnings.join('；'),
+                    userMessage: warnings.join('；')
+                  }
+                }
+              : {})
+          }
+        })
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) }
       }
