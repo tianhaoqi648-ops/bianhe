@@ -14,6 +14,7 @@
 
 import path from 'path'
 import type { ToolDefinition } from '@shared/agent-types'
+import { assertNotSensitivePath } from '@shared/security/pathGuard'
 import { parseFile } from '@main/services/import-engine'
 import { eventRepo } from '@main/db/repository/event.repo'
 import { createEvent as createEventWithDefaultGroup } from '@main/services/event-service'
@@ -107,6 +108,10 @@ export const importEventBatchTool: ToolDefinition<
     if (fileType !== 'xlsx' && fileType !== 'csv' && fileType !== 'docx') {
       throw new Error('[import_event_batch] fileType 必须为 xlsx / csv / docx 之一')
     }
+
+    // 2.5 P5-014：路径安全防护（与人工 import 通道同级）——LLM 可控路径
+    // 不得读取系统敏感目录，防止敏感文件内容进入 LLM 上下文。
+    assertNotSensitivePath(filePath)
 
     // 3. 调用 parseFile 解析文件（文件不存在 / 解析失败时 parseFile 抛错，透传给 agent-loop）
     const parsed = await parseFile(filePath, fileType)

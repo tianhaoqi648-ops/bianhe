@@ -14,6 +14,7 @@
 // ============================================================
 
 import type { ToolDefinition } from '@shared/agent-types'
+import { assertNotSensitivePath } from '@shared/security/pathGuard'
 import type {
   Event,
   ScheduleApplyResult,
@@ -138,6 +139,9 @@ export const scheduleImportTool: ToolDefinition<
     if (!filePath) {
       throw new Error('[import_event_schedule] filePath 不能为空')
     }
+    // P5-014：路径安全防护（与人工 schedule 通道同级）——LLM 可控路径
+    // 不得读取系统敏感目录，防止敏感文件内容进入 LLM 上下文。
+    assertNotSensitivePath(filePath)
 
     // 2. 校验赛事存在
     requireEvent(eventId)

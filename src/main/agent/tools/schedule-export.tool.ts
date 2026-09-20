@@ -16,6 +16,7 @@ import { app } from 'electron'
 import { mkdir, writeFile } from 'fs/promises'
 import * as path from 'node:path'
 import type { ToolDefinition } from '@shared/agent-types'
+import { assertNotSensitivePath } from '@shared/security/pathGuard'
 import { eventRepo } from '@main/db/repository/event.repo'
 import { matchRepo } from '@main/db/repository/match.repo'
 import { buildScheduleRows, buildScheduleWorkbookBuffer } from '../../services/schedule-io'
@@ -94,6 +95,11 @@ export const scheduleExportTool: ToolDefinition<
             defaultExportDir(),
             `${safeFileName(event.name)}-赛程-${new Date().toISOString().slice(0, 10)}.xlsx`
           )
+
+    // 4.5 P5-014：路径安全防护（与人工 export 通道同级）——LLM 可控路径
+    // 不得写入系统敏感目录，防止覆盖敏感文件。在 mkdir/writeFile 之前执行，
+    // 拒绝时不产生任何文件系统副作用。
+    assertNotSensitivePath(outPath)
 
     // 5. 确保目录存在并写入文件
     await mkdir(path.dirname(outPath), { recursive: true })
