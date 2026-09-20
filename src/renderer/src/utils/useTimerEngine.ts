@@ -184,6 +184,9 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     pauseCountRef.current = 0
     // P4 修复：新环节开始时重置累计暂停时长
     pauseDurationRef.current = 0
+    // P5-015：新环节开始不应有未关闭的暂停区间——清零 pauseStartRef，
+    // 防止 start/restore 后残留的旧时间戳在下次 resume 时被误累计。
+    pauseStartRef.current = 0
     // 非计时环节：开始时播放 atMs != 0 的铃声（tick 被跳过，需在此手动触发）
     if (stage.timingMode === 'untimed') {
       const startBells = stage.bells
@@ -224,6 +227,12 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       endBells.forEach((bell) => {
         callbacksRef.current.onBell(stageIndex, bell)
       })
+    }
+    // P5-015：paused 状态下结束环节（如 pause → nextStage）时，先结账尚未
+    // 关闭的暂停区间（与 resume 同款逻辑），避免旧环节 actualMs 漏扣该段暂停。
+    if (pauseStartRef.current > 0) {
+      pauseDurationRef.current += Date.now() - pauseStartRef.current
+      pauseStartRef.current = 0
     }
     // P4 修复：扣除累计暂停时长，避免 actualMs 被暂停时间虚增
     const actualMs = Date.now() - stageStartedAtRef.current - pauseDurationRef.current
@@ -473,6 +482,12 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     pendingStageStart.forEach((stageIndex) => {
       void handleStageStart(stageIndex)
     })
+    // P5-015：自动切换后新环节以 paused 等待用户恢复——开启新的暂停区间，
+    // 使等待时间与手动 pause 同语义，被 resume 时扣除而非计入 actualMs。
+    // 置于 handleStageStart 之后（其同步段会清零 pauseStartRef）。
+    if (pendingStageStart.length > 0) {
+      pauseStartRef.current = Date.now()
+    }
     if (pendingFinish) {
       callbacksRef.current.onFinish()
     }
@@ -632,6 +647,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     })
     // P1-3 修复：进入新环节后开始计时记录
     void handleStageStart(targetIdx)
+    // P5-015：新环节以 paused 等待用户恢复——开启新的暂停区间（同自动切换语义）
+    pauseStartRef.current = Date.now()
   }, [format, stopRaf, handleStageEnd, handleStageStart])
 
   /**
@@ -706,6 +723,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     })
     // P1-3 修复：回退到上一环节后开始计时记录
     void handleStageStart(targetIdx)
+    // P5-015：新环节以 paused 等待用户恢复——开启新的暂停区间（同自动切换语义）
+    pauseStartRef.current = Date.now()
   }, [format, stopRaf, handleStageEnd, handleStageStart])
 
   const addTime = useCallback((ms: number) => {
@@ -858,6 +877,8 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
       stageRemainingMsCache: newCache
     }))
     void handleStageStart(nextIndex)
+    // P5-015：新环节以 paused 等待用户恢复——开启新的暂停区间（同自动切换语义）
+    pauseStartRef.current = Date.now()
   }, [format, handleStageEnd, handleStageStart, stopRaf])
 
   /**
@@ -933,6 +954,10 @@ export function useTimerEngine(opts: UseTimerEngineOpts) {
     stopRaf()
     sessionIdRef.current = session.id
     pauseCountRef.current = 0
+    // P5-015：清零暂停区间状态——恢复后的等待不计入 actualMs（恢复语义），
+    // 同时防止上一场次残留的未关闭区间在下次 resume 时被误累计。
+    pauseStartRef.current = 0
+    pauseDurationRef.current = 0
     const stage = session.formatSnapshot.stages[session.currentStageIndex]
     const cache: Record<number, StageCacheValue> = { ...(session.stageRemainingCache ?? {}) }
     if (cache[session.currentStageIndex] === undefined) {
