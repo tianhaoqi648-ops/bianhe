@@ -445,6 +445,26 @@ function deleteSession(id: string): { success: true } {
 }
 
 /**
+ * P5-006：确认会话可被重抽/删除（业务守卫，main 层边界）。
+ *
+ * 已确认（settings.confirmed=true）的抽签会话已把结果写入队伍历史
+ * （team_history，正式比赛历史）；deleteSession 会手工删除该历史
+ * （team_history 与 draw_sessions 之间无外键），重抽/删除将导致
+ * 正式历史永久丢失。因此 confirmed 会话禁止重抽与删除。
+ *
+ * is_test 会话不产生 team_history（confirm 时跳过），测试场景删除
+ * 无风险，不受此守卫限制（行为保持不变）。
+ *
+ * @throws Error 会话已确认（调用方经现有错误体系返回用户可读信息）
+ */
+function assertSessionNotConfirmed(id: string): void {
+  const detail = getSessionById(id)
+  if (detail?.settings?.confirmed === true && detail.settings.is_test !== true) {
+    throw new Error('该抽签结果已确认并计入队伍历史，不能重抽或删除')
+  }
+}
+
+/**
  * 按 id 更新抽取会话的 settings（合并 patch 后整体写回 JSON 字符串）。
  *
  * 用于"确定抽取结果"流程：把 confirmed=true 合并进 settings。
@@ -703,6 +723,7 @@ export const drawRepo = {
   getSessionById,
   listSessions,
   deleteSession,
+  assertSessionNotConfirmed,
   updateSessionSettings,
   // 明细 CRUD
   createSessionItem,

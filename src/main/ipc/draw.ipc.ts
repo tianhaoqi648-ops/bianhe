@@ -86,6 +86,8 @@ export function registerDrawIpc(): void {
   ipcMain.handle(IPC_CHANNELS.DRAW_DELETE_SESSION, async (_event, id: string) => {
     try {
       assertNonEmptyString(id, 'id')
+      // P5-006：已确认会话（结果已计入队伍历史）禁止删除（main 层守卫，不可被 renderer 绕过）
+      drawRepo.assertSessionNotConfirmed(id)
       drawRepo.deleteSession(id)
       return { success: true, data: true }
     } catch (e) {
@@ -136,6 +138,10 @@ export function registerDrawIpc(): void {
         assertParam(typeof params.topic_count === 'number' && params.topic_count > 0, '参数 topic_count 必须为正整数')
         // 查询旧会话（用于审计日志 + undo before 快照，独立于 withUndoLog 事务）
         ctx.oldSession = drawRepo.getSessionById(oldSessionId)
+        // P5-006：已确认会话（结果已计入队伍历史）禁止重抽（main 层守卫，
+        // 不可被 renderer 绕过）；守卫在 withUndoLog 之前抛出 → 不写 log、
+        // 不删除任何数据（fail-safe）
+        drawRepo.assertSessionNotConfirmed(oldSessionId)
         return withUndoLog({
           storeName: 'draw',
           action: 'redraw',
