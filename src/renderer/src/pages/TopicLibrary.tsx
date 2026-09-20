@@ -20,7 +20,7 @@ import {
   Tag,
   Row,
   Col,
-  Radio,
+  Segmented,
   Select
 } from 'antd';
 import type { MenuProps } from 'antd';
@@ -98,7 +98,8 @@ import {
   pageContainerStyle,
   toolbarStyle,
   emptyStateStyle,
-  cardStyle
+  cardStyle,
+  primaryButtonStyle
 } from '../styles/shared';
 import { spacing, colorGold, fontSize, radius, modalWidth} from '../styles/tokens';
 import { useHotkeys, useHotkeyScope } from '../hooks/useHotkeys';
@@ -1484,7 +1485,7 @@ export default function TopicLibrary() {
         </Sider>
 
         {/* 主区域 */}
-        <Content style={{ ...pageContainerStyle, padding: `0 ${spacing.lg} ${spacing.lg}` }}>
+        <Content style={pageContainerStyle}>
           <PageHeader title="题库管理" subtitle="维护辩题库，支持批量导入与编辑" />
           {/* 顶部工具栏（SubTask 20.2：拆分为两行） */}
           <div
@@ -1592,20 +1593,15 @@ export default function TopicLibrary() {
                   <Button icon={<MoreOutlined />}>更多</Button>
                 </Dropdown>
                 {/* 视图切换：表格 / 卡片（SubTask 9.1） */}
-                <Radio.Group
+                <Segmented
                   value={viewMode}
-                  onChange={(e) => setViewMode(e.target.value as ViewMode)}
+                  onChange={(v) => setViewMode(v as ViewMode)}
                   size="small"
-                  optionType="button"
-                  buttonStyle="solid"
-                >
-                  <Radio.Button value="table">
-                    <TableOutlined /> 表格
-                  </Radio.Button>
-                  <Radio.Button value="card">
-                    <AppstoreOutlined /> 卡片
-                  </Radio.Button>
-                </Radio.Group>
+                  options={[
+                    { value: 'table', label: <><TableOutlined /> 表格</> },
+                    { value: 'card', label: <><AppstoreOutlined /> 卡片</> }
+                  ]}
+                />
                 {/* 表格密度切换器：紧邻视图切换器右侧（SubTask 9.2） */}
                 <Select
                   size="small"
@@ -1618,7 +1614,12 @@ export default function TopicLibrary() {
                     { value: 'comfortable', label: '宽松' }
                   ]}
                 />
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleCreate}
+                  style={primaryButtonStyle}
+                >
                   新增辩题
                 </Button>
               </Space>
@@ -1794,7 +1795,7 @@ export default function TopicLibrary() {
             style={{ background: token.colorBgContainer, ...cardStyle }}
             title={
               <Space>
-                <Text strong>辩题列表</Text>
+                <Text strong style={{ fontSize: fontSize.h4 }}>辩题列表</Text>
                 <Text type="secondary" style={{ fontSize: fontSize.caption }}>
                   共 {store.total} 条
                 </Text>
@@ -1930,7 +1931,7 @@ export default function TopicLibrary() {
               /* 卡片视图（SubTask 9.3 + 20.4）：响应式 Row/Col + 金色色条
                  响应式断点：移动 <768px → 2 列 (xs=12) / 平板 768-1023px → 3 列 (md=8) / 桌面 ≥1024px → 4 列 (lg=6)
                  保留 Task 14 添加的 staggered 进入动画 */
-              <Row gutter={[16, 16]}>
+              <Row gutter={[spacing.lg, spacing.lg]}>
                 {filteredItems.length === 0 ? (
                   <Col span={24}>
                     <EmptyState type="topic" description="当前题库筛选下暂无辩题" />

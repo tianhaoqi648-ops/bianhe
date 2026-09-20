@@ -14,7 +14,7 @@ import {
   Row,
   Col,
   Progress,
-  Radio,
+  Segmented,
   Badge,
   Select,
   Tooltip,
@@ -1032,7 +1032,7 @@ export default function EventManage() {
         onDragStart={(e) => handleCardDragStart(e, event.id)}
         style={{
           background: token.colorBgContainer,
-          borderRadius: radius.md,
+          borderRadius: radius.lg,
           padding: `${spacing.sm} ${spacing.md}`,
           marginBottom: spacing.sm,
           borderLeft: `4px solid ${barColor}`,
@@ -1176,26 +1176,21 @@ export default function EventManage() {
   return (
     <>
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ ...pageContainerStyle, padding: `0 ${spacing.lg} ${spacing.lg}`, overflow: 'auto' }}>
+        <Content style={{ ...pageContainerStyle, overflow: 'auto' }}>
           <PageHeader
             title="赛事管理"
             subtitle="组织赛事与抽取历史"
             extra={
               <Space>
-                <Radio.Group
+                <Segmented
                   value={viewMode}
-                  onChange={(e) => setViewMode(e.target.value)}
-                  optionType="button"
-                  buttonStyle="solid"
+                  onChange={(v) => setViewMode(v as 'list' | 'board')}
                   size="small"
-                >
-                  <Radio.Button value="list">
-                    <UnorderedListOutlined /> 列表
-                  </Radio.Button>
-                  <Radio.Button value="board">
-                    <AppstoreOutlined /> 看板
-                  </Radio.Button>
-                </Radio.Group>
+                  options={[
+                    { value: 'list', label: <><UnorderedListOutlined /> 列表</> },
+                    { value: 'board', label: <><AppstoreOutlined /> 看板</> }
+                  ]}
+                />
                 <Button
                   icon={<ImportOutlined />}
                   onClick={() => setImportModalOpen(true)}
@@ -1290,7 +1285,7 @@ export default function EventManage() {
             /* 列表视图：原卡片网格（保持原有逻辑不变） */
             <AccentCard
               size="small"
-              style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+              style={{ marginBottom: spacing.lg, background: token.colorBgContainer, ...cardStyle }}
               title={
                 <Space>
                   <Text strong>赛事列表</Text>
@@ -1324,7 +1319,7 @@ export default function EventManage() {
             /* 看板视图：按状态分三列，支持拖拽改变状态 */
             <AccentCard
               size="small"
-              style={{ marginBottom: spacing.md, background: token.colorBgContainer, ...cardStyle }}
+              style={{ marginBottom: spacing.lg, background: token.colorBgContainer, ...cardStyle }}
               title={
                 <Space>
                   <AppstoreOutlined />
@@ -1380,10 +1375,10 @@ export default function EventManage() {
           {selectedEvent && (
             <Card
               size="small"
-              style={{ marginTop: spacing.lg, background: token.colorBgContainer, ...cardStyle }}
+              style={{ background: token.colorBgContainer, ...cardStyle }}
               title={
                 <div style={titleBarStyle}>
-                  <Text strong>{selectedEvent.name}</Text>
+                  <Text strong style={{ fontSize: fontSize.h4 }}>{selectedEvent.name}</Text>
                   {selectedEvent.status && (
                     <Tag color={STATUS_TAG[selectedEvent.status]?.color ?? 'default'}>
                       {STATUS_TAG[selectedEvent.status]?.label ?? selectedEvent.status}

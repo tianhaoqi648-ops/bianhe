@@ -541,7 +541,6 @@ export default function TeamManage() {
         <Space size={4}>
           <Button
             size="small"
-            type="primary"
             icon={<CalendarOutlined />}
             onClick={() => handleManageHistory(tv.team)}
           >
@@ -565,7 +564,7 @@ export default function TeamManage() {
   return (
     <>
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ ...pageContainerStyle, padding: '0 16px 16px', overflow: 'auto' }}>
+        <Content style={{ ...pageContainerStyle, overflow: 'auto' }}>
           <PageHeader
             title="队伍管理"
             subtitle="维护参赛队伍信息"
@@ -672,7 +671,7 @@ export default function TeamManage() {
           <AccentCard
             size="small"
             style={{ background: token.colorBgContainer, ...cardStyle }}
-            title={<Text strong>队伍列表</Text>}
+            title={<Text strong style={{ fontSize: fontSize.h4 }}>队伍列表</Text>}
           >
             <BrandSpin spinning={loading}>
               {filteredTeams.length === 0 ? (

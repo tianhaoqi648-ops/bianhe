@@ -82,7 +82,7 @@ import BackupExportModal from '../components/settings/BackupExportModal';
 import BackupImportModal from '../components/settings/BackupImportModal';
 import UpdateCard from '../components/settings/UpdateCard';
 import { statCardStyle, cardStyle } from '../styles/shared';
-import { spacing, fontSize, radius, colorPrimary, modalWidth} from '../styles/tokens';
+import { spacing, fontSize, radius, colorPrimary, colorPurple, modalWidth} from '../styles/tokens';
 import { useToast } from '../hooks/useToast';
 import type {
   ExportFormat,
@@ -1385,7 +1385,7 @@ export default function Settings() {
             type="inner"
             title={
               <Space>
-                <ExperimentOutlined style={{ color: '#722ed1' }} />
+                <ExperimentOutlined style={{ color: colorPurple }} />
                 <span>AI 语义层</span>
                 <Tag color="orange">可选</Tag>
               </Space>
@@ -1556,7 +1556,7 @@ export default function Settings() {
             <Button onClick={() => void handleResetRecDir()} disabled={!recDirConfigured}>
               恢复默认（用户数据目录）
             </Button>
-            <Text type="secondary" style={{ fontSize: 12 }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption }}>
               比赛/计时录音的存放路径，可在设置中随时更换。
             </Text>
           </Space>
@@ -1572,7 +1572,7 @@ export default function Settings() {
               <Radio value="whole">整场一轨</Radio>
               <Radio value="split">按环节分段</Radio>
             </Radio.Group>
-            <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption, marginLeft: 8 }}>
               整场一轨为单一录音；按环节分段会在每个环节切换时独立成轨。
             </Text>
           </div>
@@ -1590,7 +1590,7 @@ export default function Settings() {
                 <Radio value="m4a" disabled={!m4aSupported}>M4A（AAC · 体积小且可拖动）{!m4aSupported && ' · 当前系统不支持'}</Radio>
               </Radio.Group>
             </div>
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
               WAV 录音可拖动进度条但体积较大（推荐）；M4A（AAC）体积小且可拖动；WebM 体积更小但进度条不可拖动。
             </Text>
           </div>
@@ -1626,7 +1626,7 @@ export default function Settings() {
                 <Radio value="api">仅 API</Radio>
               </Radio.Group>
             </div>
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
               本地优先：先用本地 Whisper，本地缺失或转写失败时自动用已配置的 AI API 兜底。
             </Text>
           </div>
@@ -1644,7 +1644,7 @@ export default function Settings() {
                 ]}
               />
             </div>
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
               whisper.cpp 全程本地离线；FunASR 需本机已装 Python + funasr 包，两者不可同时作为本地实现。
             </Text>
           </div>
@@ -1664,7 +1664,7 @@ export default function Settings() {
                   恢复默认（用户数据目录）
                 </Button>
               </Space>
-              <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption, marginLeft: 8 }}>
                 选择数据根目录后，转写数据（模型/转码器）将存放在该目录下的 stt 子目录；默认 userData/stt。
               </Text>
             </div>
@@ -1689,13 +1689,13 @@ export default function Settings() {
                   }))}
                 />
               </div>
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
                 模型文件随引擎一起下载，切换模型后需重新下载对应文件才可使用该模型的本地转写。small 属入门级，medium 更准。
               </Text>
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
                 模型下载需网络。无网络或镜像不可达时，可“导入本地模型”（ggml-*.bin），或改用“仅 API”。
               </Text>
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 2, display: 'block' }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 2, display: 'block' }}>
                 本地 whisper 不支持 m4a/webm 解码：本地转写建议用 WAV 录音；若用 m4a 请把引擎设为“仅 API”。
               </Text>
             </div>
@@ -1713,7 +1713,7 @@ export default function Settings() {
                   }))}
                 />
               </div>
-              <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+              <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
                 FunASR 模型由本机 funasr 首次运行时自动拉取（需联网），无需在此单独下载；若未装运行环境请先 pip install funasr。
               </Text>
             </div>
@@ -1741,7 +1741,7 @@ export default function Settings() {
                   ) : sttStatus.installed ? (
                     <Space wrap>
                       <Tag color="green" icon={<CheckCircleOutlined />}>已安装</Tag>
-                      <span style={{ fontSize: 12 }}>
+                      <span style={{ fontSize: fontSize.caption }}>
                         模型 {sttStatus.model ?? sttModel} · 体积 {formatSize(sttStatus.fileSize)}
                       </span>
                       <Button onClick={() => void refreshSttStatus(sttModel)}>刷新</Button>
@@ -1790,13 +1790,13 @@ export default function Settings() {
                         ) : (
                           <Tag color="red">FunASR 运行环境未就绪</Tag>
                         )}
-                        <span style={{ fontSize: 12 }}>模型 {sttFunAsrStatus.model ?? sttFunAsrModel}</span>
+                        <span style={{ fontSize: fontSize.caption }}>模型 {sttFunAsrStatus.model ?? sttFunAsrModel}</span>
                         <Button onClick={() => void refreshSttFunAsrStatus()}>刷新</Button>
                       </Space>
                       {!sttFunAsrStatus.envOk &&
                         (sttFunAsrStatus.missingDeps && sttFunAsrStatus.missingDeps.length > 0 ? (
                           <div>
-                            <Text type="danger" style={{ fontSize: 12 }}>
+                            <Text type="danger" style={{ fontSize: fontSize.caption }}>
                               已检测到 Python 与 funasr，但缺少推理依赖，真转写会因缺模块失败：
                             </Text>
                             <Space wrap style={{ marginTop: 6 }}>
@@ -1804,12 +1804,12 @@ export default function Settings() {
                                 <Tag color="red" key={dep}>{dep}</Tag>
                               ))}
                             </Space>
-                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                            <Text type="secondary" style={{ fontSize: fontSize.caption, display: 'block', marginTop: 4 }}>
                               点击下方“一键安装 FunASR 依赖”补全后即可转写。
                             </Text>
                           </div>
                         ) : (
-                          <Text type="danger" style={{ fontSize: 12 }}>
+                          <Text type="danger" style={{ fontSize: fontSize.caption }}>
                             {sttFunAsrStatus.hasPython === false
                               ? '未检测到 Python：请先安装 Python（python.org 勾选 “Add to PATH” 或微软商店），装好后回到本页点击“一键安装 FunASR 依赖”。'
                               : sttFunAsrStatus.hasPython === true
@@ -1848,7 +1848,7 @@ export default function Settings() {
                       status="active"
                     />
                     {sttFfmpegStatus.error && (
-                      <Text type="danger" style={{ fontSize: 12 }}>{sttFfmpegStatus.error}</Text>
+                      <Text type="danger" style={{ fontSize: fontSize.caption }}>{sttFfmpegStatus.error}</Text>
                     )}
                     <Space>
                       <Button loading>正在下载转码器…</Button>
@@ -1860,7 +1860,7 @@ export default function Settings() {
                 ) : sttFfmpegStatus.installed ? (
                   <Space wrap>
                     <Tag color="green" icon={<CheckCircleOutlined />}>已安装</Tag>
-                    <span style={{ fontSize: 12 }}>
+                    <span style={{ fontSize: fontSize.caption }}>
                       体积 {formatSize(sttFfmpegStatus.fileSize)}
                     </span>
                     <Button onClick={() => void refreshSttFfmpegStatus()}>刷新</Button>
@@ -1883,7 +1883,7 @@ export default function Settings() {
                     </Button>
                     <Button onClick={() => void handleFfmpegPick()}>选择本机已有 ffmpeg</Button>
                     {sttFfmpegStatus.error && (
-                      <Text type="danger" style={{ fontSize: 12 }}>下载提示：{sttFfmpegStatus.error}</Text>
+                      <Text type="danger" style={{ fontSize: fontSize.caption }}>下载提示：{sttFfmpegStatus.error}</Text>
                     )}
                   </Space>
                 )
@@ -1891,7 +1891,7 @@ export default function Settings() {
                 <Button onClick={() => void refreshSttFfmpegStatus()}>检查转码器状态</Button>
               )}
             </div>
-            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+            <Text type="secondary" style={{ fontSize: fontSize.caption, marginTop: 4, display: 'block' }}>
               m4a/webm 本地转写需 ffmpeg 转码器（免费，按需下载，不增大安装包）；无 ffmpeg 时自动回退 AI API。
             </Text>
           </div>
@@ -2050,11 +2050,11 @@ export default function Settings() {
           </Card>
         </Col>
         <Col xs={12} sm={12} md={6}>
-          <Card size="small" style={statCardStyle('#722ed1')}>
+          <Card size="small" style={statCardStyle(colorPurple)}>
             <Statistic
               title="内置版本"
               value={officialInfo.version}
-              prefix={<SafetyCertificateOutlined style={{ color: '#722ed1' }} />}
+              prefix={<SafetyCertificateOutlined style={{ color: colorPurple }} />}
             />
           </Card>
         </Col>
@@ -2201,7 +2201,7 @@ export default function Settings() {
             size="small"
             title={
               <Space>
-                <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
+                <SafetyCertificateOutlined style={{ color: colorPurple }} />
                 <span>去重检查</span>
               </Space>
             }
@@ -2276,12 +2276,7 @@ export default function Settings() {
   // ====== 渲染：备份与迁移 Tab（一键备份/恢复 + 自动备份管理） ======
   const renderBackupTab = () => (
     <div>
-      <PageHeader
-        title="备份与迁移"
-        subtitle="一键备份所有数据，或从备份文件恢复"
-      />
-
-      <Row gutter={[16, 16]}>
+      <Row gutter={[spacing.lg, spacing.lg]}>
         <Col span={12}>
           <Card
             hoverable
@@ -2336,7 +2331,7 @@ export default function Settings() {
             管理备份
           </Button>
         </Space>
-        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: fontSize.caption }}>
           自动备份为数据库文件级别（.db），每 24 小时自动触发一次，保留最近 7 份。与上方「一键备份」相互独立。
           备份均为纯数据库数据，不包含录音音频文件。
         </Text>
@@ -2557,7 +2552,7 @@ export default function Settings() {
             <SafetyCertificateOutlined style={{ color: colorPrimary }} />
             <span>工具确认规则</span>
             <Tooltip title="配置 Agent 调用工具时是否需要人工确认">
-              <InfoCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
+              <InfoCircleOutlined style={{ color: token.colorTextSecondary, fontSize: fontSize.caption }} />
             </Tooltip>
           </Space>
         }
@@ -2575,7 +2570,7 @@ export default function Settings() {
               <div key={level} style={{ marginBottom: spacing.sm }}>
                 <Divider orientation="left" style={{ marginTop: 0, marginBottom: spacing.sm }}>
                   <Tag color={cfg.color}>{cfg.label}</Tag>
-                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: fontSize.caption }}>
                     默认{cfg.defaultRequireConfirm ? '需确认' : '无需确认'}
                   </Text>
                 </Divider>
@@ -2668,7 +2663,7 @@ export default function Settings() {
   return (
     <>
       <Layout style={{ background: 'transparent', minHeight: 'calc(100vh - 64px)' }}>
-        <Content style={{ padding: spacing.xl, overflow: 'auto' }}>
+        <Content style={{ padding: spacing.xxl, overflow: 'auto' }}>
           {/* 顶部页头 */}
           <PageHeader
             title="应用设置"
