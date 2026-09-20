@@ -80,6 +80,8 @@ export default function TopicPickModal({
   // 快速新建
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<typeof EMPTY_CREATE>({ ...EMPTY_CREATE });
+  // B3：快速新建标题缺项的内联校验状态
+  const [createTitleStatus, setCreateTitleStatus] = useState<'' | 'error'>('');
   const [creating, setCreating] = useState(false);
 
   // 当前赛事绑定的题库（新建题可选「加入」）
@@ -132,7 +134,8 @@ export default function TopicPickModal({
   const handleCreateOk = async () => {
     const title = createForm.title.trim();
     if (!title) {
-      toast.warning('请输入辩题标题');
+      // B3：表单缺项反馈内联化（toast → inline）
+      setCreateTitleStatus('error');
       return;
     }
     setCreating(true);
@@ -288,8 +291,12 @@ export default function TopicPickModal({
             <Input
               placeholder="辩题标题（必填）"
               maxLength={200}
+              status={createTitleStatus || undefined}
               value={createForm.title}
-              onChange={(e) => setCreate({ title: e.target.value })}
+              onChange={(e) => {
+                setCreate({ title: e.target.value });
+                if (createTitleStatus) setCreateTitleStatus('');
+              }}
             />
             <Space size={8} wrap>
               <Select

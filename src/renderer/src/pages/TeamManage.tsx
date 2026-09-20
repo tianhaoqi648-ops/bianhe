@@ -95,6 +95,8 @@ export default function TeamManage() {
   const [filterEventId, setFilterEventId] = useState<string | undefined>(undefined);
   // 分组筛选：'__none__' = 未分组；undefined = 全部分组
   const [filterGroupId, setFilterGroupId] = useState<string | undefined>(undefined);
+  // B3：加载失败态——不再让失败伪装成「暂无队伍」
+  const [loadError, setLoadError] = useState(false);
   // 视图切换：list = 卡片网格视图，group = 按赛事分组视图，table = 表格视图（支持批量分配）
   const [viewMode, setViewMode] = useState<'list' | 'group' | 'table'>('list');
 
@@ -109,8 +111,8 @@ export default function TeamManage() {
 
   // 批量导入弹窗
   const [batchModalOpen, setBatchModalOpen] = useState(false);
-  const [batchText, setBatchText] = useState('');
-  const [batchEventId, setBatchEventId] = useState<string | undefined>(undefined);
+  // B3：批量导入校验迁移至 Form rules
+  const [batchForm] = Form.useForm<{ eventId: string; names: string }>();
   const [batchImporting, setBatchImporting] = useState(false);
 
   // 批量分配分组（仅当筛选了赛事时启用）
@@ -172,6 +174,7 @@ export default function TeamManage() {
       });
       await Promise.all(historyPromises);
       setHistoryMap(newHistoryMap);
+      setLoadError(false);
       // 更新历史数量
       setAllTeams(
         teamList.map((tv) => ({
@@ -180,7 +183,8 @@ export default function TeamManage() {
         }))
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '加载失败');
+      setLoadError(true);
+      toast.errorFrom(e, '加载队伍失败');
     } finally {
       setLoading(false);
     }
@@ -321,7 +325,7 @@ export default function TeamManage() {
           toast.success('队伍已删除');
           await loadAll();
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '删除失败');
+          toast.errorFrom(e, '删除队伍失败');
         }
       }
     });
@@ -350,7 +354,7 @@ export default function TeamManage() {
       setEditingTeam(null);
       await loadAll();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '保存队伍失败');
     }
   };
 
@@ -364,27 +368,17 @@ export default function TeamManage() {
 
   // ====== 批量导入 ======
   const handleOpenBatch = () => {
-    setBatchEventId(allEvents[0]?.id);
-    setBatchText('');
     setBatchModalOpen(true);
   };
 
-  const handleBatchImport = async () => {
-    if (!batchEventId) {
-      toast.error('请选择所属赛事');
-      return;
-    }
-    const lines = batchText.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length === 0) {
-      toast.error('请输入至少一支队伍名');
-      return;
-    }
+  const handleBatchImport = async (values: { eventId: string; names: string }) => {
+    const lines = values.names.split('\n').map((l) => l.trim()).filter(Boolean);
     setBatchImporting(true);
     let success = 0;
     let fail = 0;
     for (const name of lines) {
       try {
-        const res = await window.eventAPI.createTeam({ name, event_id: batchEventId });
+        const res = await window.eventAPI.createTeam({ name, event_id: values.eventId });
         if (res.success) success++;
         else fail++;
       } catch {
@@ -393,7 +387,6 @@ export default function TeamManage() {
     }
     setBatchImporting(false);
     setBatchModalOpen(false);
-    setBatchText('');
     toast.success(`导入完成：成功 ${success} 支，失败 ${fail} 支`);
     await loadAll();
   };
@@ -407,7 +400,7 @@ export default function TeamManage() {
       toast.success('分组已更新');
       await loadAll();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '分配失败');
+      toast.errorFrom(e, '分配分组失败');
     }
   };
 
@@ -436,7 +429,7 @@ export default function TeamManage() {
       setBatchAssignGroupId(undefined);
       await loadAll();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '批量分配失败');
+      toast.errorFrom(e, '批量分配失败');
     } finally {
       setBatchAssigning(false);
     }
@@ -685,25 +678,45 @@ export default function TeamManage() {
               {filteredTeams.length === 0 ? (
                 <EmptyState
                   type="default"
-                  description={loading ? '加载中...' : '暂无队伍'}
+                  description={
+                    loading
+                      ? '加载中...'
+                      : loadError
+                        ? '队伍加载失败'
+                        : filterEventId !== undefined || filterGroupId !== undefined
+                          ? '当前筛选条件下暂无队伍'
+                          : '暂无队伍'
+                  }
                   cta={
                     loading
                       ? undefined
-                      : [
-                          {
-                            text: '新建队伍',
-                            icon: <PlusOutlined />,
-                            onClick: () => {
-                              setEditingTeam(null);
-                              setTeamModalOpen(true);
-                            }
-                          },
-                          {
-                            text: '批量导入',
-                            icon: <TeamOutlined />,
-                            onClick: handleOpenBatch
-                          }
-                        ]
+                      : loadError
+                        ? [{ text: '重试', onClick: () => { setLoadError(false); void loadAll(); } }]
+                        : filterEventId !== undefined || filterGroupId !== undefined
+                          ? [
+                              {
+                                text: '清除筛选',
+                                onClick: () => {
+                                  setFilterEventId(undefined);
+                                  setFilterGroupId(undefined);
+                                }
+                              }
+                            ]
+                          : [
+                              {
+                                text: '新建队伍',
+                                icon: <PlusOutlined />,
+                                onClick: () => {
+                                  setEditingTeam(null);
+                                  setTeamModalOpen(true);
+                                }
+                              },
+                              {
+                                text: '批量导入',
+                                icon: <TeamOutlined />,
+                                onClick: handleOpenBatch
+                              }
+                            ]
                   }
                 />
               ) : viewMode === 'list' ? (
@@ -785,26 +798,45 @@ export default function TeamManage() {
         title="批量导入队伍"
         open={batchModalOpen}
         onCancel={() => setBatchModalOpen(false)}
-        onOk={handleBatchImport}
+        onOk={() => batchForm.submit()}
         okText="导入"
         cancelText="取消"
         width={modalWidth.sm}
         destroyOnHidden
         okButtonProps={{ style: primaryButtonStyle, loading: batchImporting }}
       >
-        <Form layout="vertical">
-          <Form.Item label="所属赛事" required>
+        <Form
+          form={batchForm}
+          layout="vertical"
+          onFinish={handleBatchImport}
+          initialValues={{ eventId: allEvents[0]?.id }}
+        >
+          <Form.Item
+            name="eventId"
+            label="所属赛事"
+            rules={[{ required: true, message: '请选择所属赛事' }]}
+          >
             <Select
-              value={batchEventId}
-              onChange={setBatchEventId}
               placeholder="选择赛事"
               options={allEvents.map((e) => ({ label: e.name, value: e.id }))}
             />
           </Form.Item>
-          <Form.Item label="队伍名称" help="每行输入一支队伍名，空行会被忽略">
+          <Form.Item
+            name="names"
+            label="队伍名称"
+            help="每行输入一支队伍名，空行会被忽略"
+            rules={[
+              { required: true, message: '请输入至少一支队伍名' },
+              {
+                validator(_, value: string) {
+                  const lines = (value ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+                  if (lines.length > 0) return Promise.resolve();
+                  return Promise.reject(new Error('请输入至少一支队伍名'));
+                }
+              }
+            ]}
+          >
             <Input.TextArea
-              value={batchText}
-              onChange={(e) => setBatchText(e.target.value)}
               rows={8}
               placeholder={'北京大学辩论队\n清华大学辩论队\n复旦大学辩论队'}
             />

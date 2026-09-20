@@ -520,7 +520,7 @@ export default function DrawPage() {
       }
       // 失败：退出全屏仪式，回到结果页展示错误
       setCeremonyOpen(false);
-      toast.error(e instanceof Error ? e.message : '抽取失败');
+      toast.errorFrom(e, '抽取失败');
     } finally {
       setAnimating(false);
     }
@@ -590,7 +590,7 @@ export default function DrawPage() {
       }
     } catch (e) {
       setCeremonyOpen(false);
-      toast.error(e instanceof Error ? e.message : '抽取失败');
+      toast.errorFrom(e, '抽取失败');
     } finally {
       setAnimating(false);
     }
@@ -611,7 +611,7 @@ export default function DrawPage() {
       }
     } catch (e) {
       setCeremonyOpen(false);
-      toast.error(e instanceof Error ? e.message : '重抽失败');
+      toast.errorFrom(e, '重抽失败');
     } finally {
       setAnimating(false);
     }
@@ -640,7 +640,7 @@ export default function DrawPage() {
     } catch (e) {
       // safeIpc 已显示分类 Toast，此处仅兜底
       if (e instanceof Error && e.message !== '确定结果失败') {
-        toast.error(e instanceof Error ? e.message : '确定结果失败');
+        toast.errorFrom(e, '确定结果失败');
       }
     } finally {
       setConfirming(false);
@@ -660,7 +660,7 @@ export default function DrawPage() {
       }
       toast.success(`已导出 ${res.data.count} 条记录到：${res.data.filePath}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.errorFrom(e, '导出抽取结果失败');
     }
   };
 

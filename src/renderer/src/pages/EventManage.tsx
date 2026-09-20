@@ -354,7 +354,7 @@ export default function EventManage() {
       toast.success(`已移至「${STATUS_TAG[newStatus].label}」`);
       await eventStore.listEvents();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '状态更新失败');
+      toast.errorFrom(err, '状态更新失败');
     }
   };
 
@@ -387,7 +387,7 @@ export default function EventManage() {
           }
           await eventStore.listEvents();
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '删除失败');
+          toast.errorFrom(e, '删除赛事失败');
         }
       }
     });
@@ -430,7 +430,7 @@ export default function EventManage() {
       setEditingRound(null);
       await eventStore.listRoundsByEvent(selectedEvent.id);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '保存轮次失败');
     }
   };
   const handleDeleteRound = (round: Round) => {
@@ -447,7 +447,7 @@ export default function EventManage() {
             await eventStore.listRoundsByEvent(selectedEvent.id);
           }
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '删除失败');
+          toast.errorFrom(e, '删除轮次失败');
         }
       }
     });
@@ -485,7 +485,7 @@ export default function EventManage() {
           setPresetModalOpen(false);
           await eventStore.listRoundsByEvent(selectedEvent.id);
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '应用失败');
+          toast.errorFrom(e, '应用难度模板失败');
         }
       }
     });
@@ -520,7 +520,7 @@ export default function EventManage() {
       setEditingTeam(null);
       await eventStore.listTeamsByEvent(selectedEvent.id);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '保存队伍失败');
     }
   };
   const handleDeleteTeam = (team: Team) => {
@@ -537,7 +537,7 @@ export default function EventManage() {
             await eventStore.listTeamsByEvent(selectedEvent.id);
           }
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '删除失败');
+          toast.errorFrom(e, '删除队伍失败');
         }
       }
     });
@@ -569,7 +569,7 @@ export default function EventManage() {
         toast.success('已取消队徽');
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '绑定队徽失败');
     } finally {
       setBadgePickerTeam(null);
     }
@@ -624,7 +624,7 @@ export default function EventManage() {
       setEditingGroup(null);
       await eventStore.fetchGroups(selectedEvent.id);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '保存分组失败');
     }
   };
   const handleDeleteGroup = (group: TeamGroup) => {
@@ -645,7 +645,7 @@ export default function EventManage() {
             ]);
           }
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '删除失败');
+          toast.errorFrom(e, '删除分组失败');
         }
       }
     });
@@ -661,7 +661,7 @@ export default function EventManage() {
       }
       toast.success('分组已更新');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '分配失败');
+      toast.errorFrom(e, '分配分组失败');
     }
   };
   // 批量分配选中队伍到分组
@@ -684,7 +684,7 @@ export default function EventManage() {
       setBatchAssignGroupId(undefined);
       await eventStore.listTeamsByEvent(selectedEvent.id);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '批量分配失败');
+      toast.errorFrom(e, '批量分配失败');
     }
   };
 
@@ -698,7 +698,7 @@ export default function EventManage() {
         setTeamHistory(res.data as TeamHistory[]);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '加载历史失败');
+      toast.errorFrom(e, '加载队伍历史失败');
     }
   };
   const handleAddHistory = async (data: {
@@ -744,7 +744,7 @@ export default function EventManage() {
       }
       toast.success(`已导出到 ${res.data.filePath}，共 ${res.data.count} 项`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.errorFrom(e, '导出赛事数据失败');
     } finally {
       setExporting(false);
     }

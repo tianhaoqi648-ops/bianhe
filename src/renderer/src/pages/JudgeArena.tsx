@@ -38,6 +38,7 @@ import {
   Tooltip,
   theme
 } from 'antd'
+import { resolveErrorMessage } from '../utils/errorMessage'
 import {
   AuditOutlined,
   AimOutlined,
@@ -778,7 +779,7 @@ export default function JudgeArena(): JSX.Element {
         toast.error(res.error || '删除评审历史失败')
       }
     } catch (e) {
-      toast.error(`删除评审历史失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.errorFrom(e, '删除评审历史失败')
     }
   }
 
@@ -905,7 +906,7 @@ export default function JudgeArena(): JSX.Element {
       toast.success(`转写完成：${segs.length} 段（${effEngine === 'api' ? 'AI API' : effEngine === 'local' || effEngine === 'local-first(local)' ? '本地引擎' : 'AI API（本地引擎未装，已自动兜底）'}）`)
       return segs
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(resolveErrorMessage(e, '转写失败'))
       return null
     } finally {
       setTranscribing(false)
@@ -1010,7 +1011,7 @@ export default function JudgeArena(): JSX.Element {
       setCoachSpeech(text)
       toast.success('所选录音已转写并填入复盘内容')
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(resolveErrorMessage(e, '转写失败'))
     }
   }
 
@@ -1043,7 +1044,7 @@ export default function JudgeArena(): JSX.Element {
         setError(res.message ?? `工具执行失败（${res.code ?? 'unknown'}）`)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(resolveErrorMessage(e, 'AI 评审执行失败'))
     } finally {
       setRunning(false)
     }
@@ -1124,7 +1125,7 @@ export default function JudgeArena(): JSX.Element {
       if (!res.success) { toast.error(res.error ?? '导出复盘报告失败'); return }
       if (res.data?.filePath) toast.success(`复盘报告已导出：${res.data.filePath}`)
     } catch (e) {
-      toast.error(`导出复盘报告失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.errorFrom(e, '导出复盘报告失败')
     }
   }
 
@@ -1145,7 +1146,7 @@ export default function JudgeArena(): JSX.Element {
       if (!res.success) { toast.error(res.error ?? '导出 HTML 复盘失败'); return }
       if (res.data?.filePath) toast.success(`HTML 复盘已导出：${res.data.filePath}`)
     } catch (e) {
-      toast.error(`导出 HTML 复盘失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.errorFrom(e, '导出 HTML 复盘失败')
     }
   }
 
@@ -1177,7 +1178,7 @@ export default function JudgeArena(): JSX.Element {
         onError(res.message ?? `工具执行失败（${res.code ?? 'unknown'}）`)
       }
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e))
+      onError(resolveErrorMessage(e, '回合执行失败'))
     } finally {
       setRunning(false)
     }
@@ -1221,7 +1222,7 @@ export default function JudgeArena(): JSX.Element {
         setSparringRounds([])
         setSparringFinalize(null)
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '陪练启动失败'))
       }
     })()
   }
@@ -1240,7 +1241,7 @@ export default function JudgeArena(): JSX.Element {
         setReplyText('')
         setSparringFinalize(null)
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '回合执行失败'))
       }
     })()
   }
@@ -1279,7 +1280,7 @@ export default function JudgeArena(): JSX.Element {
           )
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '生成总结失败'))
       }
     })()
   }
@@ -1306,7 +1307,7 @@ export default function JudgeArena(): JSX.Element {
         onError(res.message ?? `工具执行失败（${res.code ?? 'unknown'}）`)
       }
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e))
+      onError(resolveErrorMessage(e, '实时对辩执行失败'))
     } finally {
       setRunning(false)
     }
@@ -1349,7 +1350,7 @@ export default function JudgeArena(): JSX.Element {
           )
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '对辩启动失败'))
       }
     })()
   }
@@ -1394,7 +1395,7 @@ export default function JudgeArena(): JSX.Element {
         setLiveReply(text)
         toast.success('语音已转文字')
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '语音识别失败'))
       } finally {
         setLiveTranscribing(false)
       }
@@ -1450,7 +1451,7 @@ export default function JudgeArena(): JSX.Element {
           )
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '环节执行失败'))
       }
     })()
   }
@@ -1489,7 +1490,7 @@ export default function JudgeArena(): JSX.Element {
           )
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '生成总结失败'))
       }
     })()
   }
@@ -1513,7 +1514,7 @@ export default function JudgeArena(): JSX.Element {
         if (!read.success) { setError(read.error ?? '读取文件失败'); return }
         setter(read.data ?? '')
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(resolveErrorMessage(e, '转写失败'))
       }
     })()
   }
@@ -1540,7 +1541,7 @@ export default function JudgeArena(): JSX.Element {
           setError(res.message ?? `工具执行失败（${res.code ?? 'unknown'}）`)
         }
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(resolveErrorMessage(e, '诊断失败')))
       .finally(() => setRunning(false))
   }
 
@@ -1589,7 +1590,7 @@ export default function JudgeArena(): JSX.Element {
           setError(res.message ?? `工具执行失败（${res.code ?? 'unknown'}）`)
         }
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(resolveErrorMessage(e, '复盘执行失败')))
       .finally(() => setRunning(false))
   }
 

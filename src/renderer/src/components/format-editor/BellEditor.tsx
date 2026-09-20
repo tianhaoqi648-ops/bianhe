@@ -69,8 +69,7 @@ export default function BellEditor({ value, onChange }: BellEditorProps) {
       return
     }
     void playBell(bell).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : '未知错误'
-      toast.error(`试听失败：${msg}`)
+      toast.errorFrom(err, '试听失败')
     })
     setPlayingKey(key)
     // 内置音最长约 900ms；自定义音给 3s 展示播放状态

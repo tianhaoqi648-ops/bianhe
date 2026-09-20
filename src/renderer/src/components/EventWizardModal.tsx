@@ -262,7 +262,7 @@ export default function EventWizardModal({
           };
           const res = await window.eventAPI.createRound(roundData);
           if (!res.success) {
-            throw new Error(`创建轮次"${r.name}"失败：${res.error}`);
+            throw new Error(res.error || '创建轮次"${r.name}"失败');
           }
         }
       }
@@ -277,7 +277,7 @@ export default function EventWizardModal({
         };
         const res = await window.eventAPI.createTeam(teamData);
         if (!res.success) {
-          throw new Error(`创建队伍 ${i} 失败：${res.error}`);
+          throw new Error(res.error || '创建队伍 ${i} 失败');
         }
       }
     } else if (teamMode === 'custom') {
@@ -286,7 +286,7 @@ export default function EventWizardModal({
         const teamData: TeamCreateInput = { name: line, event_id: eventId };
         const res = await window.eventAPI.createTeam(teamData);
         if (!res.success) {
-          throw new Error(`创建队伍"${line}"失败：${res.error}`);
+          throw new Error(res.error || '创建队伍"${line}"失败');
         }
       }
     }
@@ -301,7 +301,7 @@ export default function EventWizardModal({
       };
       const res = await window.eventAPI.createGroup(groupData);
       if (!res.success) {
-        throw new Error(`创建分组"${groupLines[i]}"失败：${res.error}`);
+        throw new Error(res.error || '创建分组"${groupLines[i]}"失败');
       }
     }
 
@@ -336,7 +336,7 @@ export default function EventWizardModal({
       if (!currentRoundIds.has(r.id)) {
         const res = await window.eventAPI.deleteRound(r.id);
         if (!res.success) {
-          throw new Error(`删除轮次"${r.name}"失败：${res.error}`);
+          throw new Error(res.error || '删除轮次"${r.name}"失败');
         }
       }
     }
@@ -353,7 +353,7 @@ export default function EventWizardModal({
         };
         const res = await window.eventAPI.createRound(createData);
         if (!res.success) {
-          throw new Error(`创建轮次"${row.name}"失败：${res.error}`);
+          throw new Error(res.error || '创建轮次"${row.name}"失败');
         }
       } else if (originalRoundIds.has(row.id)) {
         // 修改：与原数据比对，有变化才 update
@@ -373,7 +373,7 @@ export default function EventWizardModal({
           };
           const res = await window.eventAPI.updateRound(row.id, patch);
           if (!res.success) {
-            throw new Error(`更新轮次"${row.name}"失败：${res.error}`);
+            throw new Error(res.error || '更新轮次"${row.name}"失败');
           }
         }
       }
@@ -389,7 +389,7 @@ export default function EventWizardModal({
       if (orig.name !== teamLines[i]) {
         const res = await window.eventAPI.updateTeam(orig.id, { name: teamLines[i] });
         if (!res.success) {
-          throw new Error(`更新队伍"${teamLines[i]}"失败：${res.error}`);
+          throw new Error(res.error || '更新队伍"${teamLines[i]}"失败');
         }
       }
     }
@@ -398,7 +398,7 @@ export default function EventWizardModal({
       for (let i = teamLines.length; i < originalTeams.length; i++) {
         const res = await window.eventAPI.deleteTeam(originalTeams[i].id);
         if (!res.success) {
-          throw new Error(`删除队伍"${originalTeams[i].name}"失败：${res.error}`);
+          throw new Error(res.error || '删除队伍"${originalTeams[i].name}"失败');
         }
       }
     }
@@ -410,7 +410,7 @@ export default function EventWizardModal({
           event_id: eventId
         });
         if (!res.success) {
-          throw new Error(`创建队伍"${teamLines[i]}"失败：${res.error}`);
+          throw new Error(res.error || '创建队伍"${teamLines[i]}"失败');
         }
       }
     }
@@ -426,7 +426,7 @@ export default function EventWizardModal({
           sort_order: i + 1
         });
         if (!res.success) {
-          throw new Error(`更新分组"${groupLines[i]}"失败：${res.error}`);
+          throw new Error(res.error || '更新分组"${groupLines[i]}"失败');
         }
       }
     }
@@ -434,7 +434,7 @@ export default function EventWizardModal({
       for (let i = groupLines.length; i < originalGroups.length; i++) {
         const res = await window.eventAPI.deleteGroup(originalGroups[i].id);
         if (!res.success) {
-          throw new Error(`删除分组"${originalGroups[i].name}"失败：${res.error}`);
+          throw new Error(res.error || '删除分组"${originalGroups[i].name}"失败');
         }
       }
     }
@@ -446,7 +446,7 @@ export default function EventWizardModal({
           sort_order: i + 1
         });
         if (!res.success) {
-          throw new Error(`创建分组"${groupLines[i]}"失败：${res.error}`);
+          throw new Error(res.error || '创建分组"${groupLines[i]}"失败');
         }
       }
     }

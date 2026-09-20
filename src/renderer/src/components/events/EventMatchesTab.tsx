@@ -15,6 +15,7 @@ import {
   Button,
   Divider,
   Empty,
+  Form,
   Modal,
   Popconfirm,
   Select,
@@ -80,9 +81,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
 
   // 建对阵
   const [createOpen, setCreateOpen] = useState(false)
-  const [createRound, setCreateRound] = useState<string | undefined>()
-  const [teamA, setTeamA] = useState<string | undefined>()
-  const [teamB, setTeamB] = useState<string | undefined>()
+  const [createForm] = Form.useForm<{ round?: string; teamA: string; teamB: string }>()
   const [creating, setCreating] = useState(false)
 
   // 配题
@@ -190,30 +189,20 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
     [matches, roundFilter]
   )
 
-  // ---- 新建对阵 ----
-  const handleCreate = async () => {
-    if (!teamA || !teamB) {
-      toast.warning('请选择正方与反方队伍')
-      return
-    }
-    if (teamA === teamB) {
-      toast.warning('正反方不能是同一支队伍')
-      return
-    }
+  // ---- 新建对阵（B3：校验迁移至 Form rules）----
+  const handleCreate = async (values: { round?: string; teamA: string; teamB: string }) => {
     setCreating(true)
     try {
       const res = await window.matchAPI.create({
         eventId,
-        roundId: createRound ?? null,
-        teamAffId: teamA,
-        teamNegId: teamB
+        roundId: values.round ?? null,
+        teamAffId: values.teamA,
+        teamNegId: values.teamB
       })
       if (res.success) {
         toast.success('已创建比赛')
         setCreateOpen(false)
-        setTeamA(undefined)
-        setTeamB(undefined)
-        setCreateRound(undefined)
+        createForm.resetFields()
         void load()
       } else {
         toast.error(res.error || '创建失败')
@@ -466,35 +455,40 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
       />
 
       {/* 新建对阵 */}
-      <Modal title="新建比赛" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void handleCreate()} confirmLoading={creating}>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <div>
-            <Text type="secondary">轮次：</Text>
+      <Modal title="新建比赛" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => createForm.submit()} confirmLoading={creating}>
+        <Form form={createForm} layout="vertical" onFinish={handleCreate}>
+          <Form.Item name="round" label="轮次">
             <Select
               allowClear placeholder="可留空"
-              style={{ width: 220 }}
-              value={createRound}
-              onChange={(v) => setCreateRound(v)}
+              style={{ width: '100%' }}
               options={eventStore.rounds.map((r) => ({ value: r.id, label: r.name || `第 ${r.round_number} 轮` }))}
             />
-          </div>
-          <div>
-            <Text type="secondary">正方队伍：</Text>
+          </Form.Item>
+          <Form.Item name="teamA" label="正方队伍" rules={[{ required: true, message: '请选择正方队伍' }]}>
             <Select
-              style={{ width: 220 }} placeholder="选择正方"
-              value={teamA} onChange={setTeamA}
+              style={{ width: '100%' }} placeholder="选择正方"
               options={eventStore.teams.map((t) => ({ value: t.id, label: t.name }))}
             />
-          </div>
-          <div>
-            <Text type="secondary">反方队伍：</Text>
+          </Form.Item>
+          <Form.Item
+            name="teamB"
+            label="反方队伍"
+            rules={[
+              { required: true, message: '请选择反方队伍' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('teamA') !== value) return Promise.resolve()
+                  return Promise.reject(new Error('正反方不能是同一支队伍'))
+                }
+              })
+            ]}
+          >
             <Select
-              style={{ width: 220 }} placeholder="选择反方"
-              value={teamB} onChange={setTeamB}
+              style={{ width: '100%' }} placeholder="选择反方"
               options={eventStore.teams.map((t) => ({ value: t.id, label: t.name }))}
             />
-          </div>
-        </Space>
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* 配题（搜索/筛选/快速新建/标签，T5） */}

@@ -416,7 +416,7 @@ export default function TimerPage() {
       }
       toast.success(matchId ? '录音分片已保存并关联本场' : '录音分片已保存（未关联比赛）')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '录音保存失败')
+      toast.errorFrom(e, '录音保存失败')
     }
   }
 
@@ -1673,7 +1673,7 @@ export default function TimerPage() {
           size="small"
           loading={sessionsLoading}
           dataSource={sessions}
-          locale={{ emptyText: '暂无历史会话' }}
+          locale={{ emptyText: <EmptyState type="timer" size="small" description="暂无历史会话" /> }}
           renderItem={(session) => {
             const fmtStages = session.formatSnapshot?.stages ?? []
             const fmtName = fmtStages.length ? `${fmtStages.length} 环节` : '未知赛制'

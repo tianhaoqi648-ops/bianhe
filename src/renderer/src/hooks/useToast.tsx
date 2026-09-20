@@ -25,6 +25,7 @@ import {
 } from 'react'
 import { message, Button, Space } from 'antd'
 import { UndoOutlined, ReloadOutlined } from '@ant-design/icons'
+import { resolveErrorMessage } from '../utils/errorMessage'
 
 export interface ToastOptions {
   /** 用于更新/销毁同一 Toast（如 loading → success） */
@@ -39,6 +40,16 @@ export interface ToastAPI {
   /** 错误：✗ 图标 + 可选"重试"按钮，5s 滑出 */
   error(
     content: ReactNode,
+    opts?: ToastOptions & { retryFn?: () => void }
+  ): void
+  /**
+   * 统一错误解析后弹错误 Toast（Phase 4 B3 / UI-008）。
+   * 解析规则见 utils/errorMessage.ts：AppError.userMessage → ApiResponse.error
+   * → Error.message（IPC 链已是 userMessage）→ fallback（消灭 String(e) 通道）。
+   */
+  errorFrom(
+    err: unknown,
+    fallback: string,
     opts?: ToastOptions & { retryFn?: () => void }
   ): void
   /** 信息：ℹ 图标，3s 滑出 */
@@ -135,6 +146,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className: CAPSULE_CLASS
           })
         }
+      },
+      errorFrom: (err, fallback, opts) => {
+        api.error(resolveErrorMessage(err, fallback), opts)
       },
       info: (content, opts) => {
         messageApi.open({

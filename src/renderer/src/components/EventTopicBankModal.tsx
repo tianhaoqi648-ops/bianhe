@@ -143,6 +143,8 @@ export default function EventTopicBankModal({
   const [createForm, setCreateForm] = useState<
     typeof EMPTY_CREATE
   >(() => ({ ...EMPTY_CREATE }));
+  // B3：快速新建标题缺项的内联校验状态
+  const [createTitleStatus, setCreateTitleStatus] = useState<'' | 'error'>('');
   const [createSaving, setCreateSaving] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -356,7 +358,8 @@ export default function EventTopicBankModal({
     if (!event) return;
     const title = createForm.title.trim();
     if (!title) {
-      toast.warning('请输入辩题标题');
+      // B3：表单缺项反馈内联化（toast → inline）
+      setCreateTitleStatus('error');
       return;
     }
     setCreateSaving(true);
@@ -766,12 +769,20 @@ export default function EventTopicBankModal({
         confirmLoading={createSaving}
       >
         <Form layout="vertical">
-          <Form.Item label="标题" required>
+          <Form.Item
+            label="标题"
+            required
+            validateStatus={createTitleStatus || undefined}
+            help={createTitleStatus === 'error' ? '请输入辩题标题' : undefined}
+          >
             <Input
               placeholder="请输入辩题标题"
               value={createForm.title}
               maxLength={200}
-              onChange={(e) => setCreate({ title: e.target.value })}
+              onChange={(e) => {
+                setCreate({ title: e.target.value });
+                if (createTitleStatus) setCreateTitleStatus('');
+              }}
             />
           </Form.Item>
           <Space size={8} style={{ width: '100%' }} align="start">

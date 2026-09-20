@@ -86,8 +86,7 @@ export default function BellPreviewModal({ open, onClose, format }: BellPreviewM
       return
     }
     void playBell(bell).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : '未知错误'
-      toast.error(`试听失败：${msg}`)
+      toast.errorFrom(err, '试听失败')
     })
     setPlayingKey(key)
     const timer = setTimeout(() => {

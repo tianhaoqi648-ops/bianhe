@@ -808,7 +808,7 @@ export default function TopicLibrary() {
       toast.success('已复制');
       store.fetchList();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '复制失败');
+      toast.errorFrom(e, '复制辩题失败');
     }
   };
 
@@ -851,7 +851,7 @@ export default function TopicLibrary() {
       URL.revokeObjectURL(url);
       toast.success(`已导出 ${topicsToExport.length} 条辩题`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.errorFrom(e, '导出辩题失败');
     }
   };
 
@@ -972,7 +972,7 @@ export default function TopicLibrary() {
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchTag' });
+      toast.errorFrom(e, '批量修改标签失败', { key: 'batchTag' });
     }
   };
 
@@ -988,7 +988,7 @@ export default function TopicLibrary() {
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchType' });
+      toast.errorFrom(e, '批量修改类型失败', { key: 'batchType' });
     }
   };
 
@@ -1004,7 +1004,7 @@ export default function TopicLibrary() {
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '失败', { key: 'batchDiff' });
+      toast.errorFrom(e, '批量修改难度失败', { key: 'batchDiff' });
     }
   };
 
@@ -1063,7 +1063,7 @@ export default function TopicLibrary() {
       store.fetchList();
       await groupStore.loadMemberMapping();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '操作失败');
+      toast.errorFrom(e, '题库操作失败');
     } finally {
       setTargetSaving(false);
     }
@@ -1099,7 +1099,7 @@ export default function TopicLibrary() {
             toast.success('已撤销批量编辑');
             store.fetchList();
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '撤销失败');
+            toast.errorFrom(e, '撤销批量编辑失败');
           }
         }
       );
@@ -1107,7 +1107,7 @@ export default function TopicLibrary() {
       store.clearSelection();
       store.fetchList();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '批量编辑失败');
+      toast.errorFrom(e, '批量编辑失败');
     } finally {
       setBatchEditSubmitting(false);
     }
@@ -1624,21 +1624,20 @@ export default function TopicLibrary() {
               </Space>
             </div>
 
-            {/* 第二行：筛选 + 重置 + 批量操作（仅选中时显示） */}
-            {hasSelection && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: spacing.sm,
-                  borderTop: `1px solid ${token.colorBorderSecondary}`,
-                  paddingTop: spacing.sm,
-                  marginTop: spacing.sm
-                }}
-              >
-                <Space size={8} wrap>
+            {/* 第二行：筛选 + 重置（常驻，B3 空态可恢复）+ 批量操作（仅选中时显示） */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: spacing.sm,
+                borderTop: `1px solid ${token.colorBorderSecondary}`,
+                paddingTop: spacing.sm,
+                marginTop: spacing.sm
+              }}
+            >
+              <Space size={8} wrap>
                   <Button
                     icon={<FilterOutlined />}
                     onClick={() => setFilterOpen((v) => !v)}
@@ -1654,12 +1653,15 @@ export default function TopicLibrary() {
                       重置筛选
                     </Button>
                   )}
-                  <Text type="secondary">
-                    {store.allSelectedInFilter
-                      ? `已选全部 ${store.total} 条（取消 ${store.exceptIds.length} 条）`
-                      : `已选 ${store.selectedIds.length} 项`}
-                  </Text>
-                </Space>
+                  {hasSelection && (
+                    <Text type="secondary">
+                      {store.allSelectedInFilter
+                        ? `已选全部 ${store.total} 条（取消 ${store.exceptIds.length} 条）`
+                        : `已选 ${store.selectedIds.length} 项`}
+                    </Text>
+                  )}
+              </Space>
+              {hasSelection && (
                 <Space size={8} wrap>
                   <Dropdown menu={{ items: batchMenuItems }} trigger={['click']}>
                     <Button>批量操作</Button>
@@ -1668,8 +1670,8 @@ export default function TopicLibrary() {
                     取消选择
                   </Button>
                 </Space>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* 跨页全选提示 Alert */}
@@ -1802,26 +1804,33 @@ export default function TopicLibrary() {
           <BrandSpin spinning={store.loading}>
             {store.items.length === 0 ? (
               <div style={emptyStateStyle}>
-                <EmptyState
-                  type="topic"
-                  description={store.error ? `加载失败：${store.error}` : '暂无辩题'}
-                  cta={
-                    store.error
-                      ? undefined
-                      : [
-                          {
-                            text: '导入辩题',
-                            icon: <UploadOutlined />,
-                            onClick: () => setImportOpen(true)
-                          },
-                          {
-                            text: '新建辩题',
-                            icon: <PlusOutlined />,
-                            onClick: handleCreate
-                          }
-                        ]
-                  }
-                />
+                {store.error ? (
+                  /* 加载失败：Alert（:1771 处）已含错误详情与重试，此处不再重复文案 */
+                  <EmptyState type="topic" description="加载辩题失败" />
+                ) : hasFilterPanelActive ? (
+                  <EmptyState
+                    type="topic"
+                    description="当前筛选条件下暂无辩题"
+                    cta={[{ text: '重置筛选', icon: <CloseCircleOutlined />, onClick: handleResetFilterPanel }]}
+                  />
+                ) : (
+                  <EmptyState
+                    type="topic"
+                    description="暂无辩题"
+                    cta={[
+                      {
+                        text: '导入辩题',
+                        icon: <UploadOutlined />,
+                        onClick: () => setImportOpen(true)
+                      },
+                      {
+                        text: '新建辩题',
+                        icon: <PlusOutlined />,
+                        onClick: handleCreate
+                      }
+                    ]}
+                  />
+                )}
               </div>
             ) : viewMode === 'table' ? (
               <>
@@ -1841,7 +1850,11 @@ export default function TopicLibrary() {
                           : 'large'
                     }
                     pagination={false}
-                    locale={{ emptyText: '暂无辩题' }}
+                    locale={{
+                      emptyText: (
+                        <EmptyState type="topic" size="small" description="当前题库筛选下暂无辩题" />
+                      )
+                    }}
                     scroll={{ x: 1000 }}
                     rowSelection={{
                       selectedRowKeys: store.items
@@ -1918,7 +1931,12 @@ export default function TopicLibrary() {
                  响应式断点：移动 <768px → 2 列 (xs=12) / 平板 768-1023px → 3 列 (md=8) / 桌面 ≥1024px → 4 列 (lg=6)
                  保留 Task 14 添加的 staggered 进入动画 */
               <Row gutter={[16, 16]}>
-                {filteredItems.map((t, index) => (
+                {filteredItems.length === 0 ? (
+                  <Col span={24}>
+                    <EmptyState type="topic" description="当前题库筛选下暂无辩题" />
+                  </Col>
+                ) : (
+                filteredItems.map((t, index) => (
                   <Col key={t.id} xs={12} sm={12} md={8} lg={6}>
                     <div
                       className={index < 8 ? 'fade-in-up-staggered' : undefined}
@@ -1940,7 +1958,8 @@ export default function TopicLibrary() {
                       />
                     </div>
                   </Col>
-                ))}
+                ))
+                )}
               </Row>
             )}
           </BrandSpin>

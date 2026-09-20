@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Layout,
   Table,
@@ -157,6 +158,7 @@ export default function History() {
   const eventStore = useEventStore();
   const topicStore = useTopicStore();
   const toast = useToast();
+  const navigate = useNavigate();
   // 移动端（<768px）RangePicker 自适应整宽
   const isMobile = useMediaQuery('(max-width: 767px)');
 
@@ -184,6 +186,8 @@ export default function History() {
 
   // 时间范围快捷筛选
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  // 用户是否手动改过日期范围（区分 First-use 空态 vs Filtered 空态，B3/UI-010）
+  const [dateRangeTouched, setDateRangeTouched] = useState(false);
 
   // 导出格式选择（先选格式再点导出）
   const [sessionExportFormat, setSessionExportFormat] = useState<ExportFormat>('xlsx');
@@ -230,6 +234,22 @@ export default function History() {
       startTime: start.toISOString(),
       endTime: now.endOf('day').toISOString()
     };
+  };
+
+  // B3/UI-010：抽取记录空态「清除筛选」——恢复默认视图（最近 30 天）
+  const handleClearSessionFilters = () => {
+    setTimeRange('all');
+    setSessionKeyword('');
+    setDateRangeTouched(false);
+    const start = dayjs().subtract(30, 'day').startOf('day').toISOString();
+    const end = dayjs().endOf('day').toISOString();
+    setDateRange([dayjs(start), dayjs(end)]);
+    setSessionFilter((f) => ({ ...f, event_id: undefined, startTime: start, endTime: end, page: 1 }));
+  };
+
+  // B3/UI-010：操作日志空态「清除筛选」
+  const handleClearLogFilters = () => {
+    setLogFilter({ page: 1, pageSize: 15 });
   };
 
   // ====== 数据加载 ======
@@ -511,7 +531,7 @@ export default function History() {
     } catch (e) {
       // Bug 12 修复：catch 块异常变量 e 已被 console.error 消费
       console.error('加载明细失败', e);
-      toast.error(e instanceof Error ? e.message : '加载明细失败');
+      toast.errorFrom(e, '加载明细失败');
     }
   };
 
@@ -567,7 +587,7 @@ export default function History() {
               toast.error(res.error || '删除失败');
             }
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : '删除失败');
+            toast.errorFrom(e, '删除记录失败');
           }
         }
       });
@@ -589,7 +609,7 @@ export default function History() {
         toast.error(res.error || '删除失败');
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '删除失败');
+      toast.errorFrom(e, '删除记录失败');
     }
   };
 
@@ -606,7 +626,7 @@ export default function History() {
       }
       toast.success(`已导出 ${res.data.count} 条记录到：${res.data.filePath}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.errorFrom(e, '导出抽取记录失败');
     }
   };
 
@@ -623,7 +643,7 @@ export default function History() {
       }
       toast.success(`已导出 ${res.data.count} 条日志到：${res.data.filePath}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '导出失败');
+      toast.errorFrom(e, '导出审计日志失败');
     }
   };
 
@@ -642,7 +662,7 @@ export default function History() {
           const rangeFilter = getTimeRangeFilter(timeRange);
           void auditStore.listLogs({ ...logFilter, ...rangeFilter });
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : '清空失败');
+          toast.errorFrom(e, '清空日志失败');
         }
       }
     });
@@ -1016,6 +1036,7 @@ export default function History() {
                                   const start = dates?.[0]?.toISOString();
                                   const end = dates?.[1]?.toISOString();
                                   setDateRange(dates ? [dates[0], dates[1]] : [null, null]);
+                                  setDateRangeTouched(true);
                                   setSessionFilter((f) => ({
                                     ...f,
                                     startTime: start,
@@ -1090,7 +1111,24 @@ export default function History() {
                         loading={drawStore.loading && groupedSessions.length === 0}
                       />
                       {!drawStore.loading && groupedSessions.length === 0 ? (
-                        <EmptyState type="topic" description="暂无抽取记录" style={{ padding: spacing.xxxl }} />
+                        timeRange !== 'all' ||
+                        !!sessionFilter.event_id ||
+                        sessionKeyword.trim() !== '' ||
+                        dateRangeTouched ? (
+                          <EmptyState
+                            type="topic"
+                            description="当前筛选条件下暂无抽取记录"
+                            cta={[{ text: '清除筛选', onClick: handleClearSessionFilters }]}
+                            style={{ padding: spacing.xxxl }}
+                          />
+                        ) : (
+                          <EmptyState
+                            type="topic"
+                            description="暂无抽取记录"
+                            cta={[{ text: '去抽取', onClick: () => navigate('/draw') }]}
+                            style={{ padding: spacing.xxxl }}
+                          />
+                        )
                       ) : (
                         groupedSessions.map((group) => (
                           <div key={group.label} style={{ marginBottom: spacing.lg }}>
@@ -1361,7 +1399,20 @@ export default function History() {
                             setLogFilter((f) => ({ ...f, page, pageSize }))
                         }}
                         locale={{
-                          emptyText: <EmptyState type="topic" description="暂无操作日志" />
+                          emptyText: (
+                            logFilter.action !== undefined ||
+                            logFilter.target_type !== undefined ||
+                            !!logFilter.startTime ||
+                            !!logFilter.endTime ? (
+                              <EmptyState
+                                type="topic"
+                                description="当前筛选条件下暂无操作日志"
+                                cta={[{ text: '清除筛选', onClick: handleClearLogFilters }]}
+                              />
+                            ) : (
+                              <EmptyState type="topic" description="暂无操作日志" />
+                            )
+                          )
                         }}
                       />
                     </div>
