@@ -116,6 +116,7 @@ export function registerTopicIpc(): void {
   ipcMain.handle(
     IPC_CHANNELS.TOPIC_UPDATE_WEIGHT,
     (_e, id: string, weight: number) =>
+      // P5-009：weight 数值校验在 topicRepo.updateWeight（repo 业务边界，有限数值且 ≥0）
       wrapWithUndo(() =>
         withUndoLog({
           storeName: 'topic',

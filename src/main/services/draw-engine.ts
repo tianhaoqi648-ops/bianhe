@@ -99,7 +99,7 @@ export interface DrawResult {
  */
 export class InsufficientTopicsError extends Error {
   constructor(public candidateCount: number, public requiredCount: number) {
-    super(`题池不足：候选 ${candidateCount} 道，需要 ${requiredCount} 道`)
+    super(`题池不足：有效候选 ${candidateCount} 道（weight>0），需要 ${requiredCount} 道`)
     this.name = 'InsufficientTopicsError'
   }
 }
@@ -717,17 +717,22 @@ export function assignMultiTeamStances(
  * 校验候选题池是否满足需要抽取的数量。
  *
  * - allow_repeat=true（允许辩题重复）：跳过检查（有放回可凑够）
- * - 否则：candidates.length < count 时抛 InsufficientTopicsError
+ * - 否则：有效候选（weight>0，与 weightedRandomSelect 的过滤口径一致）不足 count 时
+ *   抛 InsufficientTopicsError。未加权模式 weight 缺省按 1 计入，行为不变。
  *
- * @throws InsufficientTopicsError 候选不足且不允许重复
+ * @throws InsufficientTopicsError 有效候选不足且不允许重复
  */
 export function assertSufficientTopics(
   candidates: Topic[],
   count: number,
   allowRepeat?: boolean
 ): void {
-  if (!allowRepeat && candidates.length < count) {
-    throw new InsufficientTopicsError(candidates.length, count)
+  if (allowRepeat) return
+  // P5-009：gate 口径与实际加权选择对齐——weight<=0 的候选不参与选择，
+  // 不能计入有效候选数（weight=0 为「停用」合法数据，gate 忽略之）
+  const effective = candidates.filter((t) => (t.weight ?? 1) > 0).length
+  if (effective < count) {
+    throw new InsufficientTopicsError(effective, count)
   }
 }
 

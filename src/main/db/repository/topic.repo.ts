@@ -547,6 +547,12 @@ function updateStatus(id: string, status: string): Topic | undefined {
  * 单字段更新 weight，自动更新 updated_at。
  */
 function updateWeight(id: string, weight: number): Topic | undefined {
+  // P5-009：weight 写入校验（repo 业务边界）——仅接受有限数值且不小于 0。
+  // weight=0 为「停用该题」合法语义（加权选择按 weight>0 过滤），允许写入；
+  // 负数/NaN/±Infinity 无合法语义，拒绝持久化。历史数据不做批量迁移。
+  if (typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0) {
+    throw new Error('参数 weight 必须为不小于 0 的有限数值')
+  }
   const db = getDb()
   const now = new Date().toISOString()
   const stmt = db.prepare('UPDATE topics SET weight = ?, updated_at = ? WHERE id = ?')
