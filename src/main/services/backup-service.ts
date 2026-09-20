@@ -391,19 +391,27 @@ export function importBackup(params: BackupImportParams): BackupImportResult {
   // 队徽库还原同样移到 DB 事务外（磁盘文件 I/O）：
   // 先完成 DB 事务，再写队徽文件 + index.json + team-bindings.json，
   // 文件写入失败不应回滚已成功的 DB 导入。
+  // P5-011：badge 为辅助/派生数据（队徽文件与索引，主数据在 DB 表中），写盘失败
+  // 不应沿链抛出形成「假失败」（DB 已提交，抛错会让用户误以为导入失败）。
+  // 降级：console.warn 记录 + badgeFilesRestored 保持 0（下次导出可见差异），
+  // 整体导入仍返回成功。与 bell 的降级理念一致；不回滚、不吞掉主数据状态。
   if (
     (catsToImport as readonly string[]).includes('badges') &&
     pkg.tables.badges
   ) {
-    badgeFilesRestored = badgeRestoreBackup(
-      {
-        registry: pkg.tables.badges as BadgeItem[],
-        bindings: pkg.tables.team_bindings as TeamBadgeMap | undefined,
-        files: pkg.tables.badge_files as Record<string, string> | undefined
-      },
-      undefined,
-      params.strategy
-    )
+    try {
+      badgeFilesRestored = badgeRestoreBackup(
+        {
+          registry: pkg.tables.badges as BadgeItem[],
+          bindings: pkg.tables.team_bindings as TeamBadgeMap | undefined,
+          files: pkg.tables.badge_files as Record<string, string> | undefined
+        },
+        undefined,
+        params.strategy
+      )
+    } catch (e) {
+      console.warn('[backup-service] badge restore failed (main data import kept):', e)
+    }
   }
 
   // 恢复后完整性校验（governance 1.2）：对所有策略（含 clear_rebuild）都执行
