@@ -19,6 +19,13 @@ import * as path from 'path'
 const { mockApp } = vi.hoisted(() => ({ mockApp: { getPath: vi.fn() } }))
 vi.mock('electron', () => ({ app: mockApp }))
 
+// ---- mock better-sqlite3：node:sqlite 适配（P5-010 fail-closed 语义下，
+//      restore 验证需真实打开 sqlite 文件；vitest 下 better-sqlite3 不可加载）----
+vi.mock('better-sqlite3', async () => {
+  const { createFileDbClass } = await import('./helpers/node-sqlite-adapter')
+  return { default: createFileDbClass() }
+})
+
 import {
   cleanupOldBackups,
   backupDatabase,
@@ -28,6 +35,7 @@ import {
   restoreBackup
 } from '../../backup'
 import { setRecordingActive, isRecordingActive } from '../recording-active'
+import { DatabaseSync } from 'node:sqlite'
 
 let tmpUserData: string
 
@@ -198,14 +206,21 @@ describe('backup 自动备份模块（Task 5.5）', () => {
 
     it('restoreBackup：参数校验 + 覆盖 db 文件', async () => {
       writeBackupFiles(1)
-      fs.writeFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'backup-content')
+      // P5-010 fail-closed：备份源必须是真 SQLite（文本文件会被完整性验证拒绝）
+      fs.unlinkSync(path.join(tmpUserData, 'backups', 'backup-0.db'))
+      const srcDb = new DatabaseSync(path.join(tmpUserData, 'backups', 'backup-0.db'))
+      srcDb.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, tag TEXT)')
+      srcDb.prepare("INSERT INTO items (tag) VALUES ('backup-content')").run()
+      srcDb.close()
       await expect(restoreBackup('../evil.db')).rejects.toThrow('Invalid backup filename')
       await expect(restoreBackup('no.db')).rejects.toThrow('Backup not found')
 
-      // 备份文件为普通文本（非常规 sqlite）→ schemaVersion 读取失败视为 0，可正常恢复
+      // 备份为合法 sqlite → 恢复成功，内容一致
       await restoreBackup('backup-0.db')
-      const dbContent = fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')
-      expect(dbContent).toBe('backup-content')
+      const check = new DatabaseSync(path.join(tmpUserData, 'debate-drawer.db'))
+      const rows = check.prepare('SELECT tag FROM items').all() as Array<{ tag: string }>
+      check.close()
+      expect(rows).toEqual([{ tag: 'backup-content' }])
     })
   })
 
@@ -231,11 +246,23 @@ describe('backup 自动备份模块（Task 5.5）', () => {
 
     it('T7：非录音状态 → restore 正常执行（原有行为不变）', async () => {
       writeBackupFiles(1)
-      fs.writeFileSync(path.join(tmpUserData, 'backups', 'backup-0.db'), 'new-content')
-      fs.writeFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'old-db')
+      // P5-010：备份源与 active 库均用真 SQLite
+      fs.unlinkSync(path.join(tmpUserData, 'backups', 'backup-0.db'))
+      const srcDb = new DatabaseSync(path.join(tmpUserData, 'backups', 'backup-0.db'))
+      srcDb.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, tag TEXT)')
+      srcDb.prepare("INSERT INTO items (tag) VALUES ('new-content')").run()
+      srcDb.close()
+      const activeDb = new DatabaseSync(path.join(tmpUserData, 'debate-drawer.db'))
+      activeDb.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, tag TEXT)')
+      activeDb.prepare("INSERT INTO items (tag) VALUES ('old-db')").run()
+      activeDb.close()
+
       setRecordingActive(false)
       await restoreBackup('backup-0.db')
-      expect(fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')).toBe('new-content')
+      const check = new DatabaseSync(path.join(tmpUserData, 'debate-drawer.db'))
+      const rows = check.prepare('SELECT tag FROM items').all() as Array<{ tag: string }>
+      check.close()
+      expect(rows).toEqual([{ tag: 'new-content' }])
       expect(isRecordingActive()).toBe(false)
     })
 

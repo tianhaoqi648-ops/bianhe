@@ -383,6 +383,19 @@ export async function deleteBackup(filename: string): Promise<void> {
 /**
  * 恢复指定备份：复制备份文件覆盖当前 db 文件。
  *
+ * P5-010（先验证后替换 + 旧库可回退）：
+ *   1. 候选恢复文件先完成三项验证（schema version / integrity_check / foreign_key_check），
+ *      任一不过 → 抛错中止，正式 db 不被触碰；
+ *   2. 替换前保留旧库回退副本（.restore-old），替换失败时还原，active 始终保持旧库；
+ *   3. 成功后清理回退副本与临时文件。
+ *
+ * P5-003（WAL 安全）：
+ *   替换前对当前连接执行 wal_checkpoint(TRUNCATE)，把 WAL 中已提交事务合并进旧主库
+ *   并截断 WAL 文件——防止替换主库文件后残留旧 WAL 帧在下次打开时被重放进新库
+ *   （恢复内容必须纯来自备份源）。与 backupDatabaseSync 的 beforeCopy 先例同模式。
+ *   注意：TRUNCATE 后旧 -wal 为 0 字节，重开视为空 WAL；不删除 -wal/-shm（当前连接
+ *   仍持有其生命周期，盲目 unlink 会破坏 SQLite 状态）。
+ *
  * 注意：不会主动关闭数据库连接（避免影响正在运行的事务）。
  * 用户需重启应用以加载恢复后的数据。
  *
@@ -407,8 +420,9 @@ export async function restoreBackup(filename: string): Promise<void> {
     throw new Error('当前正在录音，请先停止录音后再恢复备份。')
   }
 
-  // 恢复前校验：备份文件的 schema 版本不得高于当前应用支持的版本，
+  // 恢复前快速失败：备份文件的 schema 版本不得高于当前应用支持的版本，
   // 避免把更新 schema 的库（含未来版本数据）回灌到旧应用造成数据损坏。
+  // （tmp 候选文件验证阶段会再做一次，双保险覆盖校验与替换之间的窗口。）
   const backupVersion = await getDbFileSchemaVersion(src)
   if (backupVersion > SCHEMA_VERSION) {
     throw new Error(
@@ -423,42 +437,118 @@ export async function restoreBackup(filename: string): Promise<void> {
 
   // 备份与恢复互斥：避免 restore 覆盖文件与 backup 读取/写入交叉产生半写状态
   await serialize(async () => {
-    // 先复制到临时文件再 rename，避免覆盖失败导致半写状态
+    // ── P5-003：WAL 安全 ── 当前连接持有的 WAL 先 checkpoint 进主库并截断。
+    try {
+      const { getDb } = await import('../db')
+      const database = getDb()
+      if (!database.memory) {
+        database.pragma('wal_checkpoint(TRUNCATE)')
+      }
+    } catch (e) {
+      // 非致命：WAL 未启用/内存库/连接未初始化时继续（与 backupDatabaseSync 容错口径一致）
+      console.warn('[backup] wal_checkpoint before restore failed (continue with restore):', e)
+    }
+
+    // ── P5-010：先验证后替换 ──
     const tmp = `${dbPath}.restore-tmp`
+    const oldBackup = `${dbPath}.restore-old`
     copyFileSync(src, tmp)
     try {
-      renameSync(tmp, dbPath)
-    } catch (e) {
-      // rename 跨卷可能失败，回退为直接 copy
+      // 1) 对候选恢复文件完成三项验证，任一不过 → 抛错（正式库未被触碰）
+      await verifyRestoreCandidate(tmp)
+
+      // 2) 旧库回退副本（checkpoint 后的旧主库文件已含全部已提交数据）
+      let hasOldBackup = false
+      if (existsSync(dbPath)) {
+        copyFileSync(dbPath, oldBackup)
+        hasOldBackup = true
+      }
+
+      // 3) 替换正式库；失败时还原回退副本，active 必须保持旧库
+      let swapped = false
       try {
-        copyFileSync(src, dbPath)
-        unlinkSync(tmp)
-      } catch (e2) {
-        throw e2
+        try {
+          renameSync(tmp, dbPath)
+        } catch {
+          // Windows 上目标被当前连接占用时 rename 可能失败，回退为覆盖拷贝
+          copyFileSync(tmp, dbPath)
+          unlinkSync(tmp)
+        }
+        swapped = true
+        console.log('[backup] Backup restored:', filename, '->', dbPath)
+      } catch (swapErr) {
+        if (hasOldBackup) {
+          try {
+            copyFileSync(oldBackup, dbPath)
+            console.warn('[backup] Swap failed, old database restored from rollback copy')
+            // 还原成功 → 回退副本冗余，一并清理
+            try {
+              unlinkSync(oldBackup)
+            } catch {
+              /* ignore */
+            }
+          } catch (rollbackErr) {
+            // 还原也失败：保留回退副本作为最后兜底，交由用户/运维处理
+            console.error(
+              '[backup] CRITICAL: swap failed AND rollback failed, rollback copy kept at',
+              oldBackup,
+              rollbackErr
+            )
+            throw swapErr
+          }
+        }
+        throw swapErr
+      }
+
+      // 4) 成功 cleanup：回退副本删除（tmp 已被 rename 消耗 / 回退分支已 unlink）
+      if (swapped && hasOldBackup) {
+        try {
+          unlinkSync(oldBackup)
+        } catch (e) {
+          console.warn('[backup] Failed to remove rollback copy:', e)
+        }
+      }
+    } finally {
+      // 兜底清理：任何失败路径下 tmp 不得残留（成功路径已被 rename 消耗）
+      try {
+        if (existsSync(tmp)) unlinkSync(tmp)
+      } catch {
+        /* ignore */
       }
     }
-    console.log('[backup] Backup restored:', filename, '->', dbPath)
-
-    // 恢复后完整性校验 1：PRAGMA integrity_check（页级损坏检测）。
-    // 非 ok → 明确报失败，不把「文件存在/可打开」当作「数据库有效」。
-    const integrity = await getIntegrityCheckResult(dbPath)
-    if (integrity !== null && integrity !== 'ok') {
-      throw new Error(
-        `备份恢复完成，但数据库完整性校验失败（integrity_check: ${integrity}）。备份文件可能已损坏，请勿使用本次恢复的数据。`
-      )
-    }
-
-    // 恢复后完整性校验 2：PRAGMA foreign_key_check（孤立引用检测，governance 1.2）。
-    // 发现 orphan → 明确报失败，不静默判定恢复成功。
-    const violations = await getRestoredFkViolations(dbPath)
-    if (violations.length > 0) {
-      const detail = violations.slice(0, 5).join('; ')
-      const more = violations.length > 5 ? ` ...等共 ${violations.length} 处` : ''
-      throw new Error(
-        `备份恢复完成，但外键校验失败：存在 ${violations.length} 处孤立引用（${detail}${more}）。数据可能不完整，请谨慎使用。`
-      )
-    }
   })
+}
+
+/**
+ * P5-010：对候选恢复文件在替换正式库之前完成三项验证。
+ * 任一不过 → 抛错（正式库未被触碰）；无法打开/校验的文件按 fail-closed 拒绝。
+ */
+async function verifyRestoreCandidate(filePath: string): Promise<void> {
+  // 1) schema version
+  const version = await getDbFileSchemaVersion(filePath)
+  if (version > SCHEMA_VERSION) {
+    throw new Error(
+      `备份文件的 schema 版本（v${version}）高于当前应用支持的版本（v${SCHEMA_VERSION}），拒绝恢复。`
+    )
+  }
+
+  // 2) integrity_check：非 ok / 无法读取（null）均拒绝
+  const integrity = await getIntegrityCheckResult(filePath)
+  if (integrity !== 'ok') {
+    throw new Error(
+      `备份文件完整性校验失败（integrity_check: ${integrity ?? '无法读取'}）。备份文件可能已损坏，已中止恢复，当前数据库未被修改。`
+    )
+  }
+
+  // 3) foreign_key_check：存在孤立引用即拒绝
+  const violations = await getRestoredFkViolations(filePath)
+  if (violations.length > 0) {
+    const detail = violations.slice(0, 5).join('; ')
+    const more = violations.length > 5 ? ` ...等共 ${violations.length} 处` : ''
+    throw new Error(
+      `备份文件外键校验失败：存在 ${violations.length} 处孤立引用（${detail}${more}）。已中止恢复，当前数据库未被修改。`
+    )
+  }
 }
 
 /**

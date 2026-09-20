@@ -24,16 +24,24 @@ vi.mock('electron', () => ({
   app: { getPath: () => userData }
 }))
 
-// ---- mock better-sqlite3（getDbFileSchemaVersion / 恢复后 foreign_key_check 的动态 import）----
+// ---- mock better-sqlite3（候选文件验证的动态 import）----
+// P5-010 后 verifyRestoreCandidate 依次查询 user_version / integrity_check /
+// foreign_key_check 三类 pragma，FakeDb 分别返回可控行。
 const state = vi.hoisted(() => ({
   schemaVersion: 0,
-  /** 恢复后 foreign_key_check 应返回的孤立引用行（[] 表示无违规） */
+  /** integrity_check 是否返回 ok（false = 模拟损坏） */
+  integrityOk: true,
+  /** foreign_key_check 应返回的孤立引用行（[] 表示无违规） */
   fkViolations: [] as unknown[]
 }))
 vi.mock('better-sqlite3', () => ({
   default: class FakeDb {
     pragma(op: string, _opts?: { simple?: boolean }): unknown {
       if (op === 'foreign_key_check') return state.fkViolations
+      if (op === 'integrity_check') {
+        return state.integrityOk ? [{ integrity_check: 'ok' }] : [{ integrity_check: 'corrupt-page' }]
+      }
+      // user_version（simple:true）→ 标量
       return state.schemaVersion
     }
     close(): void {}

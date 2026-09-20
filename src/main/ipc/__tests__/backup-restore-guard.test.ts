@@ -33,10 +33,18 @@ vi.mock('../../services/backup-service', () => ({
   getBackupStats: vi.fn()
 }))
 
+// ---- mock better-sqlite3：node:sqlite 适配（P5-010 fail-closed 语义下，
+//      restore 验证需真实打开 sqlite 文件）----
+vi.mock('better-sqlite3', async () => {
+  const { createFileDbClass } = await import('../../services/__tests__/helpers/node-sqlite-adapter')
+  return { default: createFileDbClass() }
+})
+
 // mock 之后 import
 import { IPC_CHANNELS } from '../../../shared/types'
 import { registerBackupIpc } from '../backup.ipc'
 import { setRecordingActive } from '../../services/recording-active'
+import { DatabaseSync } from 'node:sqlite'
 
 let tmpUserData = ''
 
@@ -89,11 +97,18 @@ describe('Me3-fix T9：backup:restore 录音守卫（真 IPC → 真 restoreBack
   it('非录音状态经 IPC 恢复 → success:true，DB 被替换', async () => {
     const backupsDir = path.join(tmpUserData, 'backups')
     fs.mkdirSync(backupsDir, { recursive: true })
-    fs.writeFileSync(path.join(backupsDir, 'backup-0.db'), 'backup-content')
+    // P5-010 fail-closed：备份源必须为真 SQLite
+    const srcDb = new DatabaseSync(path.join(backupsDir, 'backup-0.db'))
+    srcDb.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, tag TEXT)')
+    srcDb.prepare("INSERT INTO items (tag) VALUES ('backup-content')").run()
+    srcDb.close()
 
     setRecordingActive(false)
     const res = await restoreHandler()(null, 'backup-0.db')
     expect(res.success).toBe(true)
-    expect(fs.readFileSync(path.join(tmpUserData, 'debate-drawer.db'), 'utf8')).toBe('backup-content')
+    const check = new DatabaseSync(path.join(tmpUserData, 'debate-drawer.db'))
+    const rows = check.prepare('SELECT tag FROM items').all() as Array<{ tag: string }>
+    check.close()
+    expect(rows).toEqual([{ tag: 'backup-content' }])
   })
 })
