@@ -263,7 +263,7 @@ export default function DrawResultList({
           <Button icon={<ReloadOutlined />} onClick={onRedo}>
             重新抽取
           </Button>
-          <Button type="primary" icon={<DesktopOutlined />} onClick={onBigScreen}>
+          <Button icon={<DesktopOutlined />} onClick={onBigScreen}>
             投屏模式
           </Button>
           {/* P3.1 Task 6：全屏展示模式按钮 */}

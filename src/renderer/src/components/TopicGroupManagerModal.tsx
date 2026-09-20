@@ -319,30 +319,33 @@ export default function TopicGroupManagerModal({
                             }}
                           />
                           {deletable ? (
-                            <Popconfirm
-                              key="del"
-                              title="删除该题组？"
-                              description="将同时移除其成员与赛事绑定关系。"
-                              okText="删除"
-                              cancelText="取消"
-                              okButtonProps={{ danger: true }}
-                              onConfirm={() => void handleDelete(g)}
-                              onCancel={() => undefined}
-                            >
-                              <Button
-                                danger
-                                type="text"
-                                size="small"
-                                icon={<DeleteOutlined />}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </Popconfirm>
+                            <Tooltip key="del" title="删除该题组">
+                              <Popconfirm
+                                title="删除该题组？"
+                                description="将同时移除其成员与赛事绑定关系。"
+                                okText="删除"
+                                cancelText="取消"
+                                okButtonProps={{ danger: true }}
+                                onConfirm={() => void handleDelete(g)}
+                                onCancel={() => undefined}
+                              >
+                                <Button
+                                  danger
+                                  type="text"
+                                  size="small"
+                                  aria-label="删除该题组"
+                                  icon={<DeleteOutlined />}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </Popconfirm>
+                            </Tooltip>
                           ) : (
                             <Tooltip key="del" title="默认题库不可删除">
                               <Button
                                 danger
                                 type="text"
                                 size="small"
+                                aria-label="默认题库不可删除"
                                 icon={<DeleteOutlined />}
                                 disabled
                               />

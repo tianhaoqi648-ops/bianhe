@@ -91,16 +91,16 @@ export default function WorkflowCard({ style }: WorkflowCardProps) {
     {
       step: 1,
       icon: <BookOutlined />,
-      title: '添加辩题',
+      title: '新建辩题',
       description: loading ? '加载中…' : `题库有 ${topicCount} 条辩题`,
       done: topicCount > 0,
-      ctaText: '去添加',
+      ctaText: '去新建',
       route: '/topics'
     },
     {
       step: 2,
       icon: <TrophyOutlined />,
-      title: '创建赛事',
+      title: '新建赛事',
       description: loading ? '加载中…' : `已建 ${eventCount} 个赛事`,
       done: eventCount > 0,
       ctaText: '去创建',

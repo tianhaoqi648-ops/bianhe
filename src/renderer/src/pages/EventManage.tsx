@@ -802,7 +802,6 @@ export default function EventManage() {
         <Space size={4}>
           <Button
             size="small"
-            type="primary"
             icon={<ThunderboltOutlined />}
             onClick={() => selectedEvent && handleGotoDraw(selectedEvent, record)}
           >
@@ -811,15 +810,9 @@ export default function EventManage() {
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEditRound(record)}>
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该轮次？"
-            onConfirm={() => handleDeleteRound(record)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该轮次">
+            <Button size="small" danger aria-label="删除该轮次" icon={<DeleteOutlined />} onClick={() => handleDeleteRound(record)} />
+          </Tooltip>
         </Space>
       )
     }
@@ -883,15 +876,9 @@ export default function EventManage() {
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEditTeam(record)}>
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该队伍？"
-            onConfirm={() => handleDeleteTeam(record)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该队伍">
+            <Button size="small" danger aria-label="删除该队伍" icon={<DeleteOutlined />} onClick={() => handleDeleteTeam(record)} />
+          </Tooltip>
         </Space>
       )
     }
@@ -930,16 +917,9 @@ export default function EventManage() {
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEditGroup(record)}>
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该分组？"
-            description="该分组下队伍将变为未分组"
-            onConfirm={() => handleDeleteGroup(record)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该分组">
+            <Button size="small" danger aria-label="删除该分组" icon={<DeleteOutlined />} onClick={() => handleDeleteGroup(record)} />
+          </Tooltip>
         </Space>
       )
     }
@@ -1021,21 +1001,14 @@ export default function EventManage() {
             </Button>
             <Button
               size="small"
-              type="primary"
               icon={<EditOutlined />}
               onClick={() => handleWizardEditEvent(event)}
             >
               编辑
             </Button>
-            <Popconfirm
-              title="确认删除该赛事？"
-              onConfirm={() => handleDeleteEvent(event)}
-              okText="删除"
-              okType="danger"
-              cancelText="取消"
-            >
-              <Button size="small" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
+              <Tooltip title="删除该赛事">
+                <Button size="small" danger aria-label="删除该赛事" icon={<DeleteOutlined />} onClick={() => handleDeleteEvent(event)} />
+              </Tooltip>
           </Space>
         </Card>
       </Col>
@@ -1124,21 +1097,14 @@ export default function EventManage() {
           </Button>
           <Button
             size="small"
-            type="primary"
             icon={<EditOutlined />}
             onClick={() => handleWizardEditEvent(event)}
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该赛事？"
-            onConfirm={() => handleDeleteEvent(event)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该赛事">
+            <Button size="small" danger aria-label="删除该赛事" icon={<DeleteOutlined />} onClick={() => handleDeleteEvent(event)} />
+          </Tooltip>
         </Space>
       </div>
     );
@@ -1341,7 +1307,7 @@ export default function EventManage() {
                     description="暂无赛事"
                     cta={[
                       {
-                        text: '创建赛事',
+                        text: '新建赛事',
                         icon: <PlusOutlined />,
                         onClick: handleCreateEvent
                       }
@@ -1376,7 +1342,7 @@ export default function EventManage() {
                     description="暂无赛事"
                     cta={[
                       {
-                        text: '创建赛事',
+                        text: '新建赛事',
                         icon: <PlusOutlined />,
                         onClick: handleCreateEvent
                       }
@@ -1503,7 +1469,7 @@ export default function EventManage() {
                             icon={<PlusOutlined />}
                             onClick={handleCreateTeam}
                           >
-                            添加队伍
+                            新建队伍
                           </Button>
                           <Select
                             allowClear

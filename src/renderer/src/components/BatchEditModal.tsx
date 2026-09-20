@@ -16,7 +16,8 @@ import {
   Space,
   Typography,
   Popconfirm,
-  Divider
+  Divider,
+  Tooltip
 } from 'antd'
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
 import type { CustomField, BatchEditFieldAction } from '../../../shared/types'
@@ -298,12 +299,15 @@ export default function BatchEditModal({
                     ]}
                   />
                   <div style={{ flex: 1 }}>{renderValueInput(row)}</div>
-                  <Button
-                    type="text"
-                    danger
-                    icon={<MinusCircleOutlined />}
-                    onClick={() => handleRemoveRow(row.uid)}
-                  />
+                  <Tooltip title="移除该字段行">
+                    <Button
+                      type="text"
+                      danger
+                      aria-label="移除该字段行"
+                      icon={<MinusCircleOutlined />}
+                      onClick={() => handleRemoveRow(row.uid)}
+                    />
+                  </Tooltip>
                 </div>
               )
             })}

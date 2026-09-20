@@ -11,7 +11,8 @@ import {
   Empty,
   Button,
   Divider,
-  Spin
+  Spin,
+  Tooltip
 } from 'antd';
 import {
   ArrowUpOutlined,
@@ -343,17 +344,20 @@ export default function EventBankConfigModal({
                               disabled={idx === sanitizedPriorityIds.length - 1}
                               onClick={() => move(idx, 1)}
                             />
-                            <Button
-                              size="small"
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              onClick={() =>
-                                setPriorityGroupIds(
-                                  sanitizedPriorityIds.filter((_, i) => i !== idx)
-                                )
-                              }
-                            />
+                            <Tooltip title="移除该题库">
+                              <Button
+                                size="small"
+                                type="text"
+                                danger
+                                aria-label="移除该题库"
+                                icon={<DeleteOutlined />}
+                                onClick={() =>
+                                  setPriorityGroupIds(
+                                    sanitizedPriorityIds.filter((_, i) => i !== idx)
+                                  )
+                                }
+                              />
+                            </Tooltip>
                           </Space>
                         </Space>
                       );

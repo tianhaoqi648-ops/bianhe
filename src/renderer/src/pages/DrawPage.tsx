@@ -929,7 +929,6 @@ export default function DrawPage() {
                 </KbdHint>
                 <KbdHint kbd="F" description="进入大屏">
                   <Button
-                    type="primary"
                     icon={<DesktopOutlined />}
                     onClick={() => setBigScreen(true)}
                   >

@@ -35,6 +35,7 @@ import {
   Tabs,
   Empty,
   Segmented,
+  Tooltip,
   theme
 } from 'antd'
 import {
@@ -445,12 +446,12 @@ function EventBindingSelects({
         <Select allowClear placeholder="选择轮次" style={{ minWidth: 140 }} value={boundRoundId} disabled={!boundEventId}
           onChange={(v) => onRoundChange(v)}
           options={rounds.map((r) => ({ value: r.id, label: r.name || `第 ${r.round_number ?? '?'} 轮` }))} />
-        <Select allowClear placeholder="选择场次" style={{ minWidth: 220 }} value={boundMatchId} disabled={!boundEventId}
+        <Select allowClear placeholder="选择比赛" style={{ minWidth: 220 }} value={boundMatchId} disabled={!boundEventId}
           onChange={(v) => onMatchChange(v)}
           options={matchList.map((m) => ({ value: m.id, label: `${m.teamAffName ?? '正方'} vs ${m.teamNegName ?? '反方'}` }))} />
       </div>
       <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', color: token.colorTextSecondary, marginBottom: 4 }}>
-        {boundMatch ? `已绑定场次：${boundMatch.teamAffName ?? '正方'} vs ${boundMatch.teamNegName ?? '反方'}` : '未绑定赛事/场次，结果仅就地查看'}
+        {boundMatch ? `已绑定比赛：${boundMatch.teamAffName ?? '正方'} vs ${boundMatch.teamNegName ?? '反方'}` : '未绑定赛事/比赛，结果仅就地查看'}
       </Typography.Text>
     </div>
   )
@@ -783,7 +784,7 @@ export default function JudgeArena(): JSX.Element {
 
   const handleWriteBackFromHistory = async (record: JudgeHistoryRecord): Promise<void> => {
     if (!boundMatchId) {
-      toast.warning('未绑定场次，无法写回')
+      toast.warning('未绑定比赛，无法写回')
       return
     }
     if (!judgeMatchCanWriteBack(record)) {
@@ -1093,7 +1094,7 @@ export default function JudgeArena(): JSX.Element {
   }, [results])
 
   const handleWriteBack = async (): Promise<void> => {
-    if (!boundMatchId) { toast.warning('未绑定场次，无法写回'); return }
+    if (!boundMatchId) { toast.warning('未绑定比赛，无法写回'); return }
     if (!lastJudgeMatchResult || typeof lastJudgeMatchResult !== 'object') {
       toast.warning('尚未执行整场评审（judge_match），请先执行后再写回'); return
     }
@@ -1716,7 +1717,7 @@ export default function JudgeArena(): JSX.Element {
                     <Button disabled={running || transcribing || !recChecked || !recHasAvailable} onClick={handleLoadMarkers} icon={<UploadOutlined />}>
                       {recMarkerCount > 0 ? `载入本场录音标记（${recMarkerCount} 段）` : '载入本场录音标记'}
                     </Button>
-                    <Button type="primary" loading={transcribing} disabled={transcribing || running || !recChecked || !recHasAvailable}
+                    <Button size="small" type="primary" ghost loading={transcribing} disabled={transcribing || running || !recChecked || !recHasAvailable}
                       onClick={() => void handleTranscribeRecording()} icon={<AudioOutlined />}>
                       {recHasAvailable ? '本场录音转文字' : '本场无可用录音'}
                     </Button>
@@ -1770,7 +1771,7 @@ export default function JudgeArena(): JSX.Element {
                 </>
               ) : (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  未绑定场次时不提供录音转写；可在下方「整体粘贴整场稿」评审。
+                  未绑定比赛时不提供录音转写；可在下方「整体粘贴整场稿」评审。
                 </Typography.Text>
               )}
             </RoleSection>
@@ -2234,7 +2235,7 @@ export default function JudgeArena(): JSX.Element {
           <span style={{ fontSize: 13 }}>
             {JUDGE_ROLE_LABELS[activeRole as unknown as JudgeHistoryRole]} · 历史
             <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-              {boundMatchId ? '当前绑定的比赛场次' : '全部记录'}
+              {boundMatchId ? '当前绑定的比赛' : '全部记录'}
             </Typography.Text>
           </span>
         }
@@ -2276,10 +2277,12 @@ export default function JudgeArena(): JSX.Element {
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>{h.createdAt ? new Date(h.createdAt).toLocaleString() : ''}</Typography.Text>
                     {h.toolName === 'judge_match' ? (
                       <Button size="small" type="primary" ghost icon={<ThunderboltOutlined />} disabled={!canWriteBack}
-                        title={canWriteBack ? '写回该场 AI 评审（不覆盖人工赛果）' : '未绑定场次或该历史无有效判定'}
+                        title={canWriteBack ? '写回该场 AI 评审（不覆盖人工赛果）' : '未绑定比赛或该历史无有效判定'}
                         onClick={() => void handleWriteBackFromHistory(h)}>写回该场</Button>
                     ) : null}
-                    <Button size="small" danger icon={<CloseOutlined />} title="删除这条评审历史" onClick={() => void handleDeleteHistory(h.id)} />
+                    <Tooltip title="删除这条评审历史">
+                      <Button size="small" danger aria-label="删除这条评审历史" icon={<CloseOutlined />} onClick={() => void handleDeleteHistory(h.id)} />
+                    </Tooltip>
                   </div>
                   {expanded ? (
                     <div style={{ marginTop: 6 }}>

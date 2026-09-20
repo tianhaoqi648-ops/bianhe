@@ -244,16 +244,18 @@ export default function BellManager() {
                 onClick={() => void handlePlay(record.id)}
               />
             </Tooltip>
-            <Popconfirm
-              title="确认删除该铃声？"
-              description="删除后不可恢复，引用此铃声的赛制将回退到默认铃。"
-              okText="删除"
-              okButtonProps={{ danger: true }}
-              cancelText="取消"
-              onConfirm={() => void handleDelete(record.id)}
-            >
-              <Button type="text" shape="circle" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
+            <Tooltip title="删除该铃声">
+              <Popconfirm
+                title="确认删除该铃声？"
+                description="删除后不可恢复，引用此铃声的赛制将回退到默认铃。"
+                okText="删除"
+                okButtonProps={{ danger: true }}
+                cancelText="取消"
+                onConfirm={() => void handleDelete(record.id)}
+              >
+                <Button type="text" shape="circle" danger aria-label="删除该铃声" icon={<DeleteOutlined />} />
+              </Popconfirm>
+            </Tooltip>
           </Space>
         )
       }

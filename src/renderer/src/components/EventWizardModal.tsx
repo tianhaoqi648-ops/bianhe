@@ -545,15 +545,17 @@ export default function EventWizardModal({
         key: 'action',
         width: 60,
         render: (_: any, record: RoundRow) => (
-          <Popconfirm
-            title="确认删除该轮次？"
-            onConfirm={() => handleDeleteRoundRow(roundRows.indexOf(record))}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该轮次行">
+            <Popconfirm
+              title="确认删除该轮次？"
+              onConfirm={() => handleDeleteRoundRow(roundRows.indexOf(record))}
+              okText="删除"
+              okType="danger"
+              cancelText="取消"
+            >
+              <Button size="small" danger aria-label="删除该轮次行" icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Tooltip>
         )
       }
     ],

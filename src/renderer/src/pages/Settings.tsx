@@ -395,7 +395,7 @@ export default function Settings() {
   // P3.4 Task 20：备份管理弹窗 + 备份中 loading
   const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
-  // 全量数据一键备份/还原弹窗
+  // 全量数据一键备份/恢复弹窗
   const [backupExportOpen, setBackupExportOpen] = useState(false);
   const [backupImportOpen, setBackupImportOpen] = useState(false);
 
@@ -2212,7 +2212,6 @@ export default function Settings() {
               对当前题库执行去重检查，发现并清理相似 / 重复辩题。
             </Paragraph>
             <Button
-              type="primary"
               icon={<SafetyCertificateOutlined />}
               onClick={() => setDedupOpen(true)}
             >
@@ -2230,7 +2229,6 @@ export default function Settings() {
             }
             extra={
               <Button
-                type="primary"
                 size="small"
                 icon={<TagsOutlined />}
                 onClick={() => setTagDisplayOpen(true)}
@@ -2275,7 +2273,7 @@ export default function Settings() {
     </div>
   );
 
-  // ====== 渲染：备份与迁移 Tab（一键备份/还原 + 自动备份管理） ======
+  // ====== 渲染：备份与迁移 Tab（一键备份/恢复 + 自动备份管理） ======
   const renderBackupTab = () => (
     <div>
       <PageHeader
@@ -2305,7 +2303,7 @@ export default function Settings() {
           >
             <Space direction="vertical" size="small">
               <CloudDownloadOutlined style={{ fontSize: 32, color: token.colorSuccess }} />
-              <Text strong style={{ fontSize: fontSize.h4 }}>一键还原</Text>
+              <Text strong style={{ fontSize: fontSize.h4 }}>一键恢复</Text>
               <Text type="secondary">从 JSON 备份文件恢复数据，支持三种冲突处理策略</Text>
             </Space>
           </Card>
@@ -2899,7 +2897,7 @@ export default function Settings() {
             onClose={() => setBackupModalOpen(false)}
           />
 
-          {/* 全量数据一键备份/还原弹窗 */}
+          {/* 全量数据一键备份/恢复弹窗 */}
           <BackupExportModal
             open={backupExportOpen}
             onClose={() => setBackupExportOpen(false)}

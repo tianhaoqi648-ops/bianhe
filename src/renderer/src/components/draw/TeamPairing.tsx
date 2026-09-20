@@ -38,7 +38,7 @@ export default function TeamPairing({ teams, pairs, onChange }: TeamPairingProps
   };
 
   if (teams.length === 0) {
-    return <EmptyState type="default" description="该赛事暂无队伍，请先在赛事管理中添加队伍" />;
+    return <EmptyState type="default" description="该赛事暂无队伍，请先在赛事管理中新建队伍" />;
   }
 
   if (teams.length % 2 !== 0) {

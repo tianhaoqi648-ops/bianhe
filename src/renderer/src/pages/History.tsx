@@ -13,7 +13,6 @@ import {
   Select,
   DatePicker,
   Descriptions,
-  Popconfirm,
   Modal,
   Segmented,
   Row,
@@ -945,7 +944,7 @@ export default function History() {
             title={
               <Space>
                 <HistoryOutlined style={{ color: colorPrimary }} />
-                <Text strong>历史记录</Text>
+                <Text strong>抽取记录</Text>
               </Space>
             }
             extra={
@@ -1168,13 +1167,16 @@ export default function History() {
                                         >
                                           {isExpanded ? '收起明细' : '查看明细'}
                                         </Button>
-                                        <Button
-                                          size="small"
-                                          type="text"
-                                          danger
-                                          icon={<DeleteOutlined />}
-                                          onClick={() => handleDeleteClick(session)}
-                                        />
+                                        <Tooltip title="删除这条抽取记录">
+                                          <Button
+                                            size="small"
+                                            type="text"
+                                            danger
+                                            aria-label="删除这条抽取记录"
+                                            icon={<DeleteOutlined />}
+                                            onClick={() => handleDeleteClick(session)}
+                                          />
+                                        </Tooltip>
                                       </Space>
                                       {isExpanded && (
                                         <div style={{ marginTop: spacing.sm }}>
@@ -1331,18 +1333,9 @@ export default function History() {
                               >
                                 导出日志
                               </Button>
-                              <Popconfirm
-                                title="确认清空所有操作日志？"
-                                description="将永久删除全部操作日志记录，此操作不可恢复。建议先导出备份后再清空。"
-                                onConfirm={handleClearLogs}
-                                okText="清空"
-                                okType="danger"
-                                cancelText="取消"
-                              >
-                                <Button danger icon={<DeleteOutlined />}>
-                                  清空日志
-                                </Button>
-                              </Popconfirm>
+                              <Button danger icon={<DeleteOutlined />} onClick={handleClearLogs}>
+                                清空日志
+                              </Button>
                             </Space>
                           </Col>
                         </Row>

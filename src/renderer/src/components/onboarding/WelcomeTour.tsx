@@ -38,7 +38,7 @@ const STEP_CONFIGS: TourStepConfig[] = [
   {
     route: '/topics',
     title: '1. 题库管理',
-    description: '先添加辩题，可批量导入 Excel / CSV / Word 文件，或新建单条辩题。题库是抽辩题的数据源。',
+    description: '先新建辩题，可批量导入 Excel / CSV / Word 文件，或新建单条辩题。题库是抽辩题的数据源。',
     icon: <BookOutlined />
   },
   {
@@ -50,7 +50,7 @@ const STEP_CONFIGS: TourStepConfig[] = [
   {
     route: '/events',
     title: '3. 赛事管理',
-    description: '创建赛事并配置轮次、分组、赛制。一个赛事可包含多轮抽辩。',
+    description: '新建赛事并配置轮次、分组、赛制。一个赛事可包含多轮抽辩。',
     icon: <TrophyOutlined />
   },
   {

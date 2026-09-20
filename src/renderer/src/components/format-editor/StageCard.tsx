@@ -278,14 +278,16 @@ export default function StageCard({
             onClick={(e) => { e.stopPropagation(); onEdit() }}
             aria-label={`编辑环节 ${stage.name}`}
           />
-          <Button
-            type="text"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={(e) => { e.stopPropagation(); onDelete() }}
-            aria-label={`删除环节 ${stage.name}`}
-          />
+          <Tooltip title={`删除环节 ${stage.name}`}>
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={(e) => { e.stopPropagation(); onDelete() }}
+              aria-label={`删除环节 ${stage.name}`}
+            />
+          </Tooltip>
         </Space>
       </div>
     </Card>

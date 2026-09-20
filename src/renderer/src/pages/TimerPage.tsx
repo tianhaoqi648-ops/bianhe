@@ -1224,7 +1224,7 @@ export default function TimerPage() {
 
           {/* T6.1 赛事·轮次·场次绑定：路由未带 matchId 时显示选择器，已带入则展示当前场次 */}
           {boundBanner?.matchId ? (
-            <Card title="当前场次" size="small" style={{ marginBottom: spacing.md }}>
+            <Card title="当前比赛" size="small" style={{ marginBottom: spacing.md }}>
               <Text>
                 {boundBanner.teamAffName ?? '正方'} <Tag color="purple">VS</Tag> {boundBanner.teamNegName ?? '反方'}
               </Text>
@@ -1257,7 +1257,7 @@ export default function TimerPage() {
                   optionFilterProp="label"
                 />
                 <Select
-                  placeholder="选择场次（比赛）"
+                  placeholder="选择比赛"
                   style={{ width: '100%' }}
                   disabled={!selEventId || !selRoundId}
                   loading={boundLoading}
@@ -1269,7 +1269,7 @@ export default function TimerPage() {
                   }))}
                   showSearch
                   optionFilterProp="label"
-                  notFoundContent="暂无可绑定场次"
+                  notFoundContent="暂无可绑定比赛"
                 />
                 {selMatchId && (
                   <Space size="small">

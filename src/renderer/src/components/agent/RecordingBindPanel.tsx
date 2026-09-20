@@ -20,7 +20,8 @@ import {
   Tag,
   Typography,
   Modal,
-  Input
+  Input,
+  Tooltip
 } from 'antd'
 import {
   AudioOutlined,
@@ -254,15 +255,17 @@ export function RecordingBindPanel({
               >
                 重选
               </Button>
-              <Button
-                size="small"
-                danger
-                type="text"
-                icon={<DeleteOutlined />}
-                disabled={bindBusy || busy}
-                title="移除该录音"
-                onClick={() => void handleRemove(item.id)}
-              />
+              <Tooltip title="移除该录音">
+                <Button
+                  size="small"
+                  danger
+                  type="text"
+                  aria-label="移除该录音"
+                  icon={<DeleteOutlined />}
+                  disabled={bindBusy || busy}
+                  onClick={() => void handleRemove(item.id)}
+                />
+              </Tooltip>
             </div>
           ))}
         </Space>

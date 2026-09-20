@@ -98,7 +98,7 @@ export default function TeamEditModal({
 
   return (
     <Modal
-      title={isEdit ? '编辑队伍' : '添加队伍'}
+      title={isEdit ? '编辑队伍' : '新建队伍'}
       open={open}
       onOk={handleOk}
       onCancel={onCancel}

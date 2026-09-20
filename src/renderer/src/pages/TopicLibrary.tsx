@@ -1686,7 +1686,6 @@ export default function TopicLibrary() {
                 action={
                   <Button
                     size="small"
-                    type="primary"
                     onClick={() => store.selectAllInFilter()}
                   >
                     选中全部 {store.total} 条
@@ -1779,7 +1778,6 @@ export default function TopicLibrary() {
               action={
                 <Button
                   size="small"
-                  type="primary"
                   onClick={() => store.fetchList()}
                 >
                   重试

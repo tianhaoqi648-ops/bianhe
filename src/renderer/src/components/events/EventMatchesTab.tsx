@@ -21,6 +21,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography
 } from 'antd'
 import {
@@ -208,7 +209,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         teamNegId: teamB
       })
       if (res.success) {
-        toast.success('已创建对阵')
+        toast.success('已创建比赛')
         setCreateOpen(false)
         setTeamA(undefined)
         setTeamB(undefined)
@@ -395,15 +396,17 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
           <Button size="small" icon={<ExperimentOutlined />} onClick={() => handleOpenJudgeArena(m, 'coach')}>
             复盘
           </Button>
-          <Popconfirm title="删除该场对阵？" okText="删除" cancelText="取消" onConfirm={() => void (async () => {
-            const r = await window.matchAPI.delete(m.id)
-            if (r.success) {
-              toast.success('已删除')
-              void load()
-            } else toast.error(r.error || '删除失败')
-          })()}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该场比赛">
+            <Popconfirm title="删除该场比赛？" okText="删除" cancelText="取消" onConfirm={() => void (async () => {
+              const r = await window.matchAPI.delete(m.id)
+              if (r.success) {
+                toast.success('已删除')
+                void load()
+              } else toast.error(r.error || '删除失败')
+            })()}>
+              <Button size="small" danger aria-label="删除该场比赛" icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Tooltip>
         </Space>
       )
     }
@@ -413,7 +416,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
     <div>
       <Space wrap style={{ marginBottom: 12 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          新建对阵
+          新建比赛
         </Button>
         <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void handleExportSchedule()}>
           导出赛程
@@ -447,7 +450,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
         <Alert
           type="info"
           showIcon
-          message="在这里按「新建对阵」录入比赛；再「配题」计入辩题，「启动计时」进入计时，「计入赛果」收尾，可选「AI评审」。"
+          message="在这里按「新建比赛」录入比赛；再「配题」计入辩题，「启动计时」进入计时，「计入赛果」收尾，可选「AI评审」。"
           style={{ marginBottom: 12 }}
         />
       )}
@@ -463,7 +466,7 @@ export default function EventMatchesTab({ eventId }: { eventId: string }) {
       />
 
       {/* 新建对阵 */}
-      <Modal title="新建对阵" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void handleCreate()} confirmLoading={creating}>
+      <Modal title="新建比赛" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void handleCreate()} confirmLoading={creating}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <div>
             <Text type="secondary">轮次：</Text>

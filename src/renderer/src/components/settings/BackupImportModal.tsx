@@ -1,5 +1,5 @@
 // ============================================================
-// BackupImportModal.tsx — 一键还原弹窗
+// BackupImportModal.tsx — 一键恢复弹窗
 //
 // 全量数据恢复：选择 JSON 备份文件 → 预览 → 选择冲突策略 → 导入。
 // 三种冲突策略：清空后重建（危险）/ 跳过已存在 ID / 覆盖已存在 ID。
@@ -206,7 +206,7 @@ export default function BackupImportModal({ open, onClose }: Props) {
         title={
           <Space>
             <CloudDownloadOutlined />
-            一键还原
+            一键恢复
           </Space>
         }
         open={open}

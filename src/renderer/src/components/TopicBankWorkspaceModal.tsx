@@ -250,12 +250,12 @@ export default function TopicBankWorkspaceModal({
     setSaving(true);
     try {
       const n = await removeTopicsFromGroup(groupId, selected);
-      toast.success(`已移出 ${n} 道题`);
+      toast.success(`已移除 ${n} 道题`);
       setSelected([]);
       await refresh();
       void loadMemberMapping();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '移出失败');
+      toast.error(e instanceof Error ? e.message : '移除失败');
     } finally {
       setSaving(false);
     }
@@ -263,7 +263,7 @@ export default function TopicBankWorkspaceModal({
   const handleRemoveOne = async (topicId: string) => {
     if (!groupId) return;
     const n = await removeTopicsFromGroup(groupId, [topicId]);
-    toast.success(`已移出 ${n} 道题`);
+    toast.success(`已移除 ${n} 道题`);
     await refresh();
     void loadMemberMapping();
   };
@@ -390,7 +390,7 @@ export default function TopicBankWorkspaceModal({
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="在「题库工作区」可搜索/筛选本库辩题，把全局辩题导入本库、把其他题库整库复制/移动进来，或将本库题移出、移动到其他题库，也可在本库内直接新建辩题。"
+        message="在「题库工作区」可搜索/筛选本库辩题，把全局辩题导入本库、把其他题库整库复制/移动进来，或将本库题移除、移动到其他题库，也可在本库内直接新建辩题。"
       />
 
       {/* 工具栏：搜索 + 筛选 + 主要操作 */}
@@ -491,16 +491,16 @@ export default function TopicBankWorkspaceModal({
         </Tooltip>
         <Divider type="vertical" style={{ height: 24 }} />
         <Popconfirm
-          title="移出选中的题？"
+          title="移除选中的题？"
           description="题目保留在全局题库与其他题组"
-          okText="移出"
+          okText="移除"
           cancelText="取消"
           okButtonProps={{ danger: true }}
           disabled={selected.length === 0}
           onConfirm={() => void handleRemoveSelected()}
         >
           <Button danger icon={<DeleteOutlined />} disabled={selected.length === 0}>
-            移出选中（{selected.length}）
+            移除选中（{selected.length}）
           </Button>
         </Popconfirm>
         <Tooltip title="把本库勾选的题移到其他题库">
@@ -565,14 +565,14 @@ export default function TopicBankWorkspaceModal({
                   actions={[
                     <Popconfirm
                       key="rm"
-                      title="移出该题？"
-                      okText="移出"
+                      title="移除该题？"
+                      okText="移除"
                       cancelText="取消"
                       okButtonProps={{ danger: true }}
                       onConfirm={() => void handleRemoveOne(t.id)}
                     >
                       <Button danger type="text" size="small">
-                        移出
+                        移除
                       </Button>
                     </Popconfirm>
                   ]}

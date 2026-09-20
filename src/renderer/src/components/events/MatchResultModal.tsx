@@ -12,7 +12,7 @@
 
 import { modalWidth } from '../../styles/tokens'
 import { useEffect, useMemo, useState } from 'react'
-import { AutoComplete, Button, Card, Divider, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
+import { AutoComplete, Button, Card, Divider, Input, InputNumber, Modal, Radio, Select, Space, Tag, Tooltip, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { computeMatchResult } from '../../../../shared/match-result'
 import type { Match, MatchJudgeSystem, MatchWinner } from '../../../../shared/types'
@@ -253,7 +253,9 @@ export default function MatchResultModal({ match, speakerOptions, onClose, onSav
                 </span>
               )}
               {speakerSelect(j.bestSpeaker, (v) => update(j.key, { bestSpeaker: v }))}
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeJudge(j.key)} disabled={judges.length <= 1} />
+              <Tooltip title="移除该裁判">
+                <Button size="small" danger aria-label="移除该裁判" icon={<DeleteOutlined />} onClick={() => removeJudge(j.key)} disabled={judges.length <= 1} />
+              </Tooltip>
             </Space>
           </Card>
         ))}

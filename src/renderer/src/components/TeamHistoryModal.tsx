@@ -8,7 +8,8 @@ import {
   Input,
   Typography,
   Popconfirm,
-  Tag
+  Tag,
+  Tooltip
 } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import EmptyState from './common/EmptyState';
@@ -139,15 +140,17 @@ export default function TeamHistoryModal({
       key: 'action',
       width: 80,
       render: (_: any, record: TeamHistory) => (
-        <Popconfirm
-          title="确认删除这条历史？"
-          onConfirm={async () => {
-            await onDelete(record.id);
-            toast.success('已删除');
-          }}
-        >
-          <Button size="small" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
+        <Tooltip title="删除这条历史辩题">
+          <Popconfirm
+            title="确认删除这条历史？"
+            onConfirm={async () => {
+              await onDelete(record.id);
+              toast.success('已删除');
+            }}
+          >
+            <Button size="small" danger aria-label="删除这条历史辩题" icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Tooltip>
       )
     }
   ];

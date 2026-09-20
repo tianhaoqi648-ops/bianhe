@@ -16,6 +16,7 @@ import {
   Col,
   Collapse,
   Form,
+  Tooltip,
   theme
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -490,11 +491,10 @@ export default function TeamManage() {
         <Space size={4}>
           <Button
             size="small"
-            type="primary"
             icon={<CalendarOutlined />}
             onClick={() => handleManageHistory(record.team)}
           >
-            查看历史辩题
+            历史辩题
           </Button>
           <Button
             size="small"
@@ -503,15 +503,9 @@ export default function TeamManage() {
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该队伍？"
-            onConfirm={() => handleDeleteTeam(record.team)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该队伍">
+            <Button size="small" danger aria-label="删除该队伍" icon={<DeleteOutlined />} onClick={() => handleDeleteTeam(record.team)} />
+          </Tooltip>
         </Space>
       )
     }
@@ -567,15 +561,9 @@ export default function TeamManage() {
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确认删除该队伍？"
-            onConfirm={() => handleDeleteTeam(tv.team)}
-            okText="删除"
-            okType="danger"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          <Tooltip title="删除该队伍">
+            <Button size="small" danger aria-label="删除该队伍" icon={<DeleteOutlined />} onClick={() => handleDeleteTeam(tv.team)} />
+          </Tooltip>
         </Space>
       </Card>
     </Col>
@@ -616,7 +604,7 @@ export default function TeamManage() {
                   }}
                   style={primaryButtonStyle}
                 >
-                  添加队伍
+                  新建队伍
                 </Button>
               </Space>
             }

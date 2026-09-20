@@ -129,9 +129,11 @@ export default function BellEditor({ value, onChange }: BellEditorProps) {
                 }}
               />
             </Tooltip>
-            <Popconfirm title="删除此铃响点？" onConfirm={() => removeBell(idx)}>
-              <Button type="link" danger icon={<DeleteOutlined />} size="small" />
-            </Popconfirm>
+            <Tooltip title="删除此铃响点">
+              <Popconfirm title="删除此铃响点？" onConfirm={() => removeBell(idx)}>
+                <Button type="link" danger aria-label="删除此铃响点" icon={<DeleteOutlined />} size="small" />
+              </Popconfirm>
+            </Tooltip>
           </Space>
         )
       })}

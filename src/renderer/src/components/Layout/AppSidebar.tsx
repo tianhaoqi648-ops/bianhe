@@ -79,7 +79,7 @@ export const MENU_GROUPS: MenuGroupDef[] = [
       { key: '/topics', icon: <DatabaseOutlined />, label: '题库' },
       { key: '/teams', icon: <TeamOutlined />, label: '队伍' },
       { key: '/events', icon: <TrophyOutlined />, label: '赛事' },
-      { key: '/history', icon: <HistoryOutlined />, label: '历史' }
+      { key: '/history', icon: <HistoryOutlined />, label: '抽取历史' }
     ]
   },
   {
