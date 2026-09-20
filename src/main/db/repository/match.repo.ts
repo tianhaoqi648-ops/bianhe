@@ -472,8 +472,15 @@ function linkSession(matchId: string, sessionId: string): Match | null {
 }
 
 /**
- * 抽题结果申领该轮对阵：同 (event, round, 双队) 且未计赛果的比赛已存在则更新，
- * 否则新建。实现"抽题结果计入那个轮次的相应比赛"。
+ * 抽题结果申领该轮对阵：同 (event, round, 无序双队) 且未计赛果（planned）的比赛
+ * 已存在则更新（含换边归位），否则新建。实现"抽题结果计入那个轮次的相应比赛"。
+ *
+ * P5-007：Match 的业务身份 = (event_id, round_id, 无序 {teamA, teamB})。
+ * team_a/team_b 列语义是「正方/反方」角色分配（team_a_id=Aff），A/B 顺序变化
+ * （重抽换边后再 confirm）不代表新比赛——应更新原行的 team 归位、stance 与
+ * name 快照，而不是按严格顺序匹配失败后新建第二条 planned 幽灵。
+ * status 限定 planned：resulted（已计赛果）的场次不被申领覆盖，换边后 confirm
+ * 视为新的合法对阵（现状语义，保持）。
  */
 function upsertFromDraw(data: {
   eventId: string
@@ -488,10 +495,46 @@ function upsertFromDraw(data: {
   const db = getDb()
   const existing = db
     .prepare(
-      `${SELECT_SQL} WHERE m.event_id = ? AND m.round_id IS ? AND m.team_a_id = ? AND m.team_b_id = ? AND m.status = 'planned' ORDER BY m.created_at ASC LIMIT 1`
+      `${SELECT_SQL} WHERE m.event_id = ? AND m.round_id IS ? AND m.status = 'planned'
+       AND ((m.team_a_id = ? AND m.team_b_id = ?) OR (m.team_a_id = ? AND m.team_b_id = ?))
+       ORDER BY m.created_at ASC LIMIT 1`
     )
-    .get(data.eventId, data.roundId, data.teamAffId, data.teamNegId) as MatchRow | undefined
+    .get(
+      data.eventId,
+      data.roundId,
+      data.teamAffId,
+      data.teamNegId,
+      data.teamNegId,
+      data.teamAffId
+    ) as MatchRow | undefined
   if (existing) {
+    const sameOrder = existing.team_a_id === data.teamAffId
+    if (!sameOrder) {
+      // 换边归位：team_a/team_b 列语义是正方/反方，需连同 name 快照一起刷新。
+      // 注：resolveNames 的 collectIds 每行仅收 team_a 一个 id（既有局限），
+      // 此处直接按 id 查名，避免 team_b_name 落 null。
+      const nameOf = (teamId: string | null): string | null =>
+        teamId
+          ? ((db.prepare('SELECT name FROM teams WHERE id = ?').get(teamId) as { name: string } | undefined)?.name ?? null)
+          : null
+      db.prepare(
+        `UPDATE matches SET team_a_id = ?, team_b_id = ?, team_a_name = ?, team_b_name = ?,
+         topic_id = ?, draw_item_id = ?, stance_a = ?, stance_b = ?, updated_at = ? WHERE id = ?`
+      ).run(
+        data.teamAffId ?? null,
+        data.teamNegId ?? null,
+        nameOf(data.teamAffId ?? null),
+        nameOf(data.teamNegId ?? null),
+        data.topicId ?? null,
+        data.drawItemId,
+        data.stanceAff ?? null,
+        data.stanceNeg ?? null,
+        new Date().toISOString(),
+        existing.id
+      )
+      const swapped = getMatchRow(existing.id)
+      return swapped ? hydrate(rowToMatch(swapped)) : hydrate(rowToMatch(existing))
+    }
     const updated = updateMatch(existing.id, {
       topicId: data.topicId,
       drawItemId: data.drawItemId,
