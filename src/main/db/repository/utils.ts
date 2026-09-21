@@ -28,7 +28,9 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   team_groups: ['id', 'event_id', 'name', 'sort_order', 'created_at'],
   teams: ['id', 'name', 'event_id', 'group_id'],
-  team_history: ['id', 'team_id', 'topic_id', 'event_id', 'played_at', 'session_id', 'stance'],
+  team_history: [
+    'id', 'team_id', 'topic_id', 'event_id', 'played_at', 'session_id', 'stance', 'topic_title'
+  ],
   draw_sessions: ['id', 'event_id', 'round_id', 'draw_time', 'operator', 'settings'],
   draw_session_items: [
     'id', 'session_id', 'topic_id', 'team_a_id', 'team_b_id', 'stance_a', 'stance_b',
