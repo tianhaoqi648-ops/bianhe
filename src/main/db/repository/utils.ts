@@ -55,7 +55,7 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
     'id', 'name', 'description', 'is_preset', 'format_data', 'created_at', 'updated_at'
   ],
   timer_sessions: [
-    'id', 'event_id', 'round_id', 'team_aff_id', 'team_neg_id', 'topic_id',
+    'id', 'event_id', 'round_id', 'match_id', 'team_aff_id', 'team_neg_id', 'topic_id',
     'format_id', 'format_snapshot', 'status', 'started_at', 'ended_at',
     'current_stage_index', 'current_side', 'remaining_ms', 'theme_snapshot',
     'label', 'created_at', 'stage_remaining_cache', 'aff_remaining_ms',
