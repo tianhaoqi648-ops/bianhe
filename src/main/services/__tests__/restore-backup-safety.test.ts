@@ -41,17 +41,27 @@ const { mockApp, state } = vi.hoisted(() => ({
 vi.mock('electron', () => ({ app: mockApp }))
 
 // ---- mock fs：默认全部透传；injectSwapFailure 开启时令「tmp -> 正式库」的
-//      覆盖拷贝抛错，迫使 restore 走回退分支（ESM namespace 不可 spyOn，故用工厂包装）----
+//      swap 抛错，迫使 restore 走回退分支（ESM namespace 不可 spyOn，故用工厂包装）----
+//      注意必须同时拦截 renameSync 与 copyFileSync：生产 swap 先 renameSync、
+//      失败才 fallback copyFileSync（Windows 上 rename 对已存在目标会失败，
+//      Linux 上 rename 可原子覆盖直接成功）。只拦截 copyFileSync 在 Linux 上
+//      注入失效（rename 直接成功 → restore 正常 resolve）——曾致 CI 独有失败。
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
+  const isSwap = (src: fs.PathLike, dest: fs.PathLike) =>
+    state.injectSwapFailure &&
+    String(src).endsWith('.restore-tmp') &&
+    String(dest).endsWith('debate-drawer.db')
   return {
     ...actual,
+    renameSync: (src: fs.PathLike, dest: fs.PathLike) => {
+      if (isSwap(src, dest)) {
+        throw new Error('injected swap failure')
+      }
+      return actual.renameSync(src, dest)
+    },
     copyFileSync: (src: fs.PathLike, dest: fs.PathLike) => {
-      if (
-        state.injectSwapFailure &&
-        String(src).endsWith('.restore-tmp') &&
-        String(dest).endsWith('debate-drawer.db')
-      ) {
+      if (isSwap(src, dest)) {
         throw new Error('injected swap failure')
       }
       return actual.copyFileSync(src, dest)
