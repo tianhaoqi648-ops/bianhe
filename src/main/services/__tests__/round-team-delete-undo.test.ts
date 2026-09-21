@@ -493,6 +493,14 @@ describe('通用回归', () => {
     teamDeleteHandler('t1')
     expect(exists('teams', 't1')).toBe(false)
 
+    // 时钟确定性（历史 flaky 根因修复）：L1 与 ghost 均显式钉死 created_at。
+    // 若 L1 用真实时钟（远晚于 2026-01-01），getLatest(created_at DESC) 会返回 L1
+    // 而非 ghost → undo 成功不抛错；且 L1/ghost 同毫秒创建时 DESC 平局会误选目标行。
+    // 钉死顺序 L1(0s) < ghost(+10s)，保证 executeUndo 稳定命中 ghost。
+    mockDb
+      .prepare("UPDATE undo_log SET created_at = '2026-01-01T00:00:00.000Z' WHERE target_id = 't1'")
+      .run()
+
     // 手工构造坏 payload：teamHistory 行引用不存在的 team（FK 违规注入）
     undoLogRepo.createLog({
       store_name: 'event',
